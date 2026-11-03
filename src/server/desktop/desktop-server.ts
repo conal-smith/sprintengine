@@ -137,8 +137,13 @@ export const startDesktopServer: ServerStart = async ({ envelope, rpc, log, requ
   // The shell's terminals, as the gateway reads them (the launch cap,
   // `backlog.work`'s confirmation), and the launch tokens they were issued.
   let terminalSessions: TerminalSessionSnapshot[] = []
+  let terminalSessionsListed = false
+  const terminalSessionsListeners = new Set<() => void>()
   rpc.on(SERVER_EVENTS.terminalSessions, (payload) => {
-    if (Array.isArray(payload)) terminalSessions = payload as TerminalSessionSnapshot[]
+    if (!Array.isArray(payload)) return
+    terminalSessions = payload as TerminalSessionSnapshot[]
+    terminalSessionsListed = true
+    for (const listener of [...terminalSessionsListeners]) listener()
   })
   // A Claude terminal's status-line usage, read in the shell: this process's
   // store is the one the windows draw and the resumes ask.
@@ -203,6 +208,15 @@ export const startDesktopServer: ServerStart = async ({ envelope, rpc, log, requ
       // An agent may start agents only at its own preset or stricter; the
       // terminal agents it is read for are the shell's.
       listTerminalSessions: () => terminalSessions,
+      terminalSessionsListed: () => terminalSessionsListed,
+      onTerminalSessionsChanged: (listener) => {
+        terminalSessionsListeners.add(listener)
+        return () => terminalSessionsListeners.delete(listener)
+      },
+      // A chat the rest sweep settled: its terminals are the shell's to end.
+      endWorkspaceTerminals: (workspaceId) => {
+        void rpc.call(SHELL_METHODS.endWorkspaceTerminals, { workspaceId }).catch(() => undefined)
+      },
       // A WSL distribution's chats run on a Studio server inside it (phase
       // 7) when the person turned that on for it, as in process. With the
       // switch off they take the per-process path, which out of process

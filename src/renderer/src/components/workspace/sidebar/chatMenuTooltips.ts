@@ -106,7 +106,7 @@ export const chatMenuTooltips = {
   snoozeUntil: (label: string, whenLabel: string) => `Snooze until ${label.toLowerCase()}, ${whenLabel}.`,
   wake: (where: ChatMenuPlace = LOCAL) =>
     'Bring this chat back to the list now.' + (where.kind === 'remote' ? ` It wakes on ${where.machineName} too.` : ''),
-  // The rest sweep (`shouldAutoSettleWorkspace`): its quiet days, counted
+  // Main's rest sweep (`shouldAutoSettleWorkspace`): its quiet days, counted
   // from a wake, held while a pull request is open; or its pull requests
   // merging; never a starred, snoozed, open, working or waiting chat. The
   // pull request halves are settings, both on by default.

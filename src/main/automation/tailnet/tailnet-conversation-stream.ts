@@ -23,7 +23,9 @@ import {
   type ConversationServerFrame,
   type ConversationWireErrorCode,
 } from '../../../../packages/conversation-protocol/src/public'
-import { tailnetScopeGrantsAccess, type TailnetScope } from '../../../shared/tailnet'
+import { tailnetDevicePrincipal, type TailnetScope } from '../../../shared/tailnet'
+import { authorizeStudioAccess, type StudioPrincipal } from '../../../../packages/studio-protocol/src/permissions'
+import { CONVERSATION_LANE_ACCESS } from './tailnet-scopes'
 import type { ConversationEvent, ConversationKey } from '../../../shared/conversation-runtime'
 import {
   CONVERSATION_CHUNK_CHARS,
@@ -197,8 +199,8 @@ type BulkEntry = {
 export function createTailnetConversationStream(options: TailnetConversationStreamOptions): TailnetConversationStream {
   const { socket, host } = options
   const readScopes = typeof options.scopes === 'function' ? options.scopes : () => options.scopes as TailnetScope[]
-  let mayRead = false
-  let mayOperate = false
+  // The device's grant as permissions, replaced whenever its scopes change.
+  let principal: StudioPrincipal = tailnetDevicePrincipal([])
   const now = options.now ?? Date.now
   let closed = false
   const pending: Array<LiveEntry | BulkEntry> = []
@@ -651,8 +653,19 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     await joined.ready
   }
   const handle = async (frame: ConversationClientMessage): Promise<void> => {
-    if (!mayRead) {
+    // Not following is refused here, for any frame. Then every frame is judged
+    // by what the lane declares for it, and what is refused past following is
+    // refused where the frame that needs it is answered, in the words each has
+    // always had.
+    if (!authorizeStudioAccess(principal, CONVERSATION_LANE_ACCESS.subscribe).ok) {
       error('conversation_scope_required', 'This device has no conversation read grant.')
+      return
+    }
+    const decision = authorizeStudioAccess(principal, CONVERSATION_LANE_ACCESS[frame.type])
+    // A command and a side question answer a refusal in their own words,
+    // below; any other frame that needs more than following is refused here.
+    if (!decision.ok && frame.type !== 'command' && frame.type !== 'askSideQuestion') {
+      error('conversation_scope_required', 'This device may not do that on this machine’s conversations.')
       return
     }
     if (frame.type === 'hello') {
@@ -694,7 +707,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     if (frame.type === 'askSideQuestion') {
       const key = requireKey(frame.requestId)
       if (!key) return
-      if (!mayOperate) {
+      if (!decision.ok) {
         sendLive({ type: 'result', requestId: frame.requestId, ok: false, code: 'conversation_operate_required' })
         return
       }
@@ -824,7 +837,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
           ...(data ? { data } : {}),
         })
       }
-      if (!mayOperate) return finish(false, 'conversation_operate_required')
+      if (!decision.ok) return finish(false, 'conversation_operate_required')
       if (!key) return finish(false, 'not_found')
       const commandResult = await host.command(key, options.deviceId, frame.commandId, frame.command)
       if (commandResult.ok) finish(true, undefined, undefined, commandResult.notice, undefined, commandResult.data)
@@ -897,10 +910,8 @@ export function createTailnetConversationStream(options: TailnetConversationStre
       close(WEBSOCKET_CLOSE_REVOKED, 'This device has been revoked.')
       return false
     }
-    const grants = new Set(scopes)
-    mayRead = tailnetScopeGrantsAccess(grants, 'conversation:read')
-    mayOperate = tailnetScopeGrantsAccess(grants, 'conversation:operate')
-    if (mayRead) return true
+    principal = tailnetDevicePrincipal(scopes)
+    if (authorizeStudioAccess(principal, CONVERSATION_LANE_ACCESS.subscribe).ok) return true
     // Sent directly: whatever is still queued is exactly what the device may
     // no longer read.
     pending.length = 0

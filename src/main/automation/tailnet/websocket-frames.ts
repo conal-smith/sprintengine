@@ -360,6 +360,11 @@ export function encodeMaskedPongFrame(payload: Buffer): Buffer {
   return encodeMaskedFrame(0xa, payload)
 }
 
+/** A ping from the CLIENT half: the peer's pong says the socket still carries frames both ways. */
+export function encodeMaskedPingFrame(payload: Buffer = Buffer.alloc(0)): Buffer {
+  return encodeMaskedFrame(0x9, payload.subarray(0, 125))
+}
+
 /**
  * Client frames MUST be masked with a fresh random key per frame (RFC 6455
  * §5.3). The mask is not a secret and buys nothing against a reader — it exists

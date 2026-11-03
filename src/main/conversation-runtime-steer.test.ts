@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, test } from 'vitest'
 
-import { ConversationRuntime } from './conversation-runtime'
+import { ConversationRuntime, type ConversationRuntimeOptions } from './conversation-runtime'
+import { createWorktreeLeases, type WorktreeLeases } from './worktree-leases'
 import type { ConversationAttachmentStore } from './conversation-attachment-store'
 import type { ConversationSkillsResolver } from './conversation-skills'
 import type {
@@ -151,6 +152,8 @@ async function setup(
     cursor?: ConversationProviderCursor
     attachmentStore?: ConversationAttachmentStore
     resolveSkills?: ConversationSkillsResolver
+    prepareChatFolder?: ConversationRuntimeOptions['prepareChatFolder']
+    worktreeLeases?: WorktreeLeases
   } = {},
 ) {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'sprintengine-conversation-steer-'))
@@ -162,6 +165,8 @@ async function setup(
     secretStore: { getStatus: async () => ({ ok: false, message: 'unused' }) },
     ...(options.attachmentStore ? { attachmentStore: options.attachmentStore } : {}),
     ...(options.resolveSkills ? { resolveSkills: options.resolveSkills } : {}),
+    ...(options.prepareChatFolder ? { prepareChatFolder: options.prepareChatFolder } : {}),
+    ...(options.worktreeLeases ? { worktreeLeases: options.worktreeLeases } : {}),
   })
   runtimes.add(runtime)
   const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
@@ -501,4 +506,40 @@ test('a steer the agent took is answered as sent even when its record could not 
     console.warn = warn
     runtime.emitNow = emitNow
   }
+})
+
+test('a steer whose turn ends while it is read goes as an ordinary send: after the folder check, under its hold', async () => {
+  const leases = createWorktreeLeases()
+  let open: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => (open = resolve))
+  let gating = false
+  const asked: string[][] = []
+  const chat = await setup({
+    worktreeLeases: leases,
+    prepareChatFolder: async ({ workspaceRoot }) => {
+      asked.push((await leases.holders(workspaceRoot)).map((hold) => hold.reason))
+      return { ok: true }
+    },
+    // Reading the steer's skills takes long enough for the turn to end.
+    resolveSkills: async () => {
+      if (gating) await gate
+      return { ids: [] }
+    },
+  })
+  const first = await chat.sendRunning('investigate')
+  const askedBefore = asked.length
+  gating = true
+  const steer = chat.runtime.sendTurn({ sessionId: chat.sessionId, message: 'and the logs', steer: true })
+  await tick()
+  assert.equal(asked.length, askedBefore, 'a steer over a running turn asks nothing')
+  chat.provider.finish(first.turnId)
+  assert.equal((await first.settled).ok, true)
+  gating = false
+  open()
+  await until(() => chat.provider.streams.size === 2, 'the steer to go as a turn of its own')
+  assert.deepEqual(asked.slice(askedBefore), [['a turn is starting in it']], 'asked once, under the hold')
+  assert.deepEqual(await leases.holders(chat.key.workspaceRoot), [], 'let go once the turn is live')
+  chat.provider.finish(Array.from(chat.provider.streams.keys()).at(-1)!)
+  assert.equal((await steer).ok, true)
+  assert.deepEqual(chat.provider.steers, [], 'nothing was steered')
 })

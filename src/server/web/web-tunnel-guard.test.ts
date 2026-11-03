@@ -1,9 +1,11 @@
 import { expect, test } from 'vitest'
 
-import { webTunnelAllows } from '../../shared/web-client'
+import { webTunnelAllows, webTunnelPrincipal } from '../../shared/web-tunnel-access'
 import type { TunnelPort } from '../ipc/ipc-tunnel'
 import { guardWebTunnelPort, webTunnelAudited } from './web-tunnel-guard'
 import { tunnelPortOf, type WebSocketPeer } from './web-socket'
+
+const OWNER = webTunnelPrincipal({ owner: true })
 
 function fakePort() {
   const listeners: Array<(event: { data: unknown }) => void> = []
@@ -25,6 +27,7 @@ function fakePort() {
 test('a web tab reaches the domains it draws, and not the ones that act beyond this server', () => {
   for (const channel of [
     'workspace-sync:dispatch',
+    'workspace-sync:lifecycle',
     'launch-settings:update',
     'conversation:sessions:send-turn',
     'credential:secrets:status',
@@ -40,6 +43,9 @@ test('a web tab reaches the domains it draws, and not the ones that act beyond t
     'github:set-token',
     'github:clone',
     'modules:bridge:invoke',
+    // What main's rest sweep reads that only a desktop window can say.
+    'workspace-sync:set-settled-chats-settings',
+    'workspace-sync:set-module-run-states',
   ])
     expect(webTunnelAllows(channel), channel).toBe(false)
 })
@@ -47,7 +53,10 @@ test('a web tab reaches the domains it draws, and not the ones that act beyond t
 test('a channel the tab may not use is answered DesktopOnly and never reaches a handler', () => {
   const inner = fakePort()
   const heard: unknown[] = []
-  const guarded = guardWebTunnelPort(inner as unknown as TunnelPort, { audit: () => undefined })
+  const guarded = guardWebTunnelPort(inner as unknown as TunnelPort, {
+    principal: OWNER,
+    audit: () => undefined,
+  })
   guarded.on('message', (event) => heard.push(event.data))
   inner.deliver({ t: 'ipc.invoke', id: 7, channel: 'studio-local-apps:offer', args: [{ name: 'x' }] })
   inner.deliver({ t: 'ipc.send', channel: 'tailnet:set-enabled', args: [true] })
@@ -65,7 +74,10 @@ test('a channel the tab may not use is answered DesktopOnly and never reaches a 
 test('a call that changes something is audited with its outcome; a read is not', () => {
   const inner = fakePort()
   const audit: Array<{ channel: string; ok: boolean; workspaceId?: string }> = []
-  const guarded = guardWebTunnelPort(inner as unknown as TunnelPort, { audit: (entry) => void audit.push(entry) })
+  const guarded = guardWebTunnelPort(inner as unknown as TunnelPort, {
+    principal: OWNER,
+    audit: (entry) => void audit.push(entry),
+  })
   guarded.on('message', () => undefined)
   inner.deliver({ t: 'ipc.invoke', id: 1, channel: 'workspace-sync:dispatch', args: [{ workspaceId: 'ws-1' }] })
   inner.deliver({ t: 'ipc.invoke', id: 2, channel: 'workspace-sync:get-snapshot', args: [] })
@@ -139,6 +151,7 @@ test('a browser held to known folders creates a workspace only on a folder Studi
   const inner = fakePort()
   const heard: unknown[] = []
   const guarded = guardWebTunnelPort(inner as unknown as TunnelPort, {
+    principal: OWNER,
     audit: () => undefined,
     knownFolder: (path) => path === '/Users/dev/app',
   })
@@ -151,9 +164,28 @@ test('a browser held to known folders creates a workspace only on a folder Studi
   // Without the hold, as for a browser on this machine, any folder is passed on.
   const local = fakePort()
   const passed: unknown[] = []
-  guardWebTunnelPort(local as unknown as TunnelPort, { audit: () => undefined }).on('message', (event) =>
-    passed.push(event.data),
+  guardWebTunnelPort(local as unknown as TunnelPort, { principal: OWNER, audit: () => undefined }).on(
+    'message',
+    (event) => passed.push(event.data),
   )
   local.deliver(created(3, '/Users/dev'))
   expect(passed).toEqual([created(3, '/Users/dev')])
+})
+
+test('a browser that is not the owner reaches no tunnel channel, whatever it sends', () => {
+  const inner = fakePort()
+  const heard: unknown[] = []
+  const guarded = guardWebTunnelPort(inner as unknown as TunnelPort, {
+    principal: webTunnelPrincipal({ owner: false }),
+    audit: () => undefined,
+  })
+  guarded.on('message', (event) => heard.push(event.data))
+  inner.deliver({ t: 'ipc.invoke', id: 1, channel: 'workspace-sync:get-snapshot', args: [] })
+  inner.deliver({ t: 'ipc.invoke', id: 2, channel: 'conversation:sessions:send-turn', args: [{}] })
+  inner.deliver({ t: 'ipc.send', channel: 'workspace-sync:dispatch', args: [{}] })
+  expect(heard).toEqual([])
+  expect(inner.posted).toMatchObject([
+    { t: 'ipc.result', id: 1, ok: false, error: { name: 'DesktopOnly' } },
+    { t: 'ipc.result', id: 2, ok: false, error: { name: 'DesktopOnly' } },
+  ])
 })

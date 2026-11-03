@@ -263,6 +263,27 @@ test("a resync close waits for the delay in its reason, and foregrounding cannot
   stream.close();
 });
 
+test("foregrounding a stream the desktop asked to wait cuts the wait to the desktop's delay, never below it", async () => {
+  const f = fixture(), stream = f.open();
+  await f.advance();
+  const dropAfterOpen = () => { const socket = f.sockets.at(-1); socket.open(); socket.serverClose(1006); };
+  // Four drops in a row: the backoff's own wait is now several seconds.
+  for (let i = 0; i < 4; i++) { dropAfterOpen(); await f.advance(20_000); }
+  assert.equal(f.sockets.length, 5);
+  // The desktop asks for a second and a half, much less than that.
+  const socket = f.sockets.at(-1);
+  socket.open();
+  socket.frame({ type: "error", code: "resync_required", message: "Behind.", retryAfterMs: 1500 });
+  socket.serverClose(4409, "resync_required;retryAfterMs=1500");
+  await f.advance(500);
+  stream.foreground(11_000);
+  await f.advance(999);
+  assert.equal(f.sockets.length, 5, "not before the desktop's delay");
+  await f.advance(1);
+  assert.equal(f.sockets.length, 6, "and not after the backoff's own, longer wait");
+  stream.close();
+});
+
 test("a resync delay sent only in the error frame still governs the reconnect", async () => {
   const f = fixture(), stream = f.open();
   await f.advance(); f.synchronize(f.sockets[0]);

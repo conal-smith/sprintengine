@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict'
-import type { Workspace } from '../types/workspace'
-import { getRendererHost } from '../modules'
+import type { Workspace } from '../renderer/src/types/workspace'
 import {
   WORKSPACE_AUTO_SETTLE_AFTER_MS,
   normalizeAutoSettleAfterDays,
   decideWorkspaceSettlement,
+  shouldAutoSettleWorkspace,
+} from './workspace-settlement'
+import {
   isSettledWorkspace,
   settleWorkspacePatch,
-  shouldAutoSettleWorkspace,
   wakeWorkspacePatch,
   workspaceLastActiveAt,
-} from './workspaceSettle'
-import { isSnoozedWorkspace } from './workspaceSnooze'
+} from './workspace-lifecycle'
+import { isSnoozedWorkspace } from './workspace-snooze'
 import { test } from 'vitest'
 
 test('workspaceSettle', async () => {
@@ -120,54 +121,20 @@ test('workspaceSettle', async () => {
 
   // A row whose MODULE reports a run still in flight never settles on its own,
   // however old it is; a run the module reports finished settles like any other
-  // quiet row. The status comes from the owning workspace type's run-glyph
-  // provider, so the rule is exercised against types registered here — no bundled
-  // type ships a provider.
-  {
-    const settleHost = getRendererHost()
-    const registerSettleProbe = (id: string, state: string | null): void => {
-      settleHost.hostFor('scheduled-agents').registerWorkspaceType({
-        id,
-        label: id,
-        description: 'Test-only workspace type.',
-        icon: () => null,
-        hiddenFromPicker: true,
-        createTemplate: () => ({
-          id,
-          name: id,
-          description: 'Test-only workspace type.',
-          previewSlots: [],
-          layout: { global: {}, borders: [], layout: { type: 'row', children: [] } },
-        }),
-        deriveRunGlyph: () => (state ? { state, live: false, label: state } : null),
-      } as never)
-    }
-    registerSettleProbe('settle-probe-running', 'in_progress')
-    registerSettleProbe('settle-probe-waiting', 'needs_input')
-    registerSettleProbe('settle-probe-done', 'done')
-    registerSettleProbe('settle-probe-quiet', null)
-
-    assert.equal(
-      shouldAutoSettleWorkspace(ws({ mode: 'settle-probe-running' as Workspace['mode'] }), NOW),
-      false,
-      'a run still in flight never settles',
-    )
-    assert.equal(
-      shouldAutoSettleWorkspace(ws({ mode: 'settle-probe-waiting' as Workspace['mode'] }), NOW),
-      false,
-      'a run waiting on the person never settles',
-    )
-    assert.equal(
-      shouldAutoSettleWorkspace(ws({ mode: 'settle-probe-done' as Workspace['mode'] }), NOW),
-      true,
-      'a finished run settles once idle',
-    )
-    assert.equal(
-      shouldAutoSettleWorkspace(ws({ mode: 'settle-probe-quiet' as Workspace['mode'] }), NOW),
-      true,
-      'a provider reporting no run signal pins nothing',
-    )
-  }
+  // quiet row. The state is the owning workspace type's run-glyph provider's,
+  // which the caller asks and hands in.
+  assert.equal(
+    shouldAutoSettleWorkspace(ws({}), NOW, { runState: 'in_progress' }),
+    false,
+    'a run still in flight never settles',
+  )
+  assert.equal(
+    shouldAutoSettleWorkspace(ws({}), NOW, { runState: 'needs_input' }),
+    false,
+    'a run waiting on the person never settles',
+  )
+  assert.equal(shouldAutoSettleWorkspace(ws({}), NOW, { runState: 'done' }), true, 'a finished run settles once idle')
+  assert.equal(shouldAutoSettleWorkspace(ws({}), NOW, { runState: null }), true, 'no run signal pins nothing')
 
   // The sweep's decision, given what only the caller knows.
   const decide = (workspace: Workspace, flags: { active?: boolean; busy?: boolean; held?: boolean } = {}) =>

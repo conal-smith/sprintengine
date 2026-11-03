@@ -24,7 +24,7 @@ export type ServerIpcSubscription = { unsubscribe: string; id: 'argument' | 'res
 
 export type ServerIpcChannel = { retry?: 'once'; subscription?: ServerIpcSubscription }
 
-export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
+const SERVER_IPC_CHANNEL_TABLE = {
   'automation:get-status': { retry: 'once' },
   'automation:mcp-http-create': {},
   'automation:mcp-http-revoke': {},
@@ -203,5 +203,13 @@ export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   'workspace-sync:dispatch': {},
   'workspace-sync:get-events-after': { retry: 'once' },
   'workspace-sync:get-snapshot': { retry: 'once' },
+  'workspace-sync:lifecycle': {},
   'workspace-sync:mark-unread': {},
-}
+  'workspace-sync:set-module-run-states': {},
+  'workspace-sync:set-settled-chats-settings': {},
+} as const satisfies Readonly<Record<string, ServerIpcChannel>>
+
+/** Every channel the server owns, by name: what a table keyed by channel must cover (`WEB_TUNNEL_ACCESS`). */
+export type ServerIpcChannelName = keyof typeof SERVER_IPC_CHANNEL_TABLE
+
+export const SERVER_IPC_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = SERVER_IPC_CHANNEL_TABLE

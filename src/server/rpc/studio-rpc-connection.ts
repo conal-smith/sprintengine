@@ -13,7 +13,9 @@ import {
   parseStudioClientFrame,
   parseStudioTopicParams,
   studioClientFrameIds,
-  studioScopesGrant,
+  authorizeStudioTopic,
+  studioGrantPrincipal,
+  studioRefusedGrantName,
   studioWireFrames,
   type ConversationServerFrame,
   type StudioByeCode,
@@ -522,7 +524,7 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
     // never reached this connection.
     const grant = liveGrant()
     if (!grant) return
-    if (!studioScopesGrant(grant.scopes, STUDIO_TOPICS[subscription.topic].scope)) {
+    if (!authorizeStudioTopic(grant, subscription.topic).ok) {
       refreshGrant()
       return
     }
@@ -586,12 +588,15 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
       return
     }
     const spec = STUDIO_TOPICS[frame.topic]
-    if (spec.owner && !grant.owner) {
-      subscriptionFailed(frame.id, 'owner_required', 'This stream is served to Studio’s own connections only.')
-      return
-    }
-    if (!studioScopesGrant(grant.scopes, spec.scope)) {
-      subscriptionFailed(frame.id, 'scope_required', `This app's grant does not include "${spec.scope}".`)
+    const decision = authorizeStudioTopic(grant, frame.topic)
+    if (!decision.ok) {
+      if (decision.reason === 'permission_required')
+        subscriptionFailed(
+          frame.id,
+          'scope_required',
+          `This app's grant does not include "${studioRefusedGrantName(spec, decision.permission)}".`,
+        )
+      else subscriptionFailed(frame.id, 'owner_required', 'This stream is served to Studio’s own connections only.')
       return
     }
     const parsed = parseStudioTopicParams(frame.topic, frame.params)
@@ -674,7 +679,7 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
       // The grant is read again before anything goes out, as for a conversation.
       const grant = liveGrant()
       if (!grant) return
-      if (!studioScopesGrant(grant.scopes, STUDIO_TOPICS[topic].scope)) {
+      if (!authorizeStudioTopic(grant, topic).ok) {
         refreshGrant()
         return
       }
@@ -700,7 +705,7 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
           if (state === 'closed' || subscriptions.get(id) !== subscription) return
           const grant = liveGrant()
           if (!grant) return
-          if (!studioScopesGrant(grant.scopes, STUDIO_TOPICS['files.watch'].scope)) {
+          if (!authorizeStudioTopic(grant, 'files.watch').ok) {
             refreshGrant()
             return
           }
@@ -747,7 +752,7 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
       if (state === 'closed' || subscriptions.get(id) !== subscription) return
       const grant = liveGrant()
       if (!grant) return
-      if (!studioScopesGrant(grant.scopes, STUDIO_TOPICS['pullRequests.changed'].scope)) {
+      if (!authorizeStudioTopic(grant, 'pullRequests.changed').ok) {
         refreshGrant()
         return
       }
@@ -769,7 +774,7 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
       if (state === 'closed' || subscriptions.get(id) !== subscription) return
       const grant = liveGrant()
       if (!grant) return
-      if (!studioScopesGrant(grant.scopes, STUDIO_TOPICS['localServers.changed'].scope)) {
+      if (!authorizeStudioTopic(grant, 'localServers.changed').ok) {
         refreshGrant()
         return
       }
@@ -796,7 +801,7 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
         if (state === 'closed' || subscriptions.get(id) !== subscription) return
         const grant = liveGrant()
         if (!grant) return
-        if (!studioScopesGrant(grant.scopes, STUDIO_TOPICS['tools.catalog'].scope)) {
+        if (!authorizeStudioTopic(grant, 'tools.catalog').ok) {
           refreshGrant()
           return
         }
@@ -900,7 +905,7 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
     })
     // Attached once its welcome is queued, so a call sent to a process that is
     // coming back reaches it after the welcome it waits for.
-    if (options.tools && studioScopesGrant(outcome.grant.scopes, 'tools:offer')) {
+    if (options.tools && studioGrantPrincipal(outcome.grant).permissions.has('tools:offer')) {
       options.tools.attach(toolsConnection(outcome.grant, frame.client))
       toolsAttached = true
     }
@@ -951,8 +956,12 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
     const grant = liveGrant()
     if (!grant) return
     for (const subscription of [...subscriptions.values()]) {
-      const scope = STUDIO_TOPICS[subscription.topic].scope
-      if (studioScopesGrant(grant.scopes, scope)) continue
+      const decision = authorizeStudioTopic(grant, subscription.topic)
+      if (decision.ok) continue
+      const scope =
+        decision.reason === 'permission_required'
+          ? studioRefusedGrantName(STUDIO_TOPICS[subscription.topic], decision.permission)
+          : STUDIO_TOPICS[subscription.topic].scope
       dropSubscription(subscription)
       subscriptionFailed(subscription.id, 'scope_required', `This app's grant no longer includes "${scope}".`)
     }

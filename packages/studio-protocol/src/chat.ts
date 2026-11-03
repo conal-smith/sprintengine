@@ -18,6 +18,7 @@ import {
 import type { StudioErrorCode } from './envelope.js'
 import { isStudioPath, parseStudioConversationKey, type StudioConversationKey } from './key.js'
 import { STUDIO_MAX_FILE_BYTES, isStudioRelativePath, parseStudioFileRoot, type StudioFileRoot } from './files.js'
+import type { StudioPermission } from './permissions.js'
 import type { StudioScope } from './scopes.js'
 
 // What a chat view needs beside the conversation lane: the methods Studio's
@@ -256,8 +257,14 @@ export type StudioChatMethod = keyof StudioChatMethodMap
 
 /** How a method is held: the scope a grant needs, whether it mutates, the capability that offers it. */
 export type StudioMethodSpec = {
-  /** The scope a grant must hold; null for what any authenticated client may ask. */
+  /** The scope a client asks to be granted for it; null for what any authenticated client may ask. */
   scope: StudioScope | null
+  /**
+   * What it needs beyond the permission its scope names, which it always
+   * needs (`studioSpecPermissions`): a method can need more than its scope
+   * carries, never less.
+   */
+  extraPermissions?: readonly StudioPermission[]
   /** A mutation carries a `commandId`, is audited, and is answered from its receipt on a retry. */
   mutation: boolean
   /** The capability a client checks before calling it. */
@@ -725,7 +732,12 @@ export type StudioChatTopicMap = {
 export type StudioChatTopic = keyof StudioChatTopicMap
 
 export const STUDIO_CHAT_TOPICS: {
-  readonly [T in StudioChatTopic]: { scope: StudioScope; capability: StudioCapability; owner: true; push: true }
+  readonly [T in StudioChatTopic]: {
+    scope: StudioScope
+    capability: StudioCapability
+    owner: true
+    push: true
+  }
 } = {
   'conversation.commands': {
     scope: 'conversation:read',

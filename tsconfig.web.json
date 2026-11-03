@@ -6,6 +6,7 @@
     "packages/conversation-view/src/**/*.tsx",
     "packages/conversation-protocol/src/**/*.ts",
     "packages/studio-protocol/src/**/*.ts",
+    "packages/connection-supervisor/src/**/*.ts",
     "packages/agent-sdk/src/index.ts",
     "packages/agent-sdk/src/client.ts",
     "packages/agent-sdk/src/conversations.ts",

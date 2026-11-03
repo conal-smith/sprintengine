@@ -1,6 +1,10 @@
 import type { Workspace } from '../types/workspace'
 import { MONOTONIC_WORKSPACE_CLOCKS, visitRewindApplies, workspaceFieldMayApply } from '../../../shared/workspace-sync'
-import { workspaceLastUserMessageAt, workspaceLastWorkedAt } from '../../../shared/workspace-lifecycle'
+import {
+  workspaceLastActiveAt,
+  workspaceLastUserMessageAt,
+  workspaceLastWorkedAt,
+} from '../../../shared/workspace-lifecycle'
 
 // "Last worked on" is the most recent of when the workspace was created and when
 // the user last typed into one of its terminals (lastTerminalActivityAt, fed from
@@ -13,28 +17,9 @@ import { workspaceLastUserMessageAt, workspaceLastWorkedAt } from '../../../shar
 // moved rows under the cursor of someone who had not said anything.
 //
 // Both keys live in `shared/workspace-lifecycle.ts`, so main lists a paired
-// phone's chats in exactly the order this sidebar draws them.
-export { workspaceLastUserMessageAt, workspaceLastWorkedAt }
-
-/**
- * When the chat was last active, by anyone: the latest of the person's last
- * real work (creation or a keystroke, `workspaceLastWorkedAt`), the person's
- * last message, and the agent's last turn end. This is the rest rule's clock
- * (`workspaceSettle.ts`) — "has this chat gone quiet", where an agent that
- * spoke an hour ago plainly means it has not. Deliberately not an ordering
- * key: what keeps a chat out of the Settled shelf is a different question from
- * where it sits in the list.
- *
- * The message clock has to be in here even though a message into a terminal
- * always moves the keystroke clock with it: a conversation-runtime chat has no
- * pty and no turn-end hook, so its message clock is the ONLY thing that ever
- * moves. Without it, a chat the person writes in every day is three days idle
- * by this reading from the moment it is created, and the sweep shelves it out
- * from under them.
- */
-export function workspaceLastActiveAt(workspace: Workspace): number {
-  return Math.max(workspaceLastWorkedAt(workspace), workspace.lastUserMessageAt ?? 0, workspace.lastTurnEndedAt ?? 0)
-}
+// phone's chats in exactly the order this sidebar draws them. So does the rest
+// rule's clock, `workspaceLastActiveAt`, which main's rest sweep reads.
+export { workspaceLastActiveAt, workspaceLastUserMessageAt, workspaceLastWorkedAt }
 
 /*
  * THE ordering key for every list of chats (`workspaceLastUserMessageAt`):

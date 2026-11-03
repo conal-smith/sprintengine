@@ -134,6 +134,12 @@ const browserEmptyStates = {
   // push: a tab's own settings start at the defaults, and its mount push would
   // overwrite a choice the person made on the desktop.
   setTextGenerationSettings: async () => undefined,
+  // So are the Settled chats settings and the module run states main's rest
+  // sweep reads: a tab's settings start at the defaults, and a tab loads no
+  // third-party module, so its pushes would replace the desktop's choices and
+  // readings with defaults and blanks.
+  setSettledChatsSettings: async () => undefined,
+  setModuleRunStates: async () => undefined,
   // A browser tab has no quit to ask about, and no app to relaunch.
   restartApp: undefined,
   // Nor a file manager on the server's disk to open a module's folder in.

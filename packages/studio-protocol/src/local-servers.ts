@@ -131,7 +131,10 @@ const read: MethodSpec = {
   owner: true,
 }
 // Running a command is driving the conversation's work, not reading it.
-const operate: MethodSpec = { ...read, scope: 'conversation:operate' }
+const operate: MethodSpec = {
+  ...read,
+  scope: 'conversation:operate',
+}
 
 export const STUDIO_LOCAL_SERVERS_METHODS: { readonly [M in StudioLocalServersMethod]: MethodSpec } = {
   'localServers.list': read,

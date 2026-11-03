@@ -9,6 +9,7 @@ import { agentWorktreeLockReason, lockAgentWorktree } from '../agent-worktree-lo
 import { hiddenEditPaths } from '../agent-worktree-keep-checks'
 import { pathExists } from '../git-utils'
 import { GIT_NETWORK_TIMEOUT_MS } from '../git-run'
+import type { WorktreeHold } from '../worktree-leases'
 import { withWorktreeRegistryLock } from '../worktree-registry-lock'
 import { isNetworkSharePath, type SlotRecord } from './pool-store'
 import {
@@ -33,7 +34,7 @@ import {
   usesLfs,
   writeSlotMarker,
 } from './slot-git'
-import { type PoolContext, type PoolRuntime, tail, messageOf, failureOf } from './pool-context'
+import { type PoolContext, type PoolRuntime, holdIdle, tail, messageOf, failureOf } from './pool-context'
 import type { LeaseBase, WorktreePoolLeaseInput, WorktreePoolLeaseResult } from './worktree-pool-service'
 import { hold, holdAfterFailure, forgetSlotsGoneFromDisk, reservationAt } from './pool-slot-steps'
 import { findLease } from './pool-return'
@@ -535,10 +536,20 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
       created = true
     }
 
+    // A reused slot's path is held exclusive while the lease resets it and
+    // puts it on the new branch: a terminal or chat starting in it waits.
+    let pathHold: WorktreeHold | null = null
     try {
       if (!created) {
-        if (await ctx.somethingRunsIn(slot.path)) {
-          // Someone opened a terminal in an idle slot; it is not reset under them.
+        // No start waits for it: once the lease has it, the slot is someone
+        // else's, and a chat whose folder it was could only be refused then.
+        const taken = await holdIdle(ctx, slot.path, 'the pool is preparing this worktree for a new lease', {
+          refuseWaiters: true,
+        })
+        pathHold = 'release' in taken ? taken : null
+        if (!pathHold) {
+          // Someone opened a terminal in an idle slot, or is opening one; it
+          // is not reset under them.
           passedOver.add(slot.id)
           await ctx.withPool(pool, async () => {
             slot!.state = 'idle'
@@ -645,6 +656,7 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
       if (created) return { ok: false, reason: 'error', message: messageOf(error), base: await fetching }
     } finally {
       pool.busy.delete(slot.id)
+      pathHold?.release()
     }
   }
   return { ok: false, reason: 'error', message: 'No pool worktree passed its checks.', base: await fetching }
@@ -678,6 +690,24 @@ export async function catchUp(ctx: PoolContext, leaseId: string): Promise<CatchU
   if (!found) return { kind: 'not-found' }
   const { pool, slot } = found
   if (!(await ctx.ready(pool))) return { kind: 'busy' }
+  // The owner's own step in its tree, as a turn's start is: held shared, so a
+  // return or removal never runs under it, and it waits for one that does.
+  const pathHold = await ctx.leases.acquireShared(slot.path, { reason: 'the pool is catching this worktree up' })
+  if ('busy' in pathHold) return { kind: 'failed', message: pathHold.busy }
+  try {
+    return await catchUpHolding(ctx, pool, slot, leaseId)
+  } finally {
+    pathHold.release()
+  }
+}
+
+/** {@link catchUp} under the slot's shared hold. */
+async function catchUpHolding(
+  ctx: PoolContext,
+  pool: PoolRuntime,
+  slot: SlotRecord,
+  leaseId: string,
+): Promise<CatchUpOutcome> {
   const local = await localBase(ctx, pool)
   if (!local) return { kind: 'failed', message: 'The repository has no default branch to catch up to.' }
   const base = await ensureBase(ctx, pool, local)

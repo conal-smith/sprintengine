@@ -92,6 +92,8 @@ import { createStudioUsageLimitResumes, studioConversationUsageLimits } from './
 import { studioPullRequestWakes } from './studio-pull-request-wakes'
 import { createStudioScheduledMessages, studioHeldMessages, studioScheduledSends } from './studio-scheduled-messages'
 import { createStudioAutoCompact } from './studio-auto-compact'
+import { createSettledChatsSettingsStore } from '../../main/settled-chats-settings-store'
+import { createStudioSettlement } from './studio-settlement'
 
 // The Studio core: the services the server owns (studio-server design, section
 // 4.1), composed once. The desktop builds it inside Electron main, from
@@ -139,14 +141,33 @@ export type StudioCoreOptions = {
    * none (owner ruling 2026-10-01), so it defaults to an empty list.
    */
   listTerminalSessions?: () => ReadonlyArray<{
+    sessionId?: string
     kind?: string
     workspaceId?: string
     agentId?: string
     processAlive: boolean
     /** What the terminal is doing, for Settle from another device: one mid-turn is working. */
     activity?: { kind: string }
+    /** What its CLI's hooks say, for the rest sweep: one awaiting input wants the person. */
+    agentState?: { phase?: string }
+    /** When its agent last finished a turn, which the rest sweep reads for a chat no window reported on. */
+    lastTurnEndedAt?: number | null
     agentRecord?: { cliPermissionPreset?: unknown }
   }>
+  /**
+   * Whether the list above has been read once. Out of process the shell
+   * pushes it after the server starts, and until then every chat would read
+   * idle to the rest sweep. Absent, it always has been (in process).
+   */
+  terminalSessionsListed?: () => boolean
+  /** Hear each change to the list above, for the rest sweep. Returns the unsubscribe. */
+  onTerminalSessionsChanged?: (listener: () => void) => () => void
+  /**
+   * End the terminals of a chat the rest sweep settled, where this process's
+   * shell holds them: a resting chat holds no processes (owner ruling
+   * 2026-09-07), and with no window open nothing else would end them.
+   */
+  endWorkspaceTerminals?: (workspaceId: string) => void
   /** A machine's settings changed (a distribution turned on or off). */
   onHostSettingsChanged?: () => void
   /**
@@ -646,6 +667,8 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       if (listed.ok && listed.sessions.some(conversationSessionWorking)) return true
       return terminalWorking(workspaceId)
     },
+    // A window's own Settle and Snooze: an agent at work, not one waiting on the person.
+    isBusy: (workspaceId) => settlement.isBusy(workspaceId),
     // An agent's own chat turn, and nothing else: no other chat or agent
     // terminal of the workspace at work (`onlyOwnChatTurn`).
     onlyTurnOf: (workspaceId, agentId) => {
@@ -686,6 +709,44 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
   // that chat's events: every chat's, a distribution's or an SSH machine's
   // included. For the core's life, as the chats are.
   conversations.onEvent((event) => conversationLifecycle.onConversationEvent(event))
+
+  // The rest sweep (studio-settlement.ts): main settles a quiet chat and
+  // wakes a resting one that works again, with or without a window open, on
+  // the Settled chats settings each window pushes here. A desktop's only: it
+  // is the desktop's sidebar the rest is for, and a server holds no windows to
+  // know what is on screen.
+  const settledChatsSettings = createSettledChatsSettingsStore({
+    resolveUserDataDir: () => platform.paths.dataDir(),
+    logDiagnostic: logDiagnostic('workspace'),
+  })
+  const settlement = createStudioSettlement({
+    registry: workspaceRegistry,
+    conversations,
+    pullRequests: {
+      whenLoaded: () => pullRequests.record.whenLoaded(),
+      forWorkspace: (workspaceId) => pullRequests.record.forWorkspace(workspaceId),
+      onChanged: (listener) => pullRequests.onChanged(listener),
+    },
+    settings: settledChatsSettings,
+    terminals: {
+      list: () => options.listTerminalSessions?.() ?? [],
+      listed: () => options.terminalSessionsListed?.() ?? true,
+      ...(options.onTerminalSessionsChanged ? { onChanged: options.onTerminalSessionsChanged } : {}),
+      ...(options.endWorkspaceTerminals ? { end: options.endWorkspaceTerminals } : {}),
+    },
+    lifecycle: conversationLifecycle,
+    recordTurnEnd: (workspaceId, at) => {
+      workspaceSyncService.updateWorkspaceFields(workspaceId, { lastTurnEndedAt: at }, 'system')
+    },
+    onResume: (listener) => powerActivity.onResume(listener),
+    log: (message) => {
+      void writeDiagnosticLog({ level: 'info', source: 'workspace', title: 'Rest sweep', message })
+    },
+  })
+  if (options.role === 'desktop') settlement.start()
+  function stopSettlementSweep(): void {
+    settlement.dispose()
+  }
   // The composer's `/` lists, one set for the process, made on first ask: a
   // window's `conversation-commands:list` (server-ipc.ts) and a paired
   // desktop's read of a chat here (`conversation-commands`) share its probes,
@@ -953,6 +1014,7 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       () => pullRequests.flush(),
       () => localServers.flush(),
       () => conversationRuntime.flushTranscripts(),
+      stopSettlementSweep,
       stopUsageLimitResumes,
       stopScheduledMessages,
       stopAutoCompact,
@@ -1005,6 +1067,11 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     resolveAgentPermissionPreset,
     createConversationHost,
     conversationLifecycle,
+    /** The Settled chats settings, as the windows push them; the rest sweep reads them. */
+    settledChatsSettings,
+    /** The rest sweep, for the module run states the windows push. */
+    settlement,
+    stopSettlementSweep,
     pullRequests,
     localServers,
     usageLimitResumes,

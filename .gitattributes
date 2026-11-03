@@ -1,0 +1,5 @@
+# The connection supervisor and the phone app's copy of it are compared byte
+# for byte (packages/connection-supervisor/test/mirror.test.ts): a checkout that
+# rewrote line endings in one of them would fail that comparison for nothing.
+packages/connection-supervisor/src/connectionSupervisor.ts text eol=lf
+mobile/src/shared/connection-supervisor/connectionSupervisor.ts text eol=lf

@@ -41,14 +41,24 @@ function comparable(path: string): string {
  * (a folder removed since) resolves through its nearest existing parent.
  */
 export async function pathSpellings(path: string): Promise<string[]> {
-  const spellings = new Set([comparable(path)])
+  return [...new Set([comparable(path), await canonicalPath(path)])]
+}
+
+/**
+ * The one spelling every alias of a path shares: the realpath of its nearest
+ * existing ancestor, the rest of it appended as given, compared as
+ * {@link pathSpellings} compares. The key worktree-leases.ts files a hold
+ * under, so a chat that opened `~/code/app-01` and a pool that calls it
+ * `/Volumes/work/app-01` hold the same folder. As given when no ancestor
+ * resolves.
+ */
+export async function canonicalPath(path: string): Promise<string> {
   let current = toFilesystemPath(path)
   const rest: string[] = []
   for (let depth = 0; depth < 64; depth += 1) {
     try {
       const real = await realpath(current)
-      spellings.add(comparable(rest.length > 0 ? join(real, ...rest) : real))
-      break
+      return comparable(rest.length > 0 ? join(real, ...rest) : real)
     } catch {
       const parent = dirname(current)
       if (parent === current) break
@@ -56,7 +66,7 @@ export async function pathSpellings(path: string): Promise<string[]> {
       current = parent
     }
   }
-  return [...spellings]
+  return comparable(path)
 }
 
 /**

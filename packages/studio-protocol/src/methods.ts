@@ -20,6 +20,14 @@ import {
   type StudioCapability,
 } from './handshake.js'
 import type { StudioEnvironment, StudioErrorCode, StudioGrant, StudioServerIdentity } from './envelope.js'
+import {
+  authorizeStudioAccess,
+  studioGrantPrincipal,
+  studioScopeRequires,
+  type StudioAccess,
+  type StudioAuthorization,
+  type StudioPermission,
+} from './permissions.js'
 import type { StudioScope } from './scopes.js'
 import {
   STUDIO_CHAT_METHODS,
@@ -72,8 +80,11 @@ export type { StudioMethodSpec } from './chat.js'
 //
 // `StudioMethodMap` is the source of truth for what a method takes and
 // answers; `STUDIO_METHODS` is typed over its keys, so a method added to the
-// map without a scope does not compile. A Studio checks the scope on every
-// request, against the grant as it stands at that moment.
+// map without a scope does not compile. What a method needs is the
+// permission its scope names and any it adds (`studioSpecPermissions`), so it
+// can never need less than its scope. A Studio checks those on every request,
+// against the grant as it stands at that moment (`authorizeStudioMethod`,
+// `permissions.ts`).
 //
 // A conversation command is the conversation lane's own command, addressed:
 // its params are the command's members plus the conversation `key` and the
@@ -311,10 +322,20 @@ export type StudioTopicParams<T extends StudioTopic> = StudioTopicMap[T]['params
  * How a topic is held. A `push` topic's frames are `{ t: 'push', sub, payload }`
  * with no cursor; the others' are conversation frames under `{ t: 'frame' }`.
  */
-export type StudioTopicSpec = { scope: StudioScope; capability: StudioCapability; owner?: true; push?: true }
+export type StudioTopicSpec = {
+  scope: StudioScope
+  /** What it needs beyond its scope's permission, as for a method. */
+  extraPermissions?: readonly StudioPermission[]
+  capability: StudioCapability
+  owner?: true
+  push?: true
+}
 
 export const STUDIO_TOPICS: { readonly [T in StudioTopic]: StudioTopicSpec } = {
-  'conversation.session': { scope: 'conversation:read', capability: STUDIO_CONVERSATIONS_CAPABILITY },
+  'conversation.session': {
+    scope: 'conversation:read',
+    capability: STUDIO_CONVERSATIONS_CAPABILITY,
+  },
   ...STUDIO_CHAT_TOPICS,
   ...STUDIO_TOOLS_TOPICS,
   ...STUDIO_FILES_TOPICS,
@@ -325,6 +346,45 @@ export const STUDIO_TOPICS: { readonly [T in StudioTopic]: StudioTopicSpec } = {
 /** Whether a string names a topic this version of the protocol defines. */
 export function isStudioTopic(value: unknown): value is StudioTopic {
   return typeof value === 'string' && Object.hasOwn(STUDIO_TOPICS, value)
+}
+
+type StudioSpec = { scope: StudioScope | null; extraPermissions?: readonly StudioPermission[]; owner?: true }
+
+/** What a method or topic needs: the permission its scope names, first, then any it adds. */
+export function studioSpecPermissions(spec: StudioSpec): readonly StudioPermission[] {
+  const needed = [...(spec.scope ? studioScopeRequires(spec.scope) : []), ...(spec.extraPermissions ?? [])]
+  return [...new Set(needed)]
+}
+
+function studioSpecAccess(table: object, name: string): StudioAccess | undefined {
+  // Own keys only: `constructor` is not a method.
+  if (!Object.hasOwn(table, name)) return undefined
+  const spec = (table as Record<string, StudioSpec>)[name]
+  return { permissions: studioSpecPermissions(spec), ...(spec.owner ? { owner: true as const } : {}) }
+}
+
+/** A grant as it stands, the method it asks for, and the answer: unknown methods are refused. */
+export function authorizeStudioMethod(
+  grant: { owner: boolean; scopes: readonly string[] },
+  method: string,
+): StudioAuthorization {
+  return authorizeStudioAccess(studioGrantPrincipal(grant), studioSpecAccess(STUDIO_METHODS, method))
+}
+
+/** The same for a topic, on subscribing and again before each frame goes out. */
+export function authorizeStudioTopic(
+  grant: { owner: boolean; scopes: readonly string[] },
+  topic: string,
+): StudioAuthorization {
+  return authorizeStudioAccess(studioGrantPrincipal(grant), studioSpecAccess(STUDIO_TOPICS, topic))
+}
+
+/**
+ * What a `scope_required` refusal names: the method's scope when that is what
+ * is missing, as a client asks to be granted it, else the permission itself.
+ */
+export function studioRefusedGrantName(spec: StudioSpec, permission: StudioPermission): string {
+  return spec.scope && studioScopeRequires(spec.scope).includes(permission) ? spec.scope : permission
 }
 
 /** The conversation command kind each command method carries. */

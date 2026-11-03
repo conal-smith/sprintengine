@@ -109,7 +109,12 @@ export const STUDIO_FILES_TOPICS: {
     push: true
   }
 } = {
-  'files.watch': { scope: 'files:read', capability: STUDIO_BOARD_FILES_CAPABILITY, owner: true, push: true },
+  'files.watch': {
+    scope: 'files:read',
+    capability: STUDIO_BOARD_FILES_CAPABILITY,
+    owner: true,
+    push: true,
+  },
 }
 
 export function isStudioFilesMethod(value: unknown): value is StudioFilesMethod {

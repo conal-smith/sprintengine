@@ -35,6 +35,7 @@ import {
 import { createPreviewService } from './preview-service'
 import { createPairRequests } from './web-pair-requests'
 import { guardWebTunnelPort } from './web-tunnel-guard'
+import { webTunnelPrincipal } from '../../shared/web-tunnel-access'
 import { toolError, toolSuccess } from '../../shared/modules/mcp-tools'
 import { browseFolders, type FolderBrowserInput } from './folder-browser'
 import { createWebListener, type WebListener } from './web-listener'
@@ -356,6 +357,7 @@ export async function startWebFrontDoor(input: {
         tunnel.attach(
           client,
           guardWebTunnelPort(port, {
+            principal: webTunnelPrincipal(session),
             audit: (entry) =>
               gateway.gatewayAudit().record({
                 connection: {

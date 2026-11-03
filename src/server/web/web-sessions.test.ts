@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 
+import { authorizeStudioMethod, authorizeStudioTopic } from '../../../packages/studio-protocol/src/public'
+import { WEB_TUNNEL_ACCESS, webTunnelAuthorizes, webTunnelPrincipal } from '../../shared/web-tunnel-access'
+
 import {
   PAIRING_CODE_TTL_MS,
   SESSION_LIFETIME_MS,
@@ -143,4 +146,42 @@ test('a phone browser is named for itself, not the engine its user agent also na
   expect(browserNameFromUserAgent(`${android} Chrome/140.0 Mobile Safari/537.36 EdgA/140.0`)).toBe('Edge on Android')
   expect(browserNameFromUserAgent(`${android} Chrome/140.0 Mobile Safari/537.36 OPR/90.0`)).toBe('Opera on Android')
   expect(browserNameFromUserAgent(`${android} Chrome/140.0 Mobile Safari/537.36`)).toBe('Chrome on Android')
+})
+
+test('an owner’s browser and another browser are told apart by every remote check, from the session as stored', () => {
+  const sessions = store()
+  const owned = sessions.issue({ name: 'owner', route: 'loopback' })
+  const guest = sessions.issue({ name: 'guest', route: 'loopback', owner: false })
+  const tailnet = sessions.issue({ name: 'phone', route: 'tailnet' })
+  if (!owned.ok || !guest.ok || !tailnet.ok) throw new Error('issue failed')
+  // Read back as a restarted server reads them: nothing here was migrated.
+  const reloaded = store()
+  const grant = (id: string) => reloaded.grantFor(id)!
+
+  // The protocol: an owner's methods are the owner's, whatever scopes another holds.
+  expect(authorizeStudioMethod(grant(owned.session.id), 'conversation.scheduleSend')).toEqual({ ok: true })
+  expect(authorizeStudioMethod(grant(guest.session.id), 'conversation.scheduleSend')).toEqual({
+    ok: false,
+    reason: 'owner_required',
+  })
+  expect(authorizeStudioMethod(grant(guest.session.id), 'conversation.send')).toEqual({ ok: true })
+  expect(authorizeStudioTopic(grant(guest.session.id), 'conversation.session')).toEqual({ ok: true })
+  // A browser on the tailnet is the owner's, but never offers tools.
+  expect(authorizeStudioMethod(grant(tailnet.session.id), 'tools.offer')).toEqual({
+    ok: false,
+    reason: 'permission_required',
+    permission: 'tools:offer',
+  })
+  expect(authorizeStudioMethod(grant(owned.session.id), 'tools.offer')).toEqual({ ok: true })
+  expect(authorizeStudioMethod(grant(owned.session.id), 'conversation.compact')).toEqual({
+    ok: false,
+    reason: 'unknown_method',
+  })
+
+  // The tunnel: an owner's browser drives the domains a tab draws; another browser none.
+  const channels = Object.keys(WEB_TUNNEL_ACCESS)
+  const ownerTab = webTunnelPrincipal(reloaded.get(owned.session.id)!)
+  const guestTab = webTunnelPrincipal(reloaded.get(guest.session.id)!)
+  expect(webTunnelAuthorizes(ownerTab, 'workspace-sync:dispatch')).toBe(true)
+  expect(channels.filter((channel) => webTunnelAuthorizes(guestTab, channel))).toEqual([])
 })

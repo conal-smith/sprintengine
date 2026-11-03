@@ -1,4 +1,12 @@
 import type { WorktreePoolSettings } from '../../shared/ipc/worktree-pool'
+import {
+  holdIfIdle,
+  WORKTREE_POOL_OWNER,
+  type WorktreeBlocked,
+  type WorktreeExclusiveOptions,
+  type WorktreeHold,
+  type WorktreeLeases,
+} from '../worktree-leases'
 import type { MeasureDiskUsage } from './disk-usage'
 import type { PoolRecord, SlotRecord } from './pool-store'
 import type { SlotGitRunner } from './slot-git'
@@ -60,12 +68,32 @@ export type PoolContext = {
   persist: (pool: PoolRuntime, options?: { sizeOnly?: boolean }) => Promise<void>
   slotById: (pool: PoolRuntime, slotId: string) => SlotRecord | undefined
   somethingRunsIn: (path: string) => Promise<boolean>
+  /**
+   * The process's holds on worktree paths (worktree-leases.ts): a step that
+   * changes what is at a slot's path holds it exclusive, through
+   * {@link holdIdle}, so a turn or terminal starting there waits for it.
+   */
+  leases: WorktreeLeases
   getSettings: () => Promise<WorktreePoolSettings>
   resolveRepo: (repoRoot: string) => Promise<ResolvedRepo | null>
   poolFor: (repoRoot: string, create: boolean) => Promise<PoolRuntime | null>
   /** Whether this instance may drive the pool: it holds the container's lock, and the pool has been recovered. */
   ready: (pool: PoolRuntime) => Promise<boolean>
   load: () => Promise<void>
+}
+
+/**
+ * The exclusive hold on a slot's path for a pool step that changes what is
+ * there, once nothing runs in it (worktree-leases.ts `holdIfIdle`), taken as
+ * the pool's own. Taken before the pool's mutex, never inside it.
+ */
+export function holdIdle(
+  ctx: PoolContext,
+  path: string,
+  reason: string,
+  options: Omit<WorktreeExclusiveOptions, 'owner'> = {},
+): Promise<WorktreeHold | WorktreeBlocked | { live: true }> {
+  return holdIfIdle(ctx.leases, path, reason, ctx.deps.livePaths, { ...options, owner: WORKTREE_POOL_OWNER })
 }
 
 export function tail(text: string | null | undefined, max = NOTE_TAIL_CHARS): string | null {

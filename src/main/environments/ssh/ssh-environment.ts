@@ -20,10 +20,18 @@ import {
 } from './ssh-connect-script'
 import { buildInstallArchive } from './ssh-install'
 import { RemoteSession, SessionClosedError, type SessionProcess } from './ssh-session'
+import {
+  ConnectionSupervisor,
+  ConnectTimeoutError,
+  type ConnectionAttempt,
+  type ConnectionState,
+} from '../../../../packages/connection-supervisor/src/connectionSupervisor'
 
-// One SSH machine's connection, in main (phase 8 spec, 5.6). Serialised: two
-// triggers never run two bootstraps at once; a second `connect` while one
-// runs waits for it.
+// One SSH machine's connection, in main (phase 8 spec, 5.6). Serialised: a
+// second `connect` while a bootstrap runs waits for it. The one exception is
+// the person's Connect over a quiet background try (a machine shown
+// Disconnected), which runs in BatchMode and cannot prompt: that try is
+// dropped, and its ssh killed, for an interactive one.
 //
 //   idle ─connect─► connecting ─► probing ─┬─► installing ─► (a new session) probing
 //                     │ asking (a dialog)   ├─► unsupported (musl, old glibc, Windows, noexec)
@@ -31,7 +39,13 @@ import { RemoteSession, SessionClosedError, type SessionProcess } from './ssh-se
 //                                           └─► version-blocked
 //   connected ─lost─► reconnecting (BatchMode, backoff 1 → 30 s) ─► connected
 //                        │ a prompt would be needed: needs-sign-in (Connect)
-//                        └ ten minutes: disconnected ("last reached …")
+//                        └ ten minutes of trying: disconnected ("last reached …"),
+//                          still tried every five minutes, and at once on a wake
+//
+// When to try, how long to wait and what a wake does are the connection
+// supervisor's (packages/connection-supervisor), the same rules every other
+// reconnecting connection in the app follows; this class is the bootstrap it
+// runs for each attempt and the words the machine's row says.
 //
 // The person's own click connects interactively (ssh may ask through the
 // askpass dialogs); every background reconnect runs with BatchMode, and stops
@@ -41,8 +55,8 @@ import { RemoteSession, SessionClosedError, type SessionProcess } from './ssh-se
 // the session leaves it running, and its idle rule ends it when nobody comes
 // back. Sleep, wake and a network change ask the session to answer at once
 // instead of waiting out the keepalive on a dead socket: one that answers is
-// kept, one that does not is restarted. A wake also lets a machine that gave
-// up reconnecting try again, since the network it was waiting for may be back.
+// kept, one that does not is restarted. A wake also lets a machine shown
+// Disconnected try at once, since the network it was waiting for may be back.
 
 export type SshServerConnection = {
   /** The router's key for this machine: `ssh:<saved id>`. */
@@ -90,10 +104,16 @@ export const DEFAULT_TIMING = {
   upgradeMs: 150_000,
   relayMs: 15_000,
   handshakeMs: 15_000,
-  backoffMs: [1_000, 2_000, 4_000, 8_000, 16_000, 30_000],
+  /** A reconnect's waits: jittered, doubling from the base to the cap. */
+  backoff: { baseMs: 1_000, maxMs: 30_000 },
+  /** Trying this long (awake), a machine is shown Disconnected. It keeps trying. */
   giveUpMs: 10 * 60_000,
+  /** The wait between tries once a machine is shown Disconnected. */
+  disconnectedRetryMs: 5 * 60_000,
   /** How long a wake waits for a connected session to answer before calling it dead. */
   livenessMs: 10_000,
+  /** The backstop on one whole bootstrap; every step inside it has a shorter deadline of its own. */
+  bootstrapMs: 45 * 60_000,
 }
 
 const IDLE_MS = 5 * 60_000
@@ -122,15 +142,27 @@ class StepError extends Error {
   }
 }
 
+/** Any failure as a step's: what the bootstrap threw, or a loss's reason, in words. */
+function asStep(error: unknown): StepError {
+  return error instanceof StepError ? error : new StepError('failed', messageOf(error))
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error ?? '')
+}
+
 function minutesAgo(ms: number): string {
   const minutes = Math.round(ms / 60_000)
   return minutes <= 0 ? 'just now' : minutes === 1 ? '1 min ago' : `${minutes} min ago`
 }
 
 /**
- * States a background connect does not retry: each needs the person (a
+ * States a background connect is refused in: each needs the person (a
  * prompt, a server to update, a machine to fix) or followed a failure the
- * person saw. Connect in Settings tries again.
+ * person saw. Connect in Settings tries again. Disconnected is among them
+ * although the machine is still tried every few minutes: a chat polling a
+ * machine that has been away for ten minutes should hear so at once rather
+ * than wait out the next try.
  */
 const HELD_STATES: ReadonlySet<SshEnvironmentState> = new Set([
   'failed',
@@ -139,6 +171,16 @@ const HELD_STATES: ReadonlySet<SshEnvironmentState> = new Set([
   'version-blocked',
   'unsupported',
 ])
+
+type BootstrapHint = { interactive: boolean }
+
+/** A connected session as the supervisor holds it: the connection, and what carries it. */
+type LiveSession = {
+  connection: SshServerConnection
+  endpoint: MuxEndpoint
+  session: RemoteSession
+  server: NonNullable<RelayReady['server']>
+}
 
 export class SshEnvironment {
   private view: SshEnvironmentView = {
@@ -151,22 +193,17 @@ export class SshEnvironment {
     gh: null,
     diagnostics: { noise: '', stderr: '', steps: [], probe: null },
   }
-  private connection: SshServerConnection | null = null
-  private session: RemoteSession | null = null
-  private endpoint: MuxEndpoint | null = null
-  private running: Promise<SshServerConnection> | null = null
-  private intentional = false
+  /** Owns the session's life: when to try, how long to wait, what a wake does, when to stop. */
+  private readonly supervisor: ConnectionSupervisor<LiveSession, BootstrapHint>
+  /** The bootstrap under way when it is a quiet background try, which the person's Connect replaces. */
+  private quietAttempt: ConnectionAttempt<LiveSession, BootstrapHint> | null = null
+  /** The session the supervisor last said was up, so its arrival is announced once. */
+  private announced: LiveSession | null = null
   private lastReachedAt: number | null = null
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  private attempt = 0
-  private lostAt: number | null = null
-  /** Background callers waiting out a reconnect's backoff: they get its next attempt. */
-  private waiting: {
-    promise: Promise<SshServerConnection>
-    settle(attempt: Promise<SshServerConnection>): void
-  } | null = null
-  /** A wake's check that the connected session still answers, while it runs. */
-  private livenessCheck: Promise<void> | null = null
+  /** Whether the failure that put the machine on hold ended a reconnect (its words differ). */
+  private heldWhileReconnecting = false
+  /** Stop server, while it runs: a connect asked for meanwhile joins it rather than start the server under it. */
+  private stopping: Promise<never> | null = null
   private upgradeAsked = false
   /**
    * The person disconnected the machine or stopped its server: nothing in the
@@ -182,6 +219,51 @@ export class SshEnvironment {
     this.timing = { ...DEFAULT_TIMING, ...deps.timing }
     this.now = deps.now ?? Date.now
     this.log = deps.log ?? (() => undefined)
+    const { backoff, giveUpMs, disconnectedRetryMs } = this.timing
+    this.supervisor = new ConnectionSupervisor<LiveSession, BootstrapHint>({
+      connect: (attempt) => this.bootstrap(attempt),
+      close: (live, reason) => {
+        this.log(`Closing the session to ${live.connection.label}: ${reason}`)
+        live.endpoint.close(reason)
+        this.release(live)
+      },
+      // A backend snapshot is what a session that answers can always give.
+      ping: (live) => live.connection.backend.refresh(),
+      classify: (error, { reconnecting }) => {
+        const step = this.stepOf(error)
+        this.heldWhileReconnecting = reconnecting
+        if (step.failure?.code === 'needs-sign-in') return { kind: 'needs-sign-in' }
+        // A first connect that fails was seen by whoever asked: it is not retried
+        // in the background. Neither is a server Studio cannot use, nor a changed
+        // host key, on a reconnect: each needs the person.
+        if (!reconnecting || step.state === 'unsupported' || step.state === 'version-blocked') return { kind: 'fatal' }
+        if (step.failure?.code === 'host-key-changed') return { kind: 'fatal' }
+        return { kind: 'transient' }
+      },
+      backoff: {
+        ...backoff,
+        // Trying this long, the machine is shown Disconnected and tried less often.
+        maxMs: (state) => (state.retryingForMs >= giveUpMs ? disconnectedRetryMs : backoff.maxMs),
+      },
+      // Each step that waits on the machine or the network has a deadline of
+      // its own, and the longest bootstrap (two installs with a person in the
+      // dialogs, then an upgrade) is well inside this. It is a backstop for the
+      // waits between them that have none (an ssh's exit after it was killed,
+      // packing the install archive), so a try stuck there cannot hold the
+      // machine for good; the supervisor then kills its ssh.
+      connectTimeoutMs: this.timing.bootstrapMs,
+      pingTimeoutMs: this.timing.livenessMs,
+      clock: {
+        now: this.now,
+        setTimeout: (run, ms) => {
+          const timer = setTimeout(run, ms)
+          timer.unref?.()
+          return timer
+        },
+        clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+      },
+    })
+    this.supervisor.subscribe((state) => this.render(state))
   }
 
   get key(): string {
@@ -193,7 +275,7 @@ export class SshEnvironment {
   }
 
   current(): SshServerConnection | null {
-    return this.connection
+    return this.supervisor.current()?.connection ?? null
   }
 
   private set(next: Partial<SshEnvironmentView> & { state: SshEnvironmentState; stateText: string }): void {
@@ -221,58 +303,125 @@ export class SshEnvironment {
       return Promise.reject(
         new Error(`${this.deps.label()} was disconnected in Settings › Machines. Connect it there to use it again.`),
       )
-    if (this.connection && this.endpoint && !this.endpoint.closed) return Promise.resolve(this.connection)
-    if (this.running) return this.running
+    if (this.stopping) return this.stopping
+    const live = this.supervisor.current()
+    if (live) return Promise.resolve(live.connection)
+    const { phase } = this.supervisor.state()
+    // Serialised: a second connect while one runs waits for it, except the
+    // person's over a quiet BatchMode try, which could neither show its steps
+    // nor ask them anything: it is replaced by one that can.
+    if (phase === 'connecting') {
+      if (options.interactive && this.quietAttempt?.current()) {
+        this.supervisor.retryNow({ interactive: true })
+        return this.joinNext()
+      }
+      return this.joinNext()
+    }
     // A background caller (a chat, the explorer, the pane) never jumps the
     // reconnect's backoff, and never retries what needs the person: polled
     // against a host that fails at once, it would run ssh at its poll rate.
     // While a reconnect waits out its backoff, it is joined instead.
     if (!options.interactive) {
-      if (this.reconnectTimer !== null) return this.nextAttempt()
       if (HELD_STATES.has(this.view.state)) return Promise.reject(new Error(this.view.stateText))
+      if (phase === 'backoff') return this.joinNext()
+      this.supervisor.start({ interactive: false })
+      return this.joinNext()
     }
-    return this.start(options.interactive)
+    this.supervisor.retryNow({ interactive: true })
+    return this.joinNext()
   }
 
-  private start(interactive: boolean): Promise<SshServerConnection> {
-    this.intentional = false
-    this.clearReconnect()
-    const running = this.bootstrap(interactive).finally(() => {
-      this.running = null
-    })
-    this.running = running
-    this.settleWaiting(running)
-    return running
-  }
-
-  /** The reconnect attempt after the current backoff, for a background caller to wait on. */
-  private nextAttempt(): Promise<SshServerConnection> {
-    if (!this.waiting) {
-      let settle: (attempt: Promise<SshServerConnection>) => void = () => undefined
-      const promise = new Promise<SshServerConnection>((resolve, reject) => {
-        settle = (attempt) => void attempt.then(resolve, reject)
-      })
-      this.waiting = { promise, settle }
+  /**
+   * A failure the supervisor holds, as a step's words: what the bootstrap
+   * threw, a loss's reason, or the backstop running out, said the way the
+   * machine's other failures are.
+   */
+  private stepOf(error: unknown): StepError {
+    if (error instanceof ConnectTimeoutError) {
+      const minutes = Math.round(this.timing.bootstrapMs / 60_000)
+      const took =
+        minutes >= 2
+          ? `${minutes} minutes`
+          : minutes === 1
+            ? 'a minute'
+            : `${Math.max(1, Math.round(this.timing.bootstrapMs / 1000))} seconds`
+      return new StepError('failed', `${this.deps.label()} did not finish connecting in ${took}; see its diagnostics.`)
     }
-    return this.waiting.promise
+    return asStep(error)
   }
 
-  /** Hand the waiting callers an attempt, or the reason there is none. */
-  private settleWaiting(attempt: Promise<SshServerConnection> | Error): void {
-    const waiting = this.waiting
-    this.waiting = null
-    waiting?.settle(attempt instanceof Error ? Promise.reject(attempt) : attempt)
+  /** The connection the attempt under way, or the backoff's next one, brings. */
+  private joinNext(): Promise<SshServerConnection> {
+    return this.supervisor.next().then((live) => live.connection)
   }
 
-  /** The backoff's own attempt, and wake's: these may start a background bootstrap. */
-  private retry(): void {
-    if (this.running || (this.connection && this.endpoint && !this.endpoint.closed)) return
-    void this.start(false).catch(() => undefined)
-  }
-
-  private async bootstrap(interactive: boolean): Promise<SshServerConnection> {
+  /** What the view says between and after attempts, from the supervisor's state. Attempts say their own steps. */
+  private render(state: ConnectionState): void {
     const label = this.deps.label()
-    const steps: Array<{ step: string; ms: number }> = []
+    switch (state.phase) {
+      case 'connecting':
+        return
+      case 'up': {
+        const live = this.supervisor.current()
+        if (live && live !== this.announced) this.announce(live)
+        return
+      }
+      case 'idle':
+      case 'stopped':
+        this.set({ state: 'idle', stateText: 'Not connected', action: 'connect' })
+        return
+      case 'backoff':
+      case 'waiting-for-wake':
+        if (state.retryingForMs >= this.timing.giveUpMs) {
+          // Not a give-up: it keeps trying, less often, and a wake tries at once.
+          // Background callers are answered with these words meanwhile.
+          this.set({
+            state: 'disconnected',
+            stateText: `Disconnected from ${label}${this.lastReachedAt ? ` — last reached ${minutesAgo(this.now() - this.lastReachedAt)}` : ''}. ${this.stepOf(state.lastError).message}`,
+            action: 'connect',
+          })
+        } else this.set({ state: 'reconnecting', stateText: this.reconnectingText(label), working: true })
+        return
+      case 'needs-sign-in': {
+        const step = this.stepOf(state.lastError)
+        this.set({
+          state: 'needs-sign-in',
+          stateText: this.heldWhileReconnecting ? `${label} needs you to sign in.` : step.message,
+          action: 'connect',
+        })
+        return
+      }
+      case 'failed': {
+        const step = this.stepOf(state.lastError)
+        this.set({
+          state: step.state,
+          stateText: step.message,
+          action: step.state === 'version-blocked' ? (step.offerUpgrade ? 'upgrade' : null) : 'connect',
+        })
+        return
+      }
+    }
+  }
+
+  /** One attempt, for the supervisor: probe, install if need be, start or attach, relay, handshake. */
+  private async bootstrap(attempt: ConnectionAttempt<LiveSession, BootstrapHint>): Promise<LiveSession> {
+    const interactive = attempt.hint?.interactive ?? false
+    const label = this.deps.label()
+    // A machine shown Disconnected is tried again without saying so, so its row
+    // does not flicker to Reconnecting every few minutes; it says Connected if
+    // the try succeeds. An attempt the supervisor dropped says nothing at all.
+    // A wake starts the count over, so the try it makes says Reconnecting again.
+    const quiet = attempt.reconnecting && this.supervisor.state().retryingForMs >= this.timing.giveUpMs
+    this.quietAttempt = quiet ? attempt : null
+    const shows = (): boolean => attempt.current() && !quiet
+    // This attempt's own ssh, and only its own: one the supervisor gives up on
+    // (Disconnect, a replacing Connect, the backstop) is killed here, and never
+    // a newer attempt's.
+    let session: RemoteSession | null = null
+    attempt.onAbandoned(() => session?.kill())
+    // Its own diagnostics too, so a dropped attempt's stderr never lands in a newer one's.
+    const diagnostics: SshEnvironmentView['diagnostics'] = { noise: '', stderr: '', steps: [], probe: null }
+    const steps = diagnostics.steps
     const timed = async <T>(step: string, run: () => Promise<T>): Promise<T> => {
       const started = this.now()
       try {
@@ -281,16 +430,18 @@ export class SshEnvironment {
         steps.push({ step, ms: this.now() - started })
       }
     }
-    this.view.diagnostics = { noise: '', stderr: '', steps, probe: null }
+    this.view.diagnostics = diagnostics
     try {
       for (let installs = 0; ; installs++) {
-        const reconnecting = this.lostAt !== null
-        this.set({
-          state: reconnecting ? 'reconnecting' : 'connecting',
-          stateText: reconnecting ? this.reconnectingText(label) : `Connecting to ${label}…`,
-          working: true,
-        })
-        const session = RemoteSession.start(
+        if (shows())
+          this.set({
+            state: attempt.reconnecting ? 'reconnecting' : 'connecting',
+            stateText: attempt.reconnecting ? this.reconnectingText(label) : `Connecting to ${label}…`,
+            working: true,
+          })
+        // Given up on between steps: no new ssh.
+        if (!attempt.current()) throw new StepError('failed', 'This attempt was given up on.')
+        const current = RemoteSession.start(
           () => this.deps.spawn({ interactive }),
           buildConnectScript({
             appVersion: this.deps.app.version,
@@ -301,12 +452,12 @@ export class SshEnvironment {
             channel: this.deps.app.channel,
           }),
         )
-        this.session = session
-        const probe = await timed('probe', () => this.probe(session, interactive, label))
-        this.view.diagnostics.probe = probe
+        session = current
+        const probe = await timed('probe', () => this.probe(current, interactive, label, shows, diagnostics))
+        diagnostics.probe = probe
         const tree = this.deps.serverTree()
         if (!tree) {
-          session.kill()
+          current.kill()
           throw new StepError(
             'failed',
             'This build of Studio has no server to install (run npm run build:server:wsl in a checkout).',
@@ -321,15 +472,17 @@ export class SshEnvironment {
         this.view.notes = assessed.notes
         this.view.gh = { ...probe.gh, os: probe.os || null }
         if (!assessed.supported) {
-          session.kill()
+          current.kill()
           throw new StepError('unsupported', assessed.reason)
         }
         if (assessed.needs.node || assessed.needs.server) {
           if (installs >= 2) {
-            session.kill()
+            current.kill()
             throw new StepError('failed', `${label} still needs an install after two; see its diagnostics.`)
           }
-          await timed('install', () => this.install(session, probe, assessed.target, assessed.needs, tree, label))
+          await timed('install', () =>
+            this.install(current, probe, assessed.target, assessed.needs, tree, label, shows, diagnostics),
+          )
           continue
         }
         const located = locateServer(
@@ -343,64 +496,47 @@ export class SshEnvironment {
         const by = Buffer.from(this.deps.startedBy, 'utf8').toString('base64url')
         if (located.action === 'blocked') {
           if (!(located.offerUpgrade && this.upgradeAsked)) {
-            session.kill()
+            current.kill()
             throw new StepError('version-blocked', located.reason, undefined, located.offerUpgrade)
           }
           this.upgradeAsked = false
-          this.set({ state: 'upgrading', stateText: `Updating the Studio server on ${label}…`, working: true })
+          if (shows())
+            this.set({ state: 'upgrading', stateText: `Updating the Studio server on ${label}…`, working: true })
           decision = `upgrade ${idle} ${by}`
           deadline = this.timing.upgradeMs
         } else if (located.action === 'upgrade') {
-          this.set({
-            state: 'upgrading',
-            stateText: `Updating the Studio server on ${label} from ${located.from} to ${this.deps.app.version}…`,
-            working: true,
-          })
+          if (shows())
+            this.set({
+              state: 'upgrading',
+              stateText: `Updating the Studio server on ${label} from ${located.from} to ${this.deps.app.version}…`,
+              working: true,
+            })
           decision = `upgrade ${idle} ${by}`
           deadline = this.timing.upgradeMs
         } else if (located.action === 'start') {
-          this.set({ state: 'starting', stateText: `Starting the Studio server on ${label}…`, working: true })
+          if (shows())
+            this.set({ state: 'starting', stateText: `Starting the Studio server on ${label}…`, working: true })
           decision = `start ${idle} ${by}`
           deadline = this.timing.startMs
         } else decision = 'attach'
         // The probe's end and SEND can come in two reads: wait for SEND itself.
-        await session.waitForSend(10_000)
-        session.send(decision)
+        await current.waitForSend(10_000)
+        current.send(decision)
         const relay = await timed('relay', () =>
-          session.relay(deadline).catch((error: unknown) => {
-            throw this.relayFailure(session, error, label)
+          current.relay(deadline).catch((error: unknown) => {
+            throw this.relayFailure(current, error, label, diagnostics)
           }),
         )
-        return await timed('handshake', () => this.handshake(session, relay.ready, relay.endpoint, label))
+        return await timed('handshake', () => this.handshake(current, relay.ready, relay.endpoint, label, attempt))
       }
     } catch (error) {
-      this.session?.kill()
-      this.session = null
-      const step =
-        error instanceof StepError
-          ? error
-          : new StepError('failed', error instanceof Error ? error.message : String(error))
-      this.view.diagnostics.stderr = this.view.diagnostics.stderr || (error as { stderr?: string }).stderr || ''
-      if (this.lostAt !== null && step.state !== 'unsupported' && step.state !== 'version-blocked') {
-        // A background reconnect that failed: try again later, or say what it needs.
-        if (step.failure?.code === 'needs-sign-in' || step.failure?.code === 'host-key-changed') {
-          this.set({
-            state: step.failure.code === 'needs-sign-in' ? 'needs-sign-in' : 'failed',
-            stateText: step.failure.code === 'needs-sign-in' ? `${label} needs you to sign in.` : step.message,
-            action: 'connect',
-          })
-          this.lostAt = null
-        } else this.scheduleReconnect(label, step.message)
-        throw step
-      }
-      // A reconnect that ends here (a server it cannot use) is not reconnecting any more.
-      this.lostAt = null
-      this.set({
-        state: step.failure?.code === 'needs-sign-in' ? 'needs-sign-in' : step.state,
-        stateText: step.message,
-        action: step.state === 'version-blocked' ? (step.offerUpgrade ? 'upgrade' : null) : 'connect',
-      })
-      throw step
+      session?.kill()
+      diagnostics.stderr = diagnostics.stderr || (error as { stderr?: string }).stderr || ''
+      // The supervisor decides what the failure means (classify) and the row
+      // says so (render); here it only becomes a step's words.
+      throw asStep(error)
+    } finally {
+      if (this.quietAttempt === attempt) this.quietAttempt = null
     }
   }
 
@@ -411,7 +547,13 @@ export class SshEnvironment {
   }
 
   /** The probe, or the reason the session never got that far, in words. */
-  private async probe(session: RemoteSession, interactive: boolean, label: string): Promise<Probe> {
+  private async probe(
+    session: RemoteSession,
+    interactive: boolean,
+    label: string,
+    shows: () => boolean = () => true,
+    diagnostics: SshEnvironmentView['diagnostics'] = this.view.diagnostics,
+  ): Promise<Probe> {
     try {
       await session.waitFor(
         (line) => line === '@@SPRINTENGINE_PROBE end=1',
@@ -421,8 +563,8 @@ export class SshEnvironment {
     } catch (error) {
       session.kill()
       await session.closed()
-      this.view.diagnostics.noise = session.noise
-      this.view.diagnostics.stderr = session.stderr
+      diagnostics.noise = session.noise
+      diagnostics.stderr = session.stderr
       if (error instanceof SessionClosedError && (session.exit?.code ?? 0) !== 0) {
         const failure = classifySshFailure(session.stderr, label, { batch: !interactive })
         throw new StepError(failure.code === 'needs-sign-in' ? 'needs-sign-in' : 'failed', failure.message, failure)
@@ -432,10 +574,10 @@ export class SshEnvironment {
         `Studio couldn't read ${label}'s setup${session.noise.trim() ? ` (its login printed: ${session.noise.trim().slice(0, 200)})` : ''}.`,
       )
     }
-    this.view.diagnostics.noise = session.noise
+    diagnostics.noise = session.noise
     const probe = parseProbe(session.lines)
     if (!probe) throw new StepError('failed', `Studio couldn't read ${label}'s setup.`)
-    this.set({ state: 'probing', stateText: `Checking ${label}…`, working: true })
+    if (shows()) this.set({ state: 'probing', stateText: `Checking ${label}…`, working: true })
     return probe
   }
 
@@ -446,6 +588,8 @@ export class SshEnvironment {
     needs: { node: boolean; server: boolean },
     tree: { dir: string; digest: string },
     label: string,
+    shows: () => boolean,
+    diagnostics: SshEnvironmentView['diagnostics'],
   ): Promise<void> {
     const fetchHere = needs.node && this.deps.settings().remoteDownload
     const node = needs.node && !fetchHere ? (await this.deps.nodeBinary(target)).binary : null
@@ -458,11 +602,12 @@ export class SshEnvironment {
       session.kill()
       throw new StepError('failed', space)
     }
-    this.set({
-      state: 'installing',
-      stateText: `Installing Studio server ${this.deps.app.version} on ${label} (${Math.max(1, Math.round(archive.bytes / (1024 * 1024)))} MB)…`,
-      working: true,
-    })
+    if (shows())
+      this.set({
+        state: 'installing',
+        stateText: `Installing Studio server ${this.deps.app.version} on ${label} (${Math.max(1, Math.round(archive.bytes / (1024 * 1024)))} MB)…`,
+        working: true,
+      })
     await session.waitForSend(10_000)
     session.send(fetchHere ? 'install-fetch' : 'install', { body: archive.tarGz, end: true })
     try {
@@ -477,12 +622,17 @@ export class SshEnvironment {
     await session.closed()
     if (session.lines.includes('@@SPRINTENGINE_COMMITTED')) return
     const reason = commitFailure(session.lines.join('\n'), session.stderr)
-    this.view.diagnostics.stderr = session.stderr
+    diagnostics.stderr = session.stderr
     throw new StepError('failed', installFailureWords(reason, label))
   }
 
-  private relayFailure(session: RemoteSession, error: unknown, label: string): StepError {
-    this.view.diagnostics.stderr = session.stderr
+  private relayFailure(
+    session: RemoteSession,
+    error: unknown,
+    label: string,
+    diagnostics: SshEnvironmentView['diagnostics'],
+  ): StepError {
+    diagnostics.stderr = session.stderr
     const fail = session.lines.find((line) => line.startsWith('@@SPRINTENGINE_FAIL '))
     if (fail) {
       const [, code = '', ...words] = fail.split(' ')
@@ -510,8 +660,10 @@ export class SshEnvironment {
     ready: RelayReady,
     endpoint: MuxEndpoint,
     label: string,
-  ): Promise<SshServerConnection> {
-    if (!ready.server)
+    attempt: ConnectionAttempt<LiveSession, BootstrapHint>,
+  ): Promise<LiveSession> {
+    const server = ready.server
+    if (!server)
       throw new StepError('failed', `No Studio server is running on ${label} after it was started; see its log there.`)
     const stream = await endpoint.open({ kind: 'owner', purpose: 'backend' }).catch((error: Error) => {
       throw new StepError('failed', `The Studio server on ${label} did not let Studio in: ${error.message}`)
@@ -531,78 +683,50 @@ export class SshEnvironment {
       id: this.deps.id,
       label,
       backend,
-      environmentId: ready.server.environmentId,
-      serverVersion: ready.server.version,
+      environmentId: server.environmentId,
+      serverVersion: server.version,
       open: (purpose) => endpoint.open({ kind: 'owner', purpose }),
       openTcp: (host, port) => endpoint.open({ kind: 'tcp', host, port }),
     }
-    this.connection = connection
-    this.endpoint = endpoint
-    this.session = session
-    this.lastReachedAt = this.now()
-    this.lostAt = null
-    this.attempt = 0
-    endpoint.onClosed((reason) => this.lost(connection, reason))
+    const live: LiveSession = { connection, endpoint, session, server }
+    endpoint.onClosed((reason) => {
+      this.release(live)
+      if (attempt.current()) this.log(`The connection to ${label} was lost (${reason}); reconnecting.`)
+      attempt.lost(new StepError('failed', reason))
+    })
     void session.closed().then(() => endpoint.close('The SSH session ended.'))
+    // Up from here, not a turn of the event loop later: given up on meanwhile,
+    // the supervisor closes it now.
+    attempt.connected(live)
+    return live
+  }
+
+  /** A session that ended or was let go: its backend, its ssh, and the supervisor's hold on it. */
+  private release(live: LiveSession): void {
+    live.connection.backend.close()
+    live.session.kill()
+    if (this.announced === live) this.announced = null
+  }
+
+  /** The supervisor says a session is up: say so, once, to the view and to the listeners. */
+  private announce(live: LiveSession): void {
+    this.announced = live
+    this.lastReachedAt = this.now()
     this.set({
       state: 'connected',
       stateText: 'Connected',
       server: {
-        version: ready.server.version ?? '?',
-        origin: ready.server.origin ?? 'bootstrap',
-        startedBy: ready.server.startedBy,
+        version: live.server.version ?? '?',
+        origin: live.server.origin ?? 'bootstrap',
+        startedBy: live.server.startedBy,
       },
     })
-    if (ready.server.environmentId) this.deps.onEnvironmentId?.(ready.server.environmentId)
+    if (live.server.environmentId) this.deps.onEnvironmentId?.(live.server.environmentId)
     try {
-      this.deps.onConnected?.(connection)
+      this.deps.onConnected?.(live.connection)
     } catch (error) {
       this.log(`An SSH connection listener threw: ${error instanceof Error ? error.message : String(error)}`)
     }
-    return connection
-  }
-
-  private lost(connection: SshServerConnection, reason: string): void {
-    if (this.connection !== connection) return
-    this.connection = null
-    this.endpoint = null
-    connection.backend.close()
-    this.session?.kill()
-    this.session = null
-    if (this.intentional) {
-      this.set({ state: 'idle', stateText: 'Not connected', action: 'connect' })
-      return
-    }
-    this.log(`The connection to ${connection.label} was lost (${reason}); reconnecting.`)
-    this.lostAt = this.now()
-    this.scheduleReconnect(connection.label, reason)
-  }
-
-  private scheduleReconnect(label: string, reason: string): void {
-    this.clearReconnect()
-    if (this.lostAt !== null && this.now() - this.lostAt > this.timing.giveUpMs) {
-      this.set({
-        state: 'disconnected',
-        stateText: `Disconnected from ${label}${this.lastReachedAt ? ` — last reached ${minutesAgo(this.now() - this.lastReachedAt)}` : ''}. ${reason}`,
-        action: 'connect',
-      })
-      this.lostAt = null
-      this.settleWaiting(new Error(this.view.stateText))
-      return
-    }
-    const wait = this.timing.backoffMs[Math.min(this.attempt, this.timing.backoffMs.length - 1)]!
-    this.attempt++
-    this.set({ state: 'reconnecting', stateText: this.reconnectingText(label), working: true })
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null
-      this.retry()
-    }, wait)
-    this.reconnectTimer.unref?.()
-  }
-
-  private clearReconnect(): void {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = null
   }
 
   /**
@@ -614,70 +738,22 @@ export class SshEnvironment {
    * so a healthy machine would end at "needs you to sign in".
    *
    * A machine reconnecting starts its backoff and its ten minutes over: time
-   * asleep or offline was not time spent trying. One that already gave up
-   * (`disconnected`) tries again, since what it waited for may be back. What
-   * needs the person (a sign-in, a changed host key) and what the person did
-   * (Disconnect, Stop server) stay held.
+   * asleep or offline was not time spent trying. One shown Disconnected tries
+   * at once, since what it waited for may be back. What needs the person (a
+   * sign-in, a changed host key) and what the person did (Disconnect, Stop
+   * server) stay held.
    */
   wake(): void {
-    this.attempt = 0
-    if (this.endpoint && !this.endpoint.closed) {
-      void this.checkLiveness()
-      return
-    }
-    if (this.lostAt !== null) {
-      this.lostAt = this.now()
-      if (!this.running) this.retry()
-      return
-    }
-    if (this.view.state === 'disconnected' && !this.heldByPerson && !this.running) {
-      this.lostAt = this.now()
-      this.retry()
-    }
-  }
-
-  /** Whether the connected session answers within `livenessMs`; closed, and so reconnected, when it does not. */
-  private checkLiveness(): Promise<void> {
-    if (this.livenessCheck) return this.livenessCheck
-    const connection = this.connection
-    const endpoint = this.endpoint
-    if (!connection || !endpoint) return Promise.resolve()
-    const check = (async () => {
-      let timer: ReturnType<typeof setTimeout> | null = null
-      const answered = await Promise.race([
-        connection.backend.refresh().then(
-          () => true,
-          () => false,
-        ),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(false), this.timing.livenessMs)
-          timer.unref?.()
-        }),
-      ])
-      if (timer) clearTimeout(timer)
-      if (answered || this.endpoint !== endpoint || endpoint.closed) return
-      this.log(`${connection.label} did not answer within ${this.timing.livenessMs} ms of a wake; reconnecting.`)
-      endpoint.close('The connection stopped answering after the computer woke or its network changed.')
-    })().finally(() => {
-      this.livenessCheck = null
-    })
-    this.livenessCheck = check
-    return check
+    if (this.heldByPerson) return
+    this.supervisor.wake()
   }
 
   /** Let the session go. The managed server keeps running (its idle rule ends it). */
   disconnect(): void {
     this.heldByPerson = true
-    this.intentional = true
-    this.clearReconnect()
-    this.lostAt = null
-    this.settleWaiting(new Error('Disconnected.'))
-    const endpoint = this.endpoint
-    if (endpoint) endpoint.close('Disconnected.')
-    else {
-      this.session?.kill()
-      this.set({ state: 'idle', stateText: 'Not connected', action: 'connect' })
-    }
+    // A bootstrap in flight is given up on, and kills its own ssh; what it
+    // would have brought is closed.
+    this.supervisor.stop('Disconnected.')
   }
 
   /** The person said yes to updating an older external server in place: connect once with the upgrade. */
@@ -694,21 +770,20 @@ export class SshEnvironment {
    */
   async stopServer(): Promise<void> {
     this.heldByPerson = true
-    await this.running?.catch(() => undefined)
+    if (this.supervisor.state().phase === 'connecting') await this.supervisor.next().catch(() => undefined)
     const stopping = this.stopNow()
     const joined = stopping.then(
       () => Promise.reject(new Error(`The Studio server on ${this.deps.label()} was stopped.`)),
       (error: unknown) => Promise.reject(error),
     )
     joined.catch(() => undefined)
-    this.running = joined
+    this.stopping = joined
     try {
       await stopping
     } finally {
-      if (this.running === joined) this.running = null
+      if (this.stopping === joined) this.stopping = null
     }
   }
-
   private async stopNow(): Promise<void> {
     const label = this.deps.label()
     this.disconnect()

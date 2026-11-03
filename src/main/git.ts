@@ -31,6 +31,7 @@ import {
 import type { WorktreePoolLeaseResult } from './worktree-pool/worktree-pool-service'
 import { removeWorktreeLeftovers } from './worktree-leftovers'
 import { removeLinkedWorktree } from './worktree-removal'
+import { blockedMessage, worktreeLeases } from './worktree-leases'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import { repoRootFromWorktreePath, WORKTREE_CONTAINER_DIR, worktreeContainerPath } from '../shared/worktree-paths'
 import { dependencyInstallSettingFor, type WorktreeDependencyInstallView } from '../shared/ipc/worktree-pool'
@@ -988,30 +989,39 @@ export async function removeGitWorktree(
     }
   }
 
-  // The in-use lock this profile put on its own agent worktree is the app's
-  // mark, not the person's, and a person removing the worktree releases it.
-  // Any other lock (another profile's agent, or one placed by hand) makes git
-  // refuse below, which is the point of it.
-  const ownLock = registeredWorktree.locked && registeredWorktree.agentLock === 'this-profile'
-  if (ownLock) {
-    const unlocked = await unlockWorktree(root.data, worktreePath)
-    if (!unlocked.ok) return toWorktreeResult(unlocked, unlocked)
-  }
-
-  const removeResult = await withWorktreeRegistryLock(root.data, async () => {
-    const removed = await removeLinkedWorktree(root.data, worktreePath, runGitCommand, { force: input.force })
-    // Git for Windows reports success with junctions (a linked
-    // `node_modules`) and their folders still in place, and the worktree
-    // could not be made at this path again. The path as git lists it, which
-    // is the folder it just removed.
-    if (removed.ok && !(await removeWorktreeLeftovers(registeredWorktree.path))) {
-      console.warn(`[git] kept files written after git removed the worktree at ${registeredWorktree.path}`)
+  // Never while a chat, session or terminal is starting in it: until it is
+  // live it shows nowhere a person (or the caller) could have looked. A
+  // running one is the caller's to judge, as it always was.
+  const hold = await worktreeLeases.tryExclusive(worktreePath, 'this worktree is being removed')
+  if ('blockedBy' in hold) return { ok: false, message: blockedMessage(hold) }
+  try {
+    // The in-use lock this profile put on its own agent worktree is the app's
+    // mark, not the person's, and a person removing the worktree releases it.
+    // Any other lock (another profile's agent, or one placed by hand) makes git
+    // refuse below, which is the point of it.
+    const ownLock = registeredWorktree.locked && registeredWorktree.agentLock === 'this-profile'
+    if (ownLock) {
+      const unlocked = await unlockWorktree(root.data, worktreePath)
+      if (!unlocked.ok) return toWorktreeResult(unlocked, unlocked)
     }
-    return removed
-  })
-  if (!removeResult.ok && ownLock) await relockWorktree(root.data, worktreePath, registeredWorktree.lockedReason)
 
-  return toWorktreeResult(removeResult, removeResult)
+    const removeResult = await withWorktreeRegistryLock(root.data, async () => {
+      const removed = await removeLinkedWorktree(root.data, worktreePath, runGitCommand, { force: input.force })
+      // Git for Windows reports success with junctions (a linked
+      // `node_modules`) and their folders still in place, and the worktree
+      // could not be made at this path again. The path as git lists it, which
+      // is the folder it just removed.
+      if (removed.ok && !(await removeWorktreeLeftovers(registeredWorktree.path))) {
+        console.warn(`[git] kept files written after git removed the worktree at ${registeredWorktree.path}`)
+      }
+      return removed
+    })
+    if (!removeResult.ok && ownLock) await relockWorktree(root.data, worktreePath, registeredWorktree.lockedReason)
+
+    return toWorktreeResult(removeResult, removeResult)
+  } finally {
+    hold.release()
+  }
 }
 
 export async function pruneGitWorktrees(repoRoot: string): Promise<GitWorktreeOperationResult<GitCommandResult>> {

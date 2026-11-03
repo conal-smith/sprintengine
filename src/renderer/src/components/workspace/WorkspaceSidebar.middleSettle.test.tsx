@@ -64,8 +64,9 @@ async function mount() {
   const settled: string[] = []
   useWorkspaceStore.setState({
     chatListView: 'projects',
-    setWorkspaceSettled: (id: string, value: boolean) => {
+    setWorkspaceSettled: async (id: string, value: boolean) => {
       if (value) settled.push(id)
+      return null
     },
   })
   type SidebarProps = Parameters<typeof WorkspaceSidebar>[0]

@@ -1152,124 +1152,37 @@ test('workspacesSlice', async () => {
     )
   }
 
-  // Settled chats (2026-09-07): the hand decisions, the sweep, and the wake.
+  // Settled chats (2026-09-07): the hand decisions and the wake. The sweep is
+  // main's (`main/automation/workspace-settlement-sweep.test.ts`).
   {
     const DAY = 24 * 60 * 60 * 1000
     const settleId = useWorkspaceStore.getState().addWorkspace(standardTemplate, {
       folderPath: '/Users/example/settle',
       background: true,
     })
-    // Adding activates, so hand the selection to a second row: the sweep's
-    // active-row exemption is asserted separately below.
-    const lookedAtId = useWorkspaceStore.getState().addWorkspace(standardTemplate, {
-      folderPath: '/Users/example/settle-looked-at',
-      background: true,
-    })
-    useWorkspaceStore.getState().setActiveWorkspace(lookedAtId)
     const rowOf = (id: string) => useWorkspaceStore.getState().workspaces.find((w) => w.id === id)!
-    // The pull request list has been read and holds none: absent, it is not
-    // yet read, and the keep for open pull requests holds every row.
-    const reconcile = (now: number, busyIds: string[] = [], heldIds: string[] = []) =>
-      useWorkspaceStore.getState().reconcileWorkspaceSettlement({
-        now,
-        busyIds: new Set(busyIds),
-        heldIds: new Set(heldIds),
-        pullRequestsByWorkspaceId: {},
-      })
-    const activeIds = () =>
-      new Set([
-        useWorkspaceStore.getState().activeWorkspaceId,
-        ...useWorkspaceStore.getState().workspaceWindows.map((w) => w.activeWorkspaceId),
-      ])
-    assert.equal(activeIds().has(settleId), false, 'the fixture row is not the active row of any window')
     const bornAt = rowOf(settleId).createdAt
 
-    // Auto-settle is off until the person switches it on from the row menu.
-    reconcile(bornAt + 30 * DAY)
-    assert.equal(rowOf(settleId).settledAt ?? null, null, 'a chat nobody switched Auto-settle on for never settles')
+    // The row menu's Auto-settle switch records the opt-in, which main's sweep reads.
     useWorkspaceStore.getState().setWorkspaceAutoSettle(settleId, true)
     assert.equal(rowOf(settleId).autoSettleEnabled, true, 'the switch records the opt-in')
 
-    // Too recent: the sweep leaves it.
-    reconcile(bornAt + DAY)
-    assert.equal(rowOf(settleId).settledAt ?? null, null, 'a day-old row does not settle')
-
-    // Old enough, but wearing the unseen finished mark: held, not settled.
-    reconcile(bornAt + 4 * DAY, [], [settleId])
-    assert.equal(rowOf(settleId).settledAt ?? null, null, 'the unseen mark holds a row out of the shelf')
-
-    // Idle three days, but the pull requests not read yet: an open one may be
-    // among them, so the keep holds it…
-    useWorkspaceStore
-      .getState()
-      .reconcileWorkspaceSettlement({ now: bornAt + 4 * DAY, busyIds: new Set(), heldIds: new Set() })
-    assert.equal(rowOf(settleId).settledAt ?? null, null, 'an unread pull request list holds a row with the keep on')
-    // …and an open one, once read, holds it too.
-    const openPullRequest = {
-      url: 'https://github.com/acme/app/pull/1',
-      repoKey: 'github.com/acme/app',
-      repoName: 'app',
-      number: 1,
-      title: 'Fix it',
-      state: 'open' as const,
-      isDraft: false,
-      openedAt: bornAt,
-      stateAt: bornAt,
-    }
-    useWorkspaceStore.getState().reconcileWorkspaceSettlement({
-      now: bornAt + 4 * DAY,
-      busyIds: new Set(),
-      heldIds: new Set(),
-      pullRequestsByWorkspaceId: { [settleId]: [openPullRequest] },
-    })
-    assert.equal(rowOf(settleId).settledAt ?? null, null, 'an open pull request holds a quiet row')
-    useWorkspaceStore.getState().setKeepChatsWithOpenPullRequest(false)
-    useWorkspaceStore.getState().reconcileWorkspaceSettlement({
-      now: bornAt + 4 * DAY,
-      busyIds: new Set(),
-      heldIds: new Set(),
-      pullRequestsByWorkspaceId: { [settleId]: [openPullRequest] },
-    })
-    // With the keep off, idle three days settles it all the same, quietly.
-    assert.equal(rowOf(settleId).settledAt, bornAt + 4 * DAY, 'the sweep stamps settledAt')
-    useWorkspaceStore.getState().setKeepChatsWithOpenPullRequest(true)
-    assert.equal(useWorkspaceStore.getState().appSettings.keepChatsWithOpenPullRequest, true)
-    assert.equal(rowOf(settleId).settledOverride ?? null, null, 'the sweep records no hand decision')
-
-    // Wanting the person (a prompt landed after the sweep's reading): a
-    // sweep-settled row wakes for it.
-    reconcile(bornAt + 5 * DAY, [], [settleId])
-    assert.equal(rowOf(settleId).settledAt ?? null, null, 'a sweep-settled row that wants the person wakes')
-    reconcile(bornAt + 5 * DAY)
-    assert.equal(typeof rowOf(settleId).settledAt, 'number', 'and settles again once nothing wants them')
-
-    // Busy again: it wakes.
-    reconcile(bornAt + 5 * DAY, [settleId])
-    assert.equal(rowOf(settleId).settledAt ?? null, null, 'a busy resting row wakes')
-
     // A hand Un-settle holds against the sweep until real activity.
-    useWorkspaceStore.getState().setWorkspaceSettled(settleId, true)
+    void useWorkspaceStore.getState().setWorkspaceSettled(settleId, true)
     assert.equal(typeof rowOf(settleId).settledAt, 'number', 'Settle stamps')
     assert.equal(rowOf(settleId).settledOverride, 'settled', 'and records the decision')
-    useWorkspaceStore.getState().setWorkspaceSettled(settleId, false)
+    void useWorkspaceStore.getState().setWorkspaceSettled(settleId, false)
     assert.equal(rowOf(settleId).settledAt ?? null, null, 'Un-settle clears the stamp')
     assert.equal(rowOf(settleId).settledOverride, 'active', 'and holds the row active')
-    reconcile(bornAt + 30 * DAY)
-    assert.equal(rowOf(settleId).settledAt ?? null, null, 'the sweep honours the hold, however old the row')
-    useWorkspaceStore.getState().setWorkspaceSettled(settleId, true)
-    reconcile(bornAt + 30 * DAY, [], [settleId])
-    assert.equal(typeof rowOf(settleId).settledAt, 'number', 'a hand Settle survives a row that wants the person')
-    useWorkspaceStore.getState().setWorkspaceSettled(settleId, false)
 
-    // Typing spends the hold, and the next sweep applies the usual rule.
+    // Typing spends the hold.
     useWorkspaceStore.getState().recordWorkspaceTerminalActivity(settleId, bornAt + 30 * DAY)
     assert.equal(rowOf(settleId).settledOverride ?? null, null, 'a keystroke clears the hand decision')
-    reconcile(bornAt + 34 * DAY)
-    assert.equal(typeof rowOf(settleId).settledAt, 'number', 'three idle days after the keystroke, it settles again')
 
     // A replayed keystroke — the same stamp the store already holds — is not
     // input: the sessions are re-listed on every window mount with the stamps
     // they had, and that must not wake a row settled after the person typed.
+    void useWorkspaceStore.getState().setWorkspaceSettled(settleId, true)
     useWorkspaceStore.getState().recordWorkspaceTerminalActivity(settleId, bornAt + 30 * DAY)
     assert.equal(typeof rowOf(settleId).settledAt, 'number', 'a replayed input stamp does not wake a settled row')
 
@@ -1288,7 +1201,7 @@ test('workspacesSlice', async () => {
 
     // A message is the person returning, so it wakes a resting row the way a
     // keystroke does — and a replayed stamp, which is not a new message, does not.
-    useWorkspaceStore.getState().setWorkspaceSettled(settleId, true)
+    void useWorkspaceStore.getState().setWorkspaceSettled(settleId, true)
     useWorkspaceStore.getState().recordWorkspaceUserMessage(settleId, bornAt + 34 * DAY)
     assert.equal(typeof rowOf(settleId).settledAt, 'number', 'a replayed message stamp does not wake a settled row')
     useWorkspaceStore.getState().recordWorkspaceUserMessage(settleId, bornAt + 34 * DAY + 1)
@@ -1296,19 +1209,11 @@ test('workspacesSlice', async () => {
     assert.equal(rowOf(settleId).settledOverride ?? null, null, 'and leaves no hand decision behind')
 
     // The agent's turn end is activity for the idle clock, but never a wake.
-    useWorkspaceStore.getState().setWorkspaceSettled(settleId, true)
+    void useWorkspaceStore.getState().setWorkspaceSettled(settleId, true)
     useWorkspaceStore.getState().recordWorkspaceTurnEnd(settleId, bornAt + 35 * DAY)
     assert.equal(rowOf(settleId).lastTurnEndedAt, bornAt + 35 * DAY, 'the turn end is recorded')
     assert.equal(typeof rowOf(settleId).settledAt, 'number', 'an agent finishing is not the person returning')
-    useWorkspaceStore.getState().setWorkspaceSettled(settleId, false)
-
-    // The active row of a window never settles under the person.
-    const activeId = useWorkspaceStore.getState().activeWorkspaceId
-    assert.ok(activeId, 'the fixture store has an active row')
-    const activeBornAt = rowOf(activeId!).createdAt
-    useWorkspaceStore.getState().setWorkspaceAutoSettle(activeId!, true)
-    reconcile(activeBornAt + 30 * DAY)
-    assert.equal(rowOf(activeId!).settledAt ?? null, null, 'the active row is exempt from the sweep')
+    void useWorkspaceStore.getState().setWorkspaceSettled(settleId, false)
   }
 
   // --- snooze: the store's half of "not now" (snooze, 2026-09-10) -------------

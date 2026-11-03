@@ -2,13 +2,16 @@ import type { WorktreePoolActionResult } from '../../shared/ipc/worktree-pool'
 import { worktreeBranchName } from '../../shared/worktree-branch'
 import type { SlotRecord } from './pool-store'
 import { operationInProgress, readSlotGitDir, readSlotStatus, removeSlotMarker } from './slot-git'
-import { type PoolContext, type PoolRuntime, messageOf } from './pool-context'
+import { blockedMessage } from '../worktree-leases'
+import { type PoolContext, type PoolRuntime, holdIdle, messageOf } from './pool-context'
 import { unlockIfOurs } from './pool-slot-steps'
 import { returnSlot } from './pool-return'
 
 /** What a person can do with a held slot (worktree-pool-service.ts): commit, stash, discard or keep its work. */
 
 // ── Held-slot actions ────────────────────────────────────────────────────
+
+const ACTING = { commit: 'committing', stash: 'stashing', discard: 'discarding', keep: 'keeping' } as const
 
 export async function heldAction(
   ctx: PoolContext,
@@ -18,19 +21,30 @@ export async function heldAction(
   message: string | undefined,
 ): Promise<WorktreePoolActionResult> {
   if (slot.state !== 'held') return { ok: false, message: 'That worktree is not held.' }
-  if (await ctx.somethingRunsIn(slot.path)) {
-    return { ok: false, message: 'A terminal is still open in that worktree. Close it first.' }
+  // Held until the action is done; the return after it takes its own.
+  if (pool.busy.has(slot.id)) return { ok: false, message: 'That worktree is busy.' }
+  const pathHold = await holdIdle(ctx, slot.path, `the pool is ${ACTING[action]} the work in this worktree`)
+  if (!('release' in pathHold)) {
+    return {
+      ok: false,
+      message:
+        'blockedBy' in pathHold ? blockedMessage(pathHold) : 'Something is running or starting in that worktree.',
+    }
   }
-  const began = await ctx.withPool(pool, async () => {
-    if (pool.busy.has(slot.id) || slot.state !== 'held') return false
-    pool.busy.add(slot.id)
-    slot.op = { kind: 'held-action', startedAt: ctx.now(), pid: process.pid }
-    await ctx.persist(pool)
-    return true
-  })
-  if (!began) return { ok: false, message: 'That worktree is busy.' }
+  // From here every way out gives up the hold and, once it is set, the busy
+  // mark: a record that cannot be written must not leave the path held.
+  let marked = false
   let outcome: WorktreePoolActionResult = { ok: true, message: null }
   try {
+    const began = await ctx.withPool(pool, async () => {
+      if (pool.busy.has(slot.id) || slot.state !== 'held') return false
+      pool.busy.add(slot.id)
+      marked = true
+      slot.op = { kind: 'held-action', startedAt: ctx.now(), pid: process.pid }
+      await ctx.persist(pool)
+      return true
+    })
+    if (!began) return { ok: false, message: 'That worktree is busy.' }
     const gitDir = await readSlotGitDir(ctx.git, slot.path)
     const operation = gitDir ? await operationInProgress(gitDir) : null
     if (action === 'keep') {
@@ -94,13 +108,19 @@ export async function heldAction(
       if (!cleaned.ok) return (outcome = { ok: false, message: cleaned.message ?? 'git clean failed.' })
     }
   } finally {
-    await ctx.withPool(pool, async () => {
-      if (pool.record.slots.includes(slot)) {
-        slot.op = null
-        await ctx.persist(pool)
+    try {
+      if (marked) {
+        await ctx.withPool(pool, async () => {
+          if (pool.record.slots.includes(slot)) {
+            slot.op = null
+            await ctx.persist(pool)
+          }
+        })
       }
-    })
-    pool.busy.delete(slot.id)
+    } finally {
+      if (marked) pool.busy.delete(slot.id)
+      pathHold.release()
+    }
   }
   if (outcome.ok && pool.record.slots.includes(slot)) {
     const returned = await returnSlot(ctx, pool, slot)

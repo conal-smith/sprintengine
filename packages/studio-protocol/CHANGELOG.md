@@ -4,6 +4,17 @@
 
 ### Added
 
+- **Permissions** (`permissions.ts`): `STUDIO_PERMISSIONS`, the closed set of
+  what a remote caller may do; every method and topic needs the permission its
+  `scope` names plus any `extraPermissions` it adds (`studioSpecPermissions`),
+  so none can need less than its scope; `STUDIO_SCOPE_PERMISSIONS`, what each
+  scope a grant holds carries; and `authorizeStudioMethod`,
+  `authorizeStudioTopic` and `authorizeStudioAccess`, the one decision (deny
+  by default: an unknown method, then an owner's, then the first permission
+  missing). Nothing on the wire changes: a grant is still sent as scopes, and
+  a refusal is still `owner_required` or `scope_required` naming the scope
+  (or, for a permission a method adds, that permission:
+  `studioRefusedGrantName`).
 - `visual` among `STUDIO_RESERVED_TOOLSET_NAMES`: `visual.preview`, which
   draws an agent's ```visual block as the chat will and answers with a
   picture, its height and its console, which a Studio's shell offers.

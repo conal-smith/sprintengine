@@ -537,7 +537,7 @@ never run two bootstraps at once.
 | Upgrading | old server exited after `server.shutdown { drain: true }` | drain budget 60 s (turns finish or suspend), then SIGTERM, 10 s, SIGKILL | "The old server on build-box didn't stop" |
 | Relaying | `@@SPRINTENGINE_RELAY` | 10 s | — |
 | Handshaking | `welcome` | 10 s | window mismatch → VersionBlocked |
-| Reconnecting | Connected | backoff 1, 2, 4 … 30 s, reset on wake or network change | after 10 min awake: Disconnected with "last reached …"; a wake or network change tries again |
+| Reconnecting | Connected | jittered backoff 1, 2, 4 … 30 s, reset on wake or network change | after 10 min of trying (time asleep does not count): shown Disconnected with "last reached …", still tried every 5 min and at once on a wake or network change |
 
 As built (2026-10-03), `src/main/environments/ssh/ssh-environment.ts`:
 
@@ -984,9 +984,9 @@ one per SSH environment, in main:
   reconnected. Killing it unasked cost a full ssh handshake on every unlock,
   and a key whose passphrase is not in ssh-agent cannot make one in the
   background. A wake also restarts a reconnect's ten minutes (time asleep is
-  not time spent trying) and lets a machine that gave up (Disconnected) try
+  not time spent trying) and lets a machine shown Disconnected try
   again; Needs sign-in and the person's own Disconnect stay held.
-- **Reconnect**: `BatchMode=yes`, backoff 1 → 30 s, reset on wake. On success
+- **Reconnect**: `BatchMode=yes`, jittered backoff 1 → 30 s (5 min once shown Disconnected), reset on wake, never given up; the rules are the shared connection supervisor's (`packages/connection-supervisor`). On success
   the client resumes every open stream with its `afterSeq` and `generation`
   (parent 5.1); a cursor the server cannot vouch for gets a reset snapshot.
   Commands in flight are retried with their `commandId`, so a send lost with

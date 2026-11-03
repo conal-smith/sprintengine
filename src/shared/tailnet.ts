@@ -4,6 +4,12 @@
 // The listener itself is opt-in and bound to the Tailscale interface address
 // only.
 
+import {
+  studioPrincipal,
+  type StudioPermission,
+  type StudioPrincipal,
+} from '../../packages/studio-protocol/src/permissions'
+
 /**
  * Per-device scopes, mirroring the gateway's tool families.
  *
@@ -61,6 +67,38 @@ export function tailnetScopeGrantsAccess(granted: ReadonlySet<TailnetScope>, req
   if (granted.has(required)) return true
   if (!required.endsWith(':read')) return false
   return granted.has(`${required.slice(0, -':read'.length)}:operate` as TailnetScope)
+}
+
+/**
+ * What each scope a paired device holds carries, in the permissions every
+ * remote method declares (`packages/studio-protocol/src/permissions.ts`).
+ *
+ * The scopes stay what is stored, paired and shown: a device file written by
+ * any build reads the same, and another desktop or a phone is told the scopes
+ * it always was. They are translated here, at the request, and nowhere else.
+ * `operate` carries `read` within its family, the implication
+ * `tailnetScopeGrantsAccess` draws, spelled out; no scope carries a terminal,
+ * the filesystem, settings, or this machine's upkeep.
+ */
+export const TAILNET_SCOPE_PERMISSIONS: { readonly [S in TailnetScope]: readonly StudioPermission[] } = {
+  'workspace:read': ['workspace:read'],
+  'workspace:operate': ['workspace:read', 'workspace:operate'],
+  'backlog:read': ['backlog:read'],
+  'backlog:operate': ['backlog:read', 'backlog:operate'],
+  'conversation:read': ['conversation:read'],
+  'conversation:operate': ['conversation:read', 'conversation:operate'],
+}
+
+/**
+ * The principal a paired device is, from its scopes as they stand now. Never
+ * an owner: a device is a guest of this machine, whatever it was granted.
+ * Names outside the vocabulary (a retired terminal scope) carry nothing.
+ */
+export function tailnetDevicePrincipal(scopes: readonly unknown[]): StudioPrincipal {
+  return studioPrincipal({
+    owner: false,
+    permissions: normalizeTailnetScopes(scopes).flatMap((scope) => TAILNET_SCOPE_PERMISSIONS[scope]),
+  })
 }
 
 /**

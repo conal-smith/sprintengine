@@ -1,5 +1,3 @@
-import type { Workspace } from '../types/workspace'
-import type { WorkspaceFieldsPatch } from '../../../shared/workspace-sync'
 import { formatTimeOfDay } from './clockFormat'
 
 // Snooze: "not now, ask me again at <time>" (owner ruling, 2026-09-10).
@@ -30,9 +28,10 @@ import { formatTimeOfDay } from './clockFormat'
 // survives a restart, a window move and a machine asleep past the wake time
 // with no recovery path to get wrong.
 //
-// This module only DECIDES. The sidebar renders the decision; the store writes
-// the fields. Same division as `workspaceSettle.ts`, whose shape this mirrors
-// on purpose — the two rules are read side by side.
+// This module offers the wake times and the words a sleeping row wears.
+// Whether a row is asleep is the record rule in `shared/workspace-snooze.ts`,
+// re-exported below, which main's rest sweep reads as well: the sidebar
+// renders it, and main writes the fields.
 
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
@@ -149,83 +148,6 @@ export function resolveSnoozePresets(now: number): ReadonlyArray<SnoozePreset> {
   return presets
 }
 
-/** Does this row carry a snooze at all — awake or not? The field test, nothing more. */
-export function hasSnooze(workspace: Pick<Workspace, 'snoozedUntil'>): boolean {
-  return typeof workspace.snoozedUntil === 'number' && Number.isFinite(workspace.snoozedUntil)
-}
-
-/**
- * Is the wake time still ahead? This is the WHOLE test — a snoozed row is one
- * whose stamp is in the future, and nothing brings it back early.
- *
- * There was an "early wake" rule here, carried over with the rest of the
- * borrowed model: a snoozed thread came back before its time if the agent got
- * blocked on the person, or if a turn ended after the snooze was set. Both
- * are gone (owner, 2026-09-10), and the reasons are worth keeping:
- *
- *  - Blocked-on-you was the reason a chat asking a question could not be snoozed
- *    at all, since snoozing one would have un-snoozed it on the next tick. "You
- *    should be able to snooze whatever you want" — and under suspend the
- *    question is not lost, it simply waits in the CLI session and is re-asked
- *    when the person resumes the terminal themselves.
- *  - Turn-ended could no longer fire honestly once snoozing suspended the
- *    terminals: a sleeping chat has no process to finish a turn. What it could
- *    still do was fire by ACCIDENT — snooze a working chat and a Stop hook
- *    landing in the moment before the suspend does would un-snooze the row the
- *    person had just put away.
- *
- * So the rule is the clock and only the clock, which is also the thing a person
- * can predict without being told any of the above.
- */
-export function isSnoozeUnexpired(workspace: Pick<Workspace, 'snoozedUntil'>, now: number): boolean {
-  return hasSnooze(workspace) && (workspace.snoozedUntil as number) > now
-}
-
-/**
- * The one answer to "is this row asleep right now?". Rest outranks sleep: a
- * settled row keeps a snooze still ahead underneath its rest, to hand back if
- * the Settle is undone (`settleWorkspacePatch`), and is not asleep meanwhile.
- */
-export function isSnoozedWorkspace(workspace: Pick<Workspace, 'snoozedUntil' | 'settledAt'>, now: number): boolean {
-  return typeof workspace.settledAt !== 'number' && isSnoozeUnexpired(workspace, now)
-}
-
-/**
- * May this row be snoozed at all?
- *
- * A chat blocked on a question may be (the question waits and is re-asked on
- * resume). A chat with an agent still working may not, but that is the
- * caller's to know (`workspaceIsWorking`), not the record's: suspending ends
- * the agent processes, and an agent working in the background does not come
- * back on the wake.
- *
- * The two that may not are the two with nowhere to sleep. A settled row is
- * already out of the list, so a snooze underneath it would do nothing visible
- * and then expire into a Woke mark on a row nobody woke. A row born on a paired
- * machine lives in the Remote band, which has no shelves — the same rule Settle
- * follows for the same reason.
- */
-export function canSnoozeWorkspace(workspace: Pick<Workspace, 'settledAt' | 'remoteOrigin'>): boolean {
-  if (typeof workspace.settledAt === 'number') return false
-  if (workspace.remoteOrigin) return false
-  return true
-}
-
-/**
- * When a snooze ENDED, or null while it is still running (or never ran).
- *
- * This is the Woke mark: the sidebar's order is deliberately static, so a row
- * that comes back does not move to announce itself and needs to say so on its
- * own face. Cleared by opening the row — the mark exists to get you there.
- *
- * The wake time itself is the answer, because it is the only way a row wakes.
- */
-export function workspaceWokeAt(workspace: Pick<Workspace, 'snoozedUntil'>, now: number): number | null {
-  if (!hasSnooze(workspace)) return null
-  const wakeAt = workspace.snoozedUntil as number
-  return wakeAt <= now ? wakeAt : null
-}
-
 /**
  * The countdown a sleeping row wears: "42m", "2h", "3d". Minutes round UP so a
  * row that is still hidden never reads "0m" — a zero on a row you cannot see is
@@ -242,19 +164,14 @@ export function snoozeWakeLabel(wakeAt: number, now: number): string {
   return `${Math.ceil(remaining / DAY_MS)}d`
 }
 
-/**
- * The two transitions as registry field patches, so the row menu, the wake
- * button and Settle all write the same field the same way — the reason
- * `workspaceSettle.ts` hands out patches rather than letting each caller
- * assemble one.
- *
- * One field, since the early-wake rule went: the wake time is the whole of a
- * snooze. It went with a companion `snoozedAt`, which existed only as the line
- * a turn end had to beat to count as news.
- */
-export function snoozeWorkspacePatch(wakeAt: number): WorkspaceFieldsPatch {
-  return { snoozedUntil: wakeAt }
-}
-
-// Waking is shared with Settle, which clears a snooze in the same patch.
-export { wakeSnoozedWorkspacePatch } from '../../../shared/workspace-lifecycle'
+// The record rules (is a row asleep, when did it wake, the patch that puts it
+// to sleep) are shared with main, which decides a chat's rest against them.
+export {
+  canSnoozeWorkspace,
+  hasSnooze,
+  isSnoozeUnexpired,
+  isSnoozedWorkspace,
+  snoozeWorkspacePatch,
+  wakeSnoozedWorkspacePatch,
+  workspaceWokeAt,
+} from '../../../shared/workspace-snooze'

@@ -1,5 +1,6 @@
 import { isFolderOpenTargetId } from '../../../../shared/folder-open-targets'
 import { DEFAULT_AUTO_SETTLE_AFTER_DAYS, normalizeAutoSettleAfterDays } from '../../utils/workspaceSettle'
+import { normalizeSettledChatsSettings } from '../../../../shared/workspace-settlement'
 import type { ExecutionHostId, ExecutionHostSettings } from '../../../../shared/execution-host'
 import {
   normalizeAgentLaunchHosts,
@@ -822,14 +823,11 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | undefined,
         : workspaces.length > 0,
     terminalIdleSuspendMinutes: normalizeTerminalIdleSuspendMinutes(settings?.terminalIdleSuspendMinutes),
     terminalKeepRecentAlive: normalizeTerminalKeepRecentAlive(settings?.terminalKeepRecentAlive),
-    settleOnPullRequestMerge:
-      typeof settings?.settleOnPullRequestMerge === 'boolean' ? settings.settleOnPullRequestMerge : true,
-    // Only an explicit stored `false` lets the idle rule settle a chat whose
-    // pull request is still open: a profile from before the setting keeps them.
-    keepChatsWithOpenPullRequest: settings?.keepChatsWithOpenPullRequest !== false,
+    // Settings ▸ Settled chats, read the way main's copy of them is read
+    // (`normalizeSettledChatsSettings`), so a window and main cannot disagree
+    // about a default.
+    ...normalizeSettledChatsSettings(settings),
     sidebarWorkingSection: settings?.sidebarWorkingSection === true,
-    // Absent before the setting existed: the three days it always was.
-    autoSettleAfterDays: normalizeAutoSettleAfterDays(settings?.autoSettleAfterDays),
     // Only an explicit stored `false` turns the player off: it is the
     // feature's default, and an unreadable value should not hide an agent.
     browserAutoFloatAgentPreview: settings?.browserAutoFloatAgentPreview !== false,

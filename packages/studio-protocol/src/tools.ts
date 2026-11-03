@@ -287,7 +287,11 @@ type MethodSpec = {
   owner?: true
 }
 
-const offering: MethodSpec = { scope: 'tools:offer', mutation: false, capability: STUDIO_CLIENT_TOOLS_CAPABILITY }
+const offering: MethodSpec = {
+  scope: 'tools:offer',
+  mutation: false,
+  capability: STUDIO_CLIENT_TOOLS_CAPABILITY,
+}
 
 /**
  * An offer is idempotent (a second offer of a toolset replaces the first), as
@@ -298,7 +302,11 @@ export const STUDIO_TOOLS_METHODS: { readonly [M in StudioToolsMethod]: MethodSp
   'tools.offer': offering,
   'tools.withdraw': offering,
   'tools.focus': offering,
-  'tools.catalog': { scope: 'conversation:read', mutation: false, capability: STUDIO_CLIENT_TOOLS_CAPABILITY },
+  'tools.catalog': {
+    scope: 'conversation:read',
+    mutation: false,
+    capability: STUDIO_CLIENT_TOOLS_CAPABILITY,
+  },
   'tools.grants': {
     scope: 'conversation:read',
     mutation: false,
@@ -320,7 +328,11 @@ export const STUDIO_TOOLS_TOPICS: {
     push: true
   }
 } = {
-  'tools.catalog': { scope: 'conversation:read', capability: STUDIO_CLIENT_TOOLS_CAPABILITY, push: true },
+  'tools.catalog': {
+    scope: 'conversation:read',
+    capability: STUDIO_CLIENT_TOOLS_CAPABILITY,
+    push: true,
+  },
 }
 
 export function isStudioToolsMethod(value: unknown): value is StudioToolsMethod {

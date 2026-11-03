@@ -1,6 +1,6 @@
 // Chats that came to rest through a registry change this window did not
-// make: a paired phone or desktop settled one (`conversation.settle`), or
-// another window here did.
+// make: a paired phone or desktop settled one (`conversation.settle`), main's
+// rest sweep did (`workspace-settlement-sweep.ts`), or another window here did.
 //
 // A Settle is more than its record. A resting chat holds no processes (owner
 // ruling 2026-09-07), and the chat you are in hands you on to the next one; the

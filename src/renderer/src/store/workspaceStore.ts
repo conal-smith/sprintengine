@@ -39,7 +39,7 @@ import type {
 } from '../types/appTheme'
 import { noteLaunchedAgentArrived, type LaunchedAgentProjection } from '../utils/launchedAgentProjection'
 import type { DiscoveredCliModelCatalog } from '../../../shared/cli-model-catalog'
-import type { BranchPullRequest } from '../../../shared/git/pull-request'
+import type { WorkspaceLifecycleResult } from '../../../shared/workspace-lifecycle'
 import type { TextGenerationWritingStyle } from '../../../shared/text-generation/writing-style'
 import type { CommandId } from '../commands/commandRegistry'
 import type { ExtensionsDrawerView } from '../components/workspace/globalSurface/extensions/extensionsSurfaceTarget'
@@ -242,7 +242,12 @@ export interface WorkspaceStore
   forgetFolder: (folderPath: string) => void
   setWorkspaceHighlight: (id: WorkspaceId, highlight: Partial<WorkspaceHighlight>) => void
   clearWorkspaceHighlight: (id: WorkspaceId) => void
-  setWorkspaceSettled: (id: WorkspaceId, settled: boolean) => void
+  /**
+   * Settle or Un-settle a chat by hand: applied here at once, and decided in
+   * main on this window's reading of the chat, which may refuse it (a chat
+   * that changed meanwhile, an agent at work). Resolves to main's answer.
+   */
+  setWorkspaceSettled: (id: WorkspaceId, settled: boolean) => Promise<WorkspaceLifecycleResult | null>
   /**
    * Mark a chat's worktree as given back by the agent worktree cleanup (a
    * stamp), or as on disk again (`null`). See `WorkspaceWorktree.reclaimedAt`.
@@ -262,14 +267,7 @@ export interface WorkspaceStore
    * only: suspending the chat's terminals is the sidebar's half of the gesture
    * (`snoozeWorkspaceById`). See `utils/workspaceSnooze.ts`.
    */
-  setWorkspaceSnoozed: (id: WorkspaceId, wakeAt: number | null) => void
-  /** Returns the ids that CAME TO REST on this tick, for the caller to quiet. */
-  reconcileWorkspaceSettlement: (input: {
-    now: number
-    busyIds: ReadonlySet<WorkspaceId>
-    heldIds: ReadonlySet<WorkspaceId>
-    pullRequestsByWorkspaceId?: Readonly<Record<string, readonly BranchPullRequest[]>>
-  }) => WorkspaceId[]
+  setWorkspaceSnoozed: (id: WorkspaceId, wakeAt: number | null) => Promise<WorkspaceLifecycleResult | null>
   recordWorkspaceTerminalActivity: (id: WorkspaceId, lastInputAt: number) => void
   recordWorkspaceUserMessage: (id: WorkspaceId, at: number) => void
   recordWorkspaceTurnEnd: (id: WorkspaceId, at: number) => void

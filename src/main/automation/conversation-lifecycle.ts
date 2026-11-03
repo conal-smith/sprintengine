@@ -3,24 +3,34 @@ import type { WorkspaceFieldsPatch, WorkspaceSyncCommandResult, WorkspaceSyncEve
 import {
   highlightWorkspacePatch,
   isSettledWorkspace,
+  isStarred,
+  lifecycleSnapshotIsStale,
   settleWorkspacePatch,
   wakeSnoozedWorkspacePatch,
   wakeWorkspacePatch,
+  workspaceLifecycleSnapshot,
+  type WorkspaceLifecycleRequest,
+  type WorkspaceLifecycleResult,
+  type WorkspaceLifecycleSnapshot,
 } from '../../shared/workspace-lifecycle'
+import { isSnoozeUnexpired } from '../../shared/workspace-snooze'
 import type { HighlightColor } from '../../renderer/src/types/workspace'
 import type { ConversationEvent, ConversationSessionSummary } from '../../shared/conversation-runtime'
 import { conversationSessionWorking, conversationTurnInProgress } from '../../shared/conversation/phase'
 import { backgroundTasksWakeAgent } from '../../shared/conversation/backgroundTasks'
 
-// A chat's rest and its two person-clocks, written for a paired device.
+// A chat's rest and its two person-clocks, decided here for every caller.
 //
 // The desktop is the one owner of whether a chat is resting, of when a person
-// last wrote to it and of when one last looked at it: a phone or a second
-// desktop asks, and the answer is written to the same registry record, with
-// the same patches, that the desktop's own sidebar writes. Its windows learn
-// the change from main's broadcast like any other, and the window showing a
-// chat that was settled from elsewhere carries out the rest of a Settle there
-// (WorkspaceSidebar's `settledElsewhere`).
+// last wrote to it and of when one last looked at it: a window's row menu, a
+// phone, a second desktop and the rest sweep (`workspace-settlement-sweep.ts`)
+// all ask, and the answer is written to the registry record with the shared
+// patches, stamped with this process's clock. A request may carry the reading
+// of the chat it was decided on (`WorkspaceLifecycleSnapshot`); one decided on
+// a chat that has moved on since is refused rather than applied to a chat it
+// was not about. Windows learn the change from main's broadcast like any
+// other, and the window showing a chat settled from elsewhere carries out the
+// rest of a Settle there (WorkspaceSidebar's `settledElsewhere`).
 
 export type ConversationLifecycleDeps = {
   getRecord(workspaceId: string): WorkspaceRegistryRecord | null
@@ -41,6 +51,14 @@ export type ConversationLifecycleDeps = {
    * menu's Settle does.
    */
   isWorking(workspaceId: string): boolean
+  /**
+   * Whether an agent in the workspace is at work, leaving out one stopped on
+   * the person's answer: the reading a window's own row menu holds Settle and
+   * Snooze to (`workspaceIsWorking`), since a question waits in the CLI
+   * session and is asked again on resume. What a window's request is gated on;
+   * absent, `isWorking`.
+   */
+  isBusy?(workspaceId: string): boolean
   /**
    * Whether the one piece of work in the workspace is `agentId`'s own chat
    * turn: its chat is mid-turn, nothing it launched works on in the
@@ -77,9 +95,39 @@ export type ConversationLifecycleDeps = {
 
 export type ConversationLifecycleFailure = {
   ok: false
-  code: 'unknown_workspace' | 'working' | 'write_failed' | 'nothing_finished' | 'settled' | 'invalid_arguments'
+  code:
+    | 'unknown_workspace'
+    | 'working'
+    | 'write_failed'
+    | 'nothing_finished'
+    | 'settled'
+    | 'invalid_arguments'
+    | 'stale'
+    | 'not_applicable'
   message: string
 }
+
+/**
+ * How a decision about a chat's rest was taken, beside what it decided: the
+ * reading of the chat it was taken on, refused when the chat has moved on
+ * since (absent: a caller with no reading, such as a paired phone, which is
+ * answered on the chat as it stands); the person's keystroke clock as the
+ * deciding window knows it, which main's copy lags; and what an agent at work
+ * means for it (`isBusy` for a window's row menu, `isWorking` for the rest).
+ */
+export type LifecycleDecision = {
+  snapshot?: WorkspaceLifecycleSnapshot
+  lastInputAt?: number
+  refuseWhile?: 'working' | 'busy'
+}
+
+/**
+ * One of the rest sweep's decisions, as a command: settle a quiet chat, or
+ * wake a resting one, on the reading `snapshot` was taken of.
+ */
+export type SweepDecision = { workspaceId: string; decision: 'settle' | 'wake'; snapshot: WorkspaceLifecycleSnapshot }
+export type SweepDecisionResult =
+  { ok: true; workspaceId: string; settledAt: number | null } | ConversationLifecycleFailure
 
 export type ConversationSettleResult =
   | { ok: true; workspaceId: string; settledAt: number | null }
@@ -167,6 +215,15 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     const written = deps.updateWorkspaceFields(workspaceId, patch, actor)
     return written.ok ? null : { ok: false, code: 'write_failed', message: written.message }
   }
+  const stale = (): ConversationLifecycleFailure => ({
+    ok: false,
+    code: 'stale',
+    message: 'This chat changed since that was decided. Look at it again.',
+  })
+  const decidedOnStale = (record: WorkspaceRegistryRecord, decided: LifecycleDecision | undefined): boolean =>
+    decided?.snapshot !== undefined && lifecycleSnapshotIsStale(record, decided.snapshot)
+  const atWork = (workspaceId: string, decided: LifecycleDecision | undefined): boolean =>
+    decided?.refuseWhile === 'busy' ? (deps.isBusy ?? deps.isWorking)(workspaceId) : deps.isWorking(workspaceId)
 
   /**
    * Settle a chat, or bring it back: the row menu's Settle and Un-settle,
@@ -181,9 +238,11 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     settled: boolean,
     actor: WorkspaceRegistryActor,
     caller?: { workspaceId: string; agentId: string } | null,
+    decided?: LifecycleDecision,
   ): ConversationSettleResult {
     const record = deps.getRecord(workspaceId)
     if (!record) return unknown(workspaceId)
+    if (decidedOnStale(record, decided)) return stale()
     // Bringing the chat back takes back a settle waiting on a turn; the same
     // agent asking again is told what it was told the first time.
     const waiting = pending.get(workspaceId)
@@ -204,17 +263,69 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
       pending.set(workspaceId, { agentId: caller.agentId, actor, cancel: null })
       return { ok: true, workspaceId, settledAt: null, settlesWhenTurnEnds: true }
     }
-    if (settled && deps.isWorking(workspaceId))
+    if (settled && atWork(workspaceId, decided))
       return {
         ok: false,
         code: 'working',
         message: 'An agent in this chat is still working, or waiting on an answer. Settle it once it has finished.',
       }
-    const patch = settled ? settleWorkspacePatch(record, now(), 'settled') : wakeWorkspacePatch('active', record, now())
+    const at = now()
+    // The record is the Settle's undo: a snooze still ahead is kept under the
+    // rest, and Un-settle hands it back (`wakeWorkspacePatch('active')`).
+    const patch = settled
+      ? settleWorkspacePatch(withInputClock(record, decided), at, 'settled')
+      : wakeWorkspacePatch('active', record, at)
     const failed = write(workspaceId, patch, actor)
     if (failed) return failed
     if (settled) dropPending(workspaceId)
     return { ok: true, workspaceId, settledAt: typeof patch.settledAt === 'number' ? patch.settledAt : null }
+  }
+
+  /**
+   * The record with the person's keystroke clock as the deciding window knows
+   * it: main's copy lags it (a window reports that clock on a coarse
+   * cadence), and a settle carries it so main is never behind the decision
+   * (`settleWorkspacePatch`).
+   */
+  function withInputClock(record: WorkspaceRegistryRecord, decided: LifecycleDecision | undefined) {
+    const known = record.lastTerminalActivityAt ?? null
+    const told = decided?.lastInputAt
+    if (typeof told !== 'number' || !Number.isFinite(told) || (known !== null && known >= told)) return record
+    return { ...record, lastTerminalActivityAt: told }
+  }
+
+  /**
+   * One of the rest sweep's decisions. Applied only to the chat it was taken
+   * on: one that has moved on since (`snapshot`) is refused, and so is one
+   * that a hand decision, a star, a running snooze or a switched-off
+   * Auto-settle has taken out of the sweep's reach meanwhile. Stamped with
+   * this process's clock as it lands, never the decider's. Writes as Studio's,
+   * not the person's, so a hand decision always outranks it.
+   */
+  function applySweepDecision(command: SweepDecision): SweepDecisionResult {
+    const { workspaceId } = command
+    const record = deps.getRecord(workspaceId)
+    if (!record) return unknown(workspaceId)
+    if (lifecycleSnapshotIsStale(record, command.snapshot)) return stale()
+    const at = now()
+    if (command.decision === 'wake') {
+      if (!isSettledWorkspace(record)) return { ok: true, workspaceId, settledAt: null }
+      const failed = write(workspaceId, wakeWorkspacePatch(null, record, at), 'system')
+      if (failed) return failed
+      return { ok: true, workspaceId, settledAt: null }
+    }
+    if (
+      isSettledWorkspace(record) ||
+      record.settledOverride != null ||
+      record.autoSettleEnabled !== true ||
+      isStarred(record.highlight) ||
+      isSnoozeUnexpired(record, at)
+    )
+      return { ok: false, code: 'not_applicable', message: 'This chat is not one the rest sweep settles now.' }
+    const patch = settleWorkspacePatch(record, at, null)
+    const failed = write(workspaceId, patch, 'system')
+    if (failed) return failed
+    return { ok: true, workspaceId, settledAt: at }
   }
 
   /**
@@ -281,9 +392,15 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
    * processes for a snooze, and the work with them), and for a resting chat,
    * which has nowhere to sleep. Waking one that is awake writes nothing.
    */
-  function snooze(workspaceId: string, until: number | null, actor: WorkspaceRegistryActor): ConversationSnoozeResult {
+  function snooze(
+    workspaceId: string,
+    until: number | null,
+    actor: WorkspaceRegistryActor,
+    decided?: LifecycleDecision,
+  ): ConversationSnoozeResult {
     const record = deps.getRecord(workspaceId)
     if (!record) return unknown(workspaceId)
+    if (decidedOnStale(record, decided)) return stale()
     const asleep = typeof record.snoozedUntil === 'number' && record.snoozedUntil > now()
     if (until === null) {
       if (record.snoozedUntil == null) return { ok: true, workspaceId, snoozedUntil: null }
@@ -294,7 +411,7 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
       return { ok: false, code: 'invalid_arguments', message: 'A chat sleeps until a time that is still ahead.' }
     if (isSettledWorkspace(record))
       return { ok: false, code: 'settled', message: 'This chat is settled. Bring it back before snoozing it.' }
-    if (!asleep && deps.isWorking(workspaceId))
+    if (!asleep && atWork(workspaceId, decided))
       return {
         ok: false,
         code: 'working',
@@ -393,6 +510,30 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
     write(workspaceId, { ...(waking ? wakeWorkspacePatch(null, record, now()) : {}), lastUserMessageAt: at }, actor)
   }
 
+  /**
+   * A window's Settle, Un-settle, Snooze or Wake now: the row menu's
+   * gestures, decided on the window's reading of the chat and held to the row
+   * menu's own rule for an agent at work. Accepted, the answer carries the
+   * chat as main wrote it, stamped with main's clock, so the window's next
+   * gesture is made on main's reading; refused, the chat as it stands, so the
+   * window puts its row back where main has it.
+   */
+  function fromWindow(request: WorkspaceLifecycleRequest): WorkspaceLifecycleResult {
+    const { workspaceId, intent } = request
+    const decided: LifecycleDecision = { snapshot: request.snapshot, refuseWhile: 'busy' }
+    const result =
+      intent.kind === 'settle'
+        ? settle(workspaceId, true, 'ui', null, { ...decided, lastInputAt: intent.lastInputAt })
+        : intent.kind === 'unsettle'
+          ? settle(workspaceId, false, 'ui', null, decided)
+          : snooze(workspaceId, intent.kind === 'snooze' ? intent.until : null, 'ui', decided)
+    const record = deps.getRecord(workspaceId)
+    const reading = record ? workspaceLifecycleSnapshot(record) : null
+    if (result.ok && reading) return { ok: true, workspaceId, committed: reading }
+    if (result.ok) return unknown(workspaceId)
+    return { ...result, ...(reading ? { current: reading } : {}) }
+  }
+
   function dropPending(workspaceId: string): void {
     pending.get(workspaceId)?.cancel?.()
     pending.delete(workspaceId)
@@ -441,6 +582,8 @@ export function createConversationLifecycle(deps: ConversationLifecycleDeps) {
 
   return {
     settle,
+    applySweepDecision,
+    fromWindow,
     visit,
     markUnread,
     snooze,

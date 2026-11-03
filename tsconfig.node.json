@@ -14,6 +14,7 @@
     "packages/conversation-timeline/src/**/*",
     "packages/conversation-protocol/src/**/*",
     "packages/studio-protocol/src/**/*",
+    "packages/connection-supervisor/src/**/*",
     "packages/agent-sdk/src/**/*"
   ],
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "packages/**/*.test.ts"],
