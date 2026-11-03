@@ -64,6 +64,10 @@ export function superviseTabSocket<S extends TabSocket>(options: {
       new Promise<S>((resolve, reject) => {
         const socket = options.open()
         let opened = false
+        // Given up on (stopped) while still opening: the socket goes with it.
+        attempt.onAbandoned(() => {
+          if (!opened) socket.close()
+        })
         socket.addEventListener('open', () => {
           // Opened after its attempt was given up on: a newer one is on its way.
           if (!attempt.current()) {
@@ -94,6 +98,10 @@ export function superviseTabSocket<S extends TabSocket>(options: {
     close: (socket) => socket.close(),
     classify: (error) => (error instanceof TabRevokedError ? { kind: 'needs-sign-in' } : { kind: 'transient' }),
     backoff: { baseMs: 250, maxMs: 10_000 },
+    // No deadline of the supervisor's: the browser gives up on a socket that
+    // cannot open by itself, and a link that takes longer than any deadline
+    // here to open would otherwise be given up on every time, and never open.
+    connectTimeoutMs: null,
     clock: options.clock,
     random: options.random,
   })

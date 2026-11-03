@@ -130,13 +130,25 @@ test('back in front, a waiting tab tries at once, and an open one is left as it 
   expect(sockets).toHaveLength(before + 1)
 })
 
-test('a socket that opens after its attempt timed out is closed, not attached', async () => {
+test('a link slow to open is waited for, however slow, and attached when it opens', async () => {
   const { tab, sockets, opened, advance } = harness()
   tab.start()
-  await advance(15_000)
-  expect(tab.state().phase).toBe('backoff')
+  await advance(60_000)
+  expect(tab.state().phase).toBe('connecting')
+  expect(sockets).toHaveLength(1)
+  sockets[0]!.emit('open')
+  await advance(0)
+  expect(opened).toEqual([{ socket: sockets[0], reopened: false }])
+  expect(tab.state().phase).toBe('up')
+})
+
+test('a socket still opening when the tab stops trying is closed, and never attached', async () => {
+  const { tab, sockets, opened, advance } = harness()
+  tab.start()
+  tab.stop('The page is going away.')
+  expect(sockets[0]!.closedByTab).toBe(true)
   sockets[0]!.emit('open')
   await advance(0)
   expect(opened).toEqual([])
-  expect(sockets[0]!.closedByTab).toBe(true)
+  expect(tab.state().phase).toBe('stopped')
 })
