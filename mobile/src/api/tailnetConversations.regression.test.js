@@ -669,14 +669,126 @@ test("a send handed to the desktop goes at once behind a running turn, without u
   const f = fixture(), stream = f.open({ queuedSends: true });
   await f.advance(); f.synchronize(f.sockets[0], [event(1, "turn_started", { turnId: "t" }).event], 1);
   assert.equal(watches(f.sockets[0]).length, 1, "asked after the fence");
-  stream.command({ kind: "send", message: "after this", uploadIds: [] }, "phone-held");
-  assert.equal(f.commands().length, 0, "a send held on the phone still waits on the turn");
   stream.command(held("handed", "and this too").command, "handed");
   assert.deepEqual(f.commands().map((frame) => frame.command), [{ kind: "send", message: "and this too", queue: true }]);
   assert.equal("uploadIds" in f.commands()[0].command, false, "queue never rides beside uploadIds");
   f.sockets[0].frame({ type: "commandResult", commandId: "handed", ok: true });
   assert.deepEqual(f.frames.filter((frame) => frame.type === "commandResult").map((frame) => frame.commandId), ["handed"]);
   stream.close();
+});
+
+test("a plain send made behind a running turn is handed to a desktop that holds messages, not kept on the phone", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true });
+  await f.advance(); f.synchronize(f.sockets[0], [event(1, "turn_started", { turnId: "t" }).event], 1);
+  stream.command({ kind: "send", message: "after this", uploadIds: [], composedAt: T0 }, "words");
+  assert.deepEqual(
+    f.commands().map((frame) => [frame.commandId, frame.command]),
+    [["words", { kind: "send", message: "after this", composedAt: T0, queue: true }]],
+    "offered at once, under its id, for the desktop to hold",
+  );
+  assert.deepEqual(f.reheld.map((item) => [item.id, item.command.queue, item.heldAfter]), [["words", true, 1]]);
+  f.sockets[0].frame(event(2, "turn_completed", { turnId: "t" }));
+  assert.equal(f.commands().length, 1, "never offered again as a plain send when the turn ends");
+  stream.close();
+  // A desktop that holds nothing still gets it from the phone once the turn is over.
+  const older = fixture(), plain = older.open();
+  await older.advance(); older.synchronize(older.sockets[0], [event(1, "turn_started", { turnId: "t" }).event], 1);
+  plain.command({ kind: "send", message: "after this", uploadIds: [] }, "words");
+  assert.equal(older.commands().length, 0);
+  older.sockets[0].frame(event(2, "turn_completed", { turnId: "t" }));
+  assert.deepEqual(older.commands().map((frame) => frame.command.queue), [undefined]);
+  plain.close();
+});
+
+test("a send made while the phone's own send is on its way waits for its fate, then follows it to the desktop", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true });
+  await f.advance(); f.synchronize(f.sockets[0]);
+  stream.command(sent("first", "check the logs").command, "first");
+  stream.command(sent("second", "then the tests").command, "second");
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.commandId), ["first"], "not ahead of the first");
+  // The first reaches the chat and opens its turn: the second is the desktop's to send after it.
+  f.sockets[0].frame(event(1, "user_message", { commandId: "first", turnId: "t" }));
+  assert.deepEqual(
+    commandsOn(f.sockets[0]).map((frame) => [frame.commandId, frame.command.queue]),
+    [["first", undefined], ["second", true]],
+  );
+  assert.deepEqual(f.reheld.map((item) => item.id), ["second"]);
+  f.sockets[0].frame({ type: "commandResult", commandId: "second", ok: true });
+  f.sockets[0].frame(event(2, "turn_completed", { turnId: "t" }));
+  f.sockets[0].frame({ type: "commandResult", commandId: "first", ok: true });
+  assert.equal(commandsOn(f.sockets[0]).length, 2, "nothing goes twice");
+  stream.close();
+});
+
+test("what waited on the phone behind a turn still running when it redials goes to the desktop to hold", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true, pendingSends: [sent("carried", "carry on")] });
+  await f.advance();
+  f.synchronize(f.sockets[0], [event(1, "turn_started", { turnId: "t" }).event], 1);
+  assert.deepEqual(
+    commandsOn(f.sockets[0]).map((frame) => [frame.commandId, frame.command.queue]),
+    [["carried", true]],
+  );
+  assert.deepEqual(f.reheld.map((item) => item.id), ["carried"]);
+  stream.close();
+});
+
+test("a steer goes into the running turn at once, never behind it, and the desktop's answer settles it", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true });
+  await f.advance(); f.synchronize(f.sockets[0], [event(1, "turn_started", { turnId: "t" }).event], 1);
+  stream.command({ kind: "send", message: "use the other file", steer: true, composedAt: T0 }, "steer");
+  assert.deepEqual(
+    f.commands().map((frame) => [frame.commandId, frame.command]),
+    [["steer", { kind: "send", message: "use the other file", steer: true, composedAt: T0 }]],
+    "offered while the turn runs, as a steer",
+  );
+  assert.deepEqual(f.started, ["steer"]);
+  assert.deepEqual(f.reheld, [], "a steer is not handed over to be held");
+  f.sockets[0].frame(event(2, "user_message", { commandId: "steer", turnId: "t" }));
+  f.sockets[0].frame(event(3, "turn_completed", { turnId: "t" }));
+  f.sockets[0].frame({ type: "commandResult", commandId: "steer", ok: true });
+  assert.equal(f.commands().length, 1, "not offered again when the turn ends");
+  assert.deepEqual(f.frames.filter((frame) => frame.type === "commandResult").map((frame) => [frame.commandId, frame.ok]), [["steer", true]]);
+  stream.close();
+});
+
+test("a steer goes beside the phone's own send still waiting on its turn, and again under its id after a redial", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true });
+  await f.advance(); f.synchronize(f.sockets[0]);
+  stream.command(sent("first", "check the logs").command, "first");
+  stream.command({ kind: "send", message: "and the tests", steer: true, composedAt: T0 }, "steer");
+  assert.deepEqual(commandsOn(f.sockets[0]).map((frame) => frame.commandId), ["first", "steer"]);
+  f.sockets[0].serverClose(1006);
+  await f.advance(1_000);
+  f.synchronize(f.sockets[1], [event(1, "user_message", { commandId: "first", turnId: "t" }).event], 1);
+  assert.deepEqual(commandsOn(f.sockets[1]).map((frame) => [frame.commandId, frame.command.steer]), [["steer", true]]);
+  stream.close();
+});
+
+test("a steer the desktop turns away busy is handed over to be held, or waits for the turn where nothing holds it", async () => {
+  const f = fixture(), stream = f.open({ queuedSends: true });
+  await f.advance(); f.synchronize(f.sockets[0], [event(1, "turn_started", { turnId: "t" }).event], 1);
+  stream.command({ kind: "send", message: "and the tests", steer: true, composedAt: T0 }, "steer");
+  f.sockets[0].frame({ type: "commandResult", commandId: "steer", ok: false, code: "busy", retryAfterMs: 1_000 });
+  assert.deepEqual(
+    commandsOn(f.sockets[0]).map((frame) => [frame.commandId, frame.command]),
+    [
+      ["steer", { kind: "send", message: "and the tests", steer: true, composedAt: T0 }],
+      ["steer", { kind: "send", message: "and the tests", composedAt: T0, queue: true }],
+    ],
+    "held under the same id, never beside steer",
+  );
+  assert.deepEqual(f.reheld.map((item) => item.id), ["steer"]);
+  stream.close();
+  const older = fixture(), plain = older.open();
+  await older.advance(); older.synchronize(older.sockets[0], [event(1, "turn_started", { turnId: "t" }).event], 1);
+  plain.command({ kind: "send", message: "and the tests", steer: true }, "steer");
+  older.sockets[0].frame({ type: "commandResult", commandId: "steer", ok: false, code: "busy", retryAfterMs: 1_000 });
+  assert.deepEqual(older.waiting, ["steer"]);
+  await older.advance(1_000);
+  assert.equal(older.commands().length, 1, "it waits for the turn");
+  older.sockets[0].frame(event(2, "turn_completed", { turnId: "t" }));
+  assert.deepEqual(older.commands().map((frame) => frame.commandId), ["steer", "steer"]);
+  plain.close();
 });
 
 test("without the capability a cached handed-over send waits on the turn like any other and goes without queue", async () => {

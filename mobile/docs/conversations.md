@@ -612,15 +612,23 @@ full, say) is shown as not sent, with the reason, as any refused send is.
 Not every message goes to the desktop (`queuedSends.ts`):
 
 - With no turn running a message goes straight into the chat, as before.
-- A message with pictures waits on the phone, as before. A held message is its
-  words alone (the contract refuses `queue` beside `uploadIds`): an upload is
-  staged for the send it was made for and would be gone by the turn the
-  message waits on. Keeping the pictures with their words costs the phone-side
-  risk of it being lost if the phone sleeps first.
+- A message with pictures or files goes to the desktop only where it holds
+  those too (`conversation-queued-attachments`), which copies them the moment
+  it holds the message. An older desktop refuses `queue` beside `uploadIds`,
+  so there it waits on the phone, as before.
 - A message queued while the phone already holds one waits on the phone too:
   the desktop sends what it holds the instant the turn ends, before the phone
   hears of it, and would overtake the phone's earlier message.
 - The phone sends no skills, which the contract would refuse beside `queue`.
+
+The stream makes the same choice for a send the screen thought had no turn to
+wait on (`tailnetConversations.ts`). A send made while the stream knows the
+chat is busy (a turn running, or the phone's own last send in the chat and its
+turn not over) is handed to the desktop at once, under its id, rather than
+waiting in the phone's outbox. So is what still waits there when a redial finds
+a turn running. A send made while the phone's own last one is still on its way
+waits for that one's answer first: turned away busy, the first is handed over
+and the ones behind it follow it, in order, never ahead of it.
 
 No message goes twice. A handed-over send is kept in the cache, `queue` and
 all, until the desktop answers, so a phone killed in between offers it again
@@ -755,7 +763,14 @@ advertises `conversation-steer-sends`, a chat whose listed
 turn running, and no pictures. Anywhere else the send queues, the long press
 and a Steer default included. A steer goes as `send` with `steer: true` and
 its words alone, never beside `queue` or `uploadIds`; it is drawn like any
-send, not in the queued bubble. Where the turn cannot take it after all (an
+send, not in the queued bubble. It is offered the moment it is made, beside
+the running turn and beside the phone's own send still waiting on it, and again
+under its id after a redial until the desktop answers. Until 2026-11-03 the
+stream put a steer in the outbox that waits for the turn to end, so it reached
+the desktop only once the turn was over, as an ordinary next message: Steer
+from the phone never steered. A steer the desktop turns away busy (a send still
+being prepared ahead of it) is handed over to be held for the turn's end,
+where the desktop holds messages, and otherwise waits on the phone for it. Where the turn cannot take it after all (an
 approval is pending, or the turn ended on the way) the desktop holds it as a
 queued send, answers with a notice saying so, and its `queued` frame draws it
 in the bubble; with no turn left it is an ordinary send. A steer is never lost.
