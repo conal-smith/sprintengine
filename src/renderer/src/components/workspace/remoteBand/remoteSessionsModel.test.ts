@@ -20,6 +20,8 @@ import {
   remoteLinkStateOf,
   branchPullRequestsOfWire,
   remoteFinishUnseen,
+  remoteRowActivity,
+  remoteRowFinishUnseen,
   remotePaneTabLabel,
   remoteWorkspaceName,
   shouldBrowse,
@@ -936,4 +938,28 @@ test('a sleeping remote chat is asleep until its wake, and Mark unread is offere
     bandOfListed({ lastTurnEndedAt: 5_000, lastVisitedAt: 6_000 }, { ...operate, markUnread: false })[0]!,
   )
   assert.equal(canMarkRemoteConversationUnread(older!, 7_000), false, 'a machine that does not take it')
+})
+
+test('a chat opened from a paired machine says the louder of what this desktop and its machine know', () => {
+  const chat = (activity: string) => ({ activity, agents: [] }) as unknown as RemoteConversation
+  assert.equal(remoteRowActivity('idle', chat('working')), 'working', 'its turn runs over there')
+  assert.equal(remoteRowActivity('idle', chat('needs-input')), 'needs-input', 'and waits on the person over there')
+  assert.equal(remoteRowActivity('working', chat('needs-input')), 'needs-input', 'a wait is louder than work')
+  assert.equal(remoteRowActivity('failed', chat('idle')), 'failed', 'what this desktop saw fail stays failed')
+  assert.equal(remoteRowActivity('failed', chat('working')), 'working', 'until its machine works again')
+  assert.equal(remoteRowActivity(undefined, chat('idle')), 'idle')
+})
+
+test('a chat on a paired machine finished unseen when any of its agents did', () => {
+  const now = 100_000
+  const agent = (lastTurnEndedAt: number, lastVisitedAt: number | null) => ({
+    activity: 'idle',
+    lastTurnEndedAt,
+    lastVisitedAt,
+    snoozedUntil: null,
+  })
+  const chat = (...agents: unknown[]) => ({ activity: 'idle', agents }) as unknown as RemoteConversation
+  assert.equal(remoteRowFinishUnseen(chat(agent(50_000, 40_000)), now), true)
+  assert.equal(remoteRowFinishUnseen(chat(agent(50_000, 60_000)), now), false, 'seen since')
+  assert.equal(remoteRowFinishUnseen(chat(agent(50_000, 60_000), agent(70_000, 60_000)), now), true)
 })
