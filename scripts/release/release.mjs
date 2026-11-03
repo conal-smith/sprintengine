@@ -159,7 +159,7 @@ async function resolve() {
     })
     previous = lastStableRelease
   } else if (eventName === 'schedule' || dispatchChannel === 'nightly') {
-    if (RELEASES_REPO !== sourceRepo) throw new Error('Nightlies must publish to the source repository')
+    if (RELEASES_REPO !== sourceRepo) throw new Error(`Nightlies must publish to the source repository: package.json build.publish names ${RELEASES_REPO}, but this run is ${sourceRepo}.`)
     const last = lastNightly(releases)
     previous = last
     if (eventName === 'schedule') {
