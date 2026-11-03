@@ -12,6 +12,10 @@
 
 ### Added
 
+- `stepShownToUser` also holds Studio's `plugin.offer` out of a turn's fold,
+  so the plugin card it draws stands under the turn as a generated picture
+  does. `isPluginOffer` recognises the call under any runtime's spelling.
+
 - The projection carries a `handoff` entry, and the timeline a `handoff` row,
   for a `context_handed_off` event: the chat was handed off to a fresh session
   pointed at a file of its messages (`path`), leaving `preTokens` of context

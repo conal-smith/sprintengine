@@ -111,3 +111,24 @@ test('what the agent made for the person to see is never folded', () => {
   // In the order it came: the prose written before a step comes before it.
   expect(turnShownWork([...tools, picture], prose).map((item) => item.id)).toEqual(['prose:two:1', 'picture'])
 })
+
+test('a plugin Studio offered stands outside the fold, under any runtime’s name for the tool', () => {
+  const offer = (name: string, serverName?: string): TranscriptToolEntry => ({
+    ...tools[0],
+    id: name,
+    name,
+    ...(serverName ? { serverName } : {}),
+  })
+  expect(stepShownToUser(offer('mcp__sprintengine-studio__plugin_offer'))).toBe(true)
+  expect(stepShownToUser(offer('sprintengine-studio.plugin_offer'))).toBe(true)
+  expect(stepShownToUser(offer('plugin_offer', 'sprintengine-studio'))).toBe(true)
+  // Another server's tool of the same name is not ours to draw.
+  expect(stepShownToUser(offer('mcp__other__plugin_offer'))).toBe(false)
+  expect(stepShownToUser(offer('plugin_offer', 'other'))).toBe(false)
+  // Nor is the search, or an offer the gateway refused.
+  expect(stepShownToUser(offer('mcp__sprintengine-studio__plugin_search'))).toBe(false)
+  expect(stepShownToUser({ ...offer('mcp__sprintengine-studio__plugin_offer'), outputStatus: 'error' })).toBe(false)
+  const shown = offer('mcp__sprintengine-studio__plugin_offer')
+  expect(turnFoldedSteps([shown, ...tools])).toEqual(tools)
+  expect(turnShownWork([shown, ...tools], undefined)).toEqual([{ kind: 'step', id: shown.id, tool: shown }])
+})

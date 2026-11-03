@@ -42,6 +42,7 @@ import { presentToolItem, summarizeToolGroup } from '../../../../../shared/conve
 import type { ConversationToolKind } from '../../../../../shared/conversation-runtime'
 import {
   deriveTurnFold,
+  isPluginOffer,
   turnAgentLanes,
   turnFoldedProse,
   turnFoldedSteps,
@@ -50,6 +51,7 @@ import {
 } from './turnFolds'
 import { formatStepDuration } from './stepDuration'
 import { useLiveRowMotion } from './liveVisibility'
+import { PluginOfferCard } from './pluginOffer/PluginOfferCard'
 import { formatMessageDateTime, formatMessageTime, LiveElapsed } from './liveElapsed'
 import { useClockFormat } from '../../../utils/clockFormat'
 import { showCodexFollowupLabels } from '../../../utils/markdownCodexFollowups'
@@ -820,7 +822,13 @@ const WorkTimelineGroup = memo(function WorkTimelineGroup({ tools }: { tools: Tr
   )
 }, sameSteps)
 export const WorkTimelineStep = memo(function WorkTimelineStep({ tool }: { tool: TranscriptToolEntry }) {
-  return tool.subagentLane ? <SubagentLane tool={tool} /> : <ToolRow tool={tool} />
+  if (tool.subagentLane) return <SubagentLane tool={tool} />
+  // A plugin the agent offered is a card for the person, not a step of its
+  // work. One that cannot be drawn (gone from its source, a chat on another
+  // machine) falls back to its tool row, so the call is never lost.
+  if (isPluginOffer(tool) && tool.outputStatus !== 'error')
+    return <PluginOfferCard tool={tool} fallback={<ToolRow tool={tool} />} />
+  return <ToolRow tool={tool} />
 })
 
 // The agents a turn sent off, one card each, outside the turn's fold: the
