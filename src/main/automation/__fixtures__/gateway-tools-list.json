@@ -389,6 +389,14 @@
       "sha256": "63156b8af1080da04fd866171bb19de134a39b719ef987cdc2d2c70c35383cc2"
     },
     {
+      "name": "plugin.search",
+      "sha256": "a48a180cfa75804aa7d89bd552fe8d6170736c33c768a0134bc7246b81362ead"
+    },
+    {
+      "name": "plugin.offer",
+      "sha256": "78f09aa3f63ac2601f788d4ec3b6ba6308d66d3074d3efb04d4ae9a22dcb3968"
+    },
+    {
       "name": "tailnet.status",
       "sha256": "a52a946fe0082fa84e6bb392f2d3224b60d15ab424a6bf1a95322de513a48890"
     },
@@ -809,6 +817,14 @@
     {
       "name": "extension.guide",
       "sha256": "63156b8af1080da04fd866171bb19de134a39b719ef987cdc2d2c70c35383cc2"
+    },
+    {
+      "name": "plugin.search",
+      "sha256": "a48a180cfa75804aa7d89bd552fe8d6170736c33c768a0134bc7246b81362ead"
+    },
+    {
+      "name": "plugin.offer",
+      "sha256": "78f09aa3f63ac2601f788d4ec3b6ba6308d66d3074d3efb04d4ae9a22dcb3968"
     },
     {
       "name": "tailnet.status",
