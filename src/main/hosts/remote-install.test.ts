@@ -66,9 +66,11 @@ const NODE_DIGEST = 'a'.repeat(64)
 
 // A stand-in Node: answers `--version` with the pinned version, runs this
 // machine's Node otherwise (so the server's own `--version` check runs).
-function fakeNode(nodePath = process.execPath): Buffer {
+// `onVersion` runs first when it is asked its version, which an install does
+// under the lock.
+function fakeNode(nodePath = process.execPath, onVersion = ''): Buffer {
   return Buffer.from(
-    `#!/bin/sh\nif [ "$1" = "--version" ]; then echo ${WSL_NODE_VERSION}; exit 0; fi\nexec '${nodePath}' "$@"\n`,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then ${onVersion}echo ${WSL_NODE_VERSION}; exit 0; fi\nexec '${nodePath}' "$@"\n`,
   )
 }
 
@@ -78,10 +80,15 @@ function archive(input: {
   serverSays?: string
   nodeMode?: number
   nodePath?: string
+  onVersion?: string
 }): Buffer {
   const files: Array<{ path: string; data: Buffer; mode?: number }> = []
   if (input.node)
-    files.push({ path: `${NODE_RUNTIME_REL}/bin/node`, data: fakeNode(input.nodePath), mode: input.nodeMode ?? 0o700 })
+    files.push({
+      path: `${NODE_RUNTIME_REL}/bin/node`,
+      data: fakeNode(input.nodePath, input.onVersion),
+      mode: input.nodeMode ?? 0o700,
+    })
   if (input.server) {
     const tree = serverTreeName(input.server)
     files.push({
@@ -237,11 +244,30 @@ test.skipIf(!HAS_TAR)('two installs at once: the second waits for the first, and
 
 // Stand-ins for `mkdir`, `find` and `mv` that run the real one and pause where
 // a loaded machine can preempt a shell: what each pauses on is in `pauses`.
-function slowTools(name: string, pauses: { afterLockMade?: number; beforeJudging?: number; afterLockMoved?: number }) {
+// `checkThenMake` stands in for the Rust coreutils `mkdir` (Ubuntu 26.04's):
+// it looks for the directory, and only then makes it, so two at once can both
+// succeed. Here the gap between the two is that many seconds long.
+function slowTools(
+  name: string,
+  pauses: { afterLockMade?: number; beforeJudging?: number; afterLockMoved?: number; checkThenMake?: number },
+) {
   const bin = join(temp, `slow-${name}`)
   mkdirSync(bin, { recursive: true })
   const real = (tool: string) => spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim()
   const tool = (tool: string, body: string) => writeFileSync(join(bin, tool), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+  if (pauses.checkThenMake)
+    tool(
+      'mkdir',
+      [
+        'for last; do :; done',
+        'case "$last" in */.install.lock | */.install.lock.guard)',
+        `  [ -e "$last" ] && { echo "mkdir: $last: File exists" >&2; exit 1; }`,
+        `  sleep ${pauses.checkThenMake}`,
+        `  exec '${real('mkdir')}' -p "$last" ;;`,
+        'esac',
+        `exec '${real('mkdir')}' "$@"`,
+      ].join('\n'),
+    )
   if (pauses.afterLockMade)
     tool(
       'mkdir',
@@ -282,6 +308,34 @@ test.skipIf(!HAS_TAR)(
     const results = await Promise.all([first, second])
     for (const result of results) assert.ok(result.stdout.includes(COMMITTED_MARKER), result.stdout + result.stderr)
     assert.ok(!existsSync(lock), 'the lock is let go')
+  },
+  30_000,
+)
+
+test.skipIf(!HAS_TAR)(
+  'two installs at once where mkdir checks and then makes: still only one holds the lock at a time',
+  async () => {
+    const home = homeFor('check-then-make')
+    const lock = join(home, REMOTE_DATA_REL, '.install.lock')
+    mkdirSync(lock, { recursive: true })
+    writeFileSync(join(lock, 'pid'), '99999999\n')
+    // Both start together and find the holder gone. A `mkdir` with a second
+    // between its check and its make let both through a guard made with it.
+    const bin = slowTools('check-then-make', { checkThenMake: 1 })
+    // The staged Node's version check runs under the lock: it notes whether
+    // the other install is inside too, and stays a moment so an overlap shows.
+    const inside = join(home, 'inside')
+    const overlaps = join(home, 'overlaps')
+    const onVersion = `[ -e '${inside}' ] && echo overlap >> '${overlaps}'; : > '${inside}'; sleep 0.5; rm -f '${inside}'; `
+    const results = await Promise.all(
+      ['m1', 'm2'].map((id) =>
+        session(local('sh', home, bin), script(id), 'install', archive({ node: true, server: '0.4.0', onVersion })),
+      ),
+    )
+    for (const result of results) assert.ok(result.stdout.includes(COMMITTED_MARKER), result.stdout + result.stderr)
+    assert.ok(!existsSync(overlaps), 'the two held the lock at once')
+    assert.ok(!existsSync(lock), 'the lock is let go')
+    assert.ok(!existsSync(`${lock}.guard`), 'the guard is let go')
   },
   30_000,
 )

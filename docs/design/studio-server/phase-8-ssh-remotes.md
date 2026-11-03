@@ -673,7 +673,10 @@ already in use" cannot happen for the SSH route; the only shared resource is
 ### 6.3 Network homes (NFS)
 
 - An install on NFS works; the probe reports `fstype=nfs` and the install
-  lock is `mkdir`-based, which is atomic over NFS.
+  lock's one atomic step is the shell's exclusive create (`set -C`, an
+  `O_EXCL` open), which NFSv3 and later honour. It is not a `mkdir`: the
+  Rust coreutils `mkdir` (Ubuntu 26.04's) checks and then creates, so two
+  at once can both succeed.
 - A home shared by several machines means one data directory for all of them.
   One server per data directory is enforced by the lock, and `server.json`'s
   `hostId` lets a second machine say "Studio server is already running for
