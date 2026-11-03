@@ -61,7 +61,7 @@ function fakeClock() {
 type Conn = { id: number; alive: boolean }
 
 type Pending = {
-  attempt: ConnectionAttempt<string>
+  attempt: ConnectionAttempt<Conn, string>
   resolve(connection?: Conn): Conn
   reject(error: unknown): void
 }
@@ -257,17 +257,41 @@ test('an attempt that takes too long fails, and the connection it brings later i
   expect(attempts).toHaveLength(2)
 })
 
-test('a connection lost before its attempt finished is a failed attempt', async () => {
-  const { supervisor, time, closed, last } = harness()
+test('a loss reported before the attempt settled waits for how it settles', async () => {
+  const { supervisor, time, last, attempts } = harness({ stableAfterMs: 0 })
   supervisor.start()
-  const pending = last()
+  // Handed over and dropped in the same breath: up, then lost.
   const joined = supervisor.next()
-  pending.attempt.lost(new Error('closed during the handshake'))
-  await expect(joined).rejects.toThrow(/closed during the handshake/u)
-  expect(supervisor.state()).toMatchObject({ phase: 'backoff', failures: 1, reconnecting: false })
-  pending.resolve()
+  last().attempt.lost(new Error('dropped at once'))
+  expect(supervisor.state().phase).toBe('connecting')
+  const connection = last().resolve()
+  await expect(joined).resolves.toBe(connection)
   await time.advance()
-  expect(closed).toHaveLength(1)
+  expect(supervisor.state()).toMatchObject({ phase: 'backoff', generation: 1, failures: 1, reconnecting: true })
+  expect(supervisor.current()).toBeNull()
+  // Closed during the handshake, and the attempt then fails: a failed attempt.
+  await time.advance(supervisor.state().retryAt! - time.now())
+  expect(attempts).toHaveLength(2)
+  const waiting = supervisor.next()
+  last().attempt.lost(new Error('closed during the handshake'))
+  last().reject(new Error('handshake failed'))
+  await expect(waiting).rejects.toThrow(/handshake failed/u)
+  expect(supervisor.state()).toMatchObject({ phase: 'backoff', generation: 1, failures: 2 })
+})
+
+test('a transport may say it is up from the event itself, and a loss in the same tick is a loss of it', async () => {
+  const { supervisor, time, closed, last } = harness({ stableAfterMs: 0 })
+  supervisor.start()
+  const connection: Conn = { id: 99, alive: true }
+  last().attempt.connected(connection)
+  expect(supervisor.state()).toMatchObject({ phase: 'up', generation: 1 })
+  last().attempt.lost(Object.assign(new Error('resync'), { retryAfterMs: 5_000 }))
+  expect(supervisor.state()).toMatchObject({ phase: 'backoff', failures: 1, reconnecting: true })
+  // The promise resolving to it afterwards changes nothing, and closes nothing.
+  last().resolve(connection)
+  await time.advance()
+  expect(closed).toEqual([])
+  expect(supervisor.state()).toMatchObject({ phase: 'backoff', generation: 1 })
 })
 
 test('a wake keeps a connection that answers its ping', async () => {
@@ -529,19 +553,27 @@ test('stop closes the connection, ends every wait, and ignores what arrives afte
   expect(supervisor.current()).toBeNull()
 })
 
-test('retryNow on a live connection replaces it, and from a backoff goes at once', async () => {
+test('retryNow replaces a live connection or an attempt in flight, and from a backoff goes at once', async () => {
   const { supervisor, time, closed, attempts, last } = harness()
   supervisor.start()
+  const first = last()
+  supervisor.retryNow('sooner')
+  expect(first.attempt.current()).toBe(false)
+  expect(attempts).toHaveLength(2)
+  expect(last().attempt.hint).toBe('sooner')
+  first.resolve()
+  await time.advance()
+  expect(closed).toHaveLength(1)
   last().resolve()
   await time.advance()
   supervisor.retryNow('again')
-  expect(closed).toHaveLength(1)
-  expect(attempts).toHaveLength(2)
+  expect(closed).toHaveLength(2)
+  expect(attempts).toHaveLength(3)
   expect(last().attempt.hint).toBe('again')
   last().reject(new Error('refused'))
   await time.advance()
   supervisor.retryNow()
-  expect(attempts).toHaveLength(3)
+  expect(attempts).toHaveLength(4)
 })
 
 test('a connect that throws at once is a failed attempt, and a listener that throws is its own problem', async () => {

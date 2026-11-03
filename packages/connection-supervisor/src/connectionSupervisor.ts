@@ -77,14 +77,25 @@ export type ConnectionFailureVerdict =
   /** Retrying cannot help (an unsupported server, a changed host key): wait for the person. */
   | { readonly kind: 'fatal' }
 
-export type ConnectionAttempt<Hint> = {
+export type ConnectionAttempt<C, Hint> = {
   /** 1 for the first attempt after a success, a wake or a retry; counts up through a backoff. */
   readonly number: number
   /** What `start` or `retryNow` was given; undefined for the supervisor's own retries. */
   readonly hint: Hint | undefined
   /** A connection was lost before this attempt: it is a reconnect. */
   readonly reconnecting: boolean
-  /** The connection this attempt made, or is making, ended. Ignored once the supervisor moved on. */
+  /**
+   * The connection is up, now. An event-driven transport calls this from the
+   * event itself, so a loss reported in the same tick is a loss of a live
+   * connection rather than of an attempt whose promise is not yet heard; the
+   * promise `connect` returns may then resolve to the same connection or never.
+   */
+  connected(connection: C): void
+  /**
+   * The connection this attempt made ended. Ignored once the supervisor moved on.
+   * Reported before `connect` settles, it is applied when it does, so a connect
+   * must always settle (or have a `connectTimeoutMs`).
+   */
   lost(error?: unknown): void
   /** Whether the supervisor still wants what this attempt brings. */
   current(): boolean
@@ -106,7 +117,7 @@ export type ConnectionBackoff = {
 }
 
 export type ConnectionSupervisorOptions<C, Hint = undefined> = {
-  connect(attempt: ConnectionAttempt<Hint>): Promise<C>
+  connect(attempt: ConnectionAttempt<C, Hint>): Promise<C>
   /** End a connection the supervisor no longer wants: replaced, stopped, or brought by an attempt it gave up on. */
   close(connection: C, reason: string): void
   /** Resolves while the connection still answers. Without one, a wake trusts an open connection. */
@@ -183,6 +194,8 @@ type Attempt<C> = {
   done: boolean
   connection: C | null
   timeout: unknown
+  /** A loss the transport reported before the attempt settled, applied once it does. */
+  lostEarly: { error: unknown } | null
 }
 
 type Waiter<C> = { resolve(connection: C): void; reject(error: unknown): void }
@@ -210,7 +223,7 @@ export class ConnectionSupervisor<C, Hint = undefined> {
   private retryTimer: unknown = null
   private stableTimer: unknown = null
   private liveness: Promise<void> | null = null
-  private waiters: Array<Waiter<C>> = []
+  private waiters: Waiter<C>[] = []
 
   constructor(options: ConnectionSupervisorOptions<C, Hint>) {
     this.options = options
@@ -242,8 +255,9 @@ export class ConnectionSupervisor<C, Hint = undefined> {
 
   /**
    * Try now: the person asked. Cuts a backoff short, held by the far end or not,
-   * ends a wait for a wake or for the person, and replaces a live connection.
-   * An attempt already in flight is the one asked for.
+   * ends a wait for a wake or for the person, and replaces a live connection or
+   * an attempt in flight with a new one. A caller that would rather join the
+   * attempt in flight asks `next()` instead.
    */
   retryNow(hint?: Hint): void {
     switch (this.snapshot.phase) {
@@ -251,9 +265,8 @@ export class ConnectionSupervisor<C, Hint = undefined> {
       case 'stopped':
         this.start(hint)
         return
-      case 'connecting':
-        return
       case 'up':
+      case 'connecting':
         this.replace('Reconnecting.', hint)
         return
       default:
@@ -356,7 +369,13 @@ export class ConnectionSupervisor<C, Hint = undefined> {
   private begin(hint: Hint | undefined, reset: Partial<ConnectionState> = {}): void {
     this.clearRetry()
     this.abandonAttempt()
-    const attempt: Attempt<C> = { startedAt: this.clock.now(), done: false, connection: null, timeout: null }
+    const attempt: Attempt<C> = {
+      startedAt: this.clock.now(),
+      done: false,
+      connection: null,
+      timeout: null,
+      lostEarly: null,
+    }
     this.attempt = attempt
     this.update({ ...reset, phase: 'connecting', retryAt: null, heldByPeer: false, waitingFor: null })
     const timeoutMs = this.connectTimeoutMs()
@@ -365,10 +384,11 @@ export class ConnectionSupervisor<C, Hint = undefined> {
         attempt.timeout = null
         this.attemptFailed(attempt, new ConnectTimeoutError(timeoutMs))
       }, timeoutMs)
-    const handle: ConnectionAttempt<Hint> = {
+    const handle: ConnectionAttempt<C, Hint> = {
       number: this.snapshot.failures + 1,
       hint,
       reconnecting: this.snapshot.reconnecting,
+      connected: (connection) => this.connected(attempt, connection),
       lost: (error) => this.lost(attempt, error),
       current: () => this.attempt === attempt,
     }
@@ -385,6 +405,8 @@ export class ConnectionSupervisor<C, Hint = undefined> {
   }
 
   private connected(attempt: Attempt<C>, connection: C): void {
+    // Reported twice (the event, then the promise): it is up already.
+    if (attempt.connection === connection) return
     if (this.attempt !== attempt || attempt.done) {
       this.closeQuietly(connection, 'This connection is no longer wanted.')
       return
@@ -409,6 +431,8 @@ export class ConnectionSupervisor<C, Hint = undefined> {
     const waiters = this.waiters
     this.waiters = []
     for (const waiter of waiters) waiter.resolve(connection)
+    // It came up and went in the same breath: a loss like any other.
+    if (attempt.lostEarly) this.lost(attempt, attempt.lostEarly.error)
   }
 
   private attemptFailed(attempt: Attempt<C>, error: unknown): void {
@@ -421,10 +445,11 @@ export class ConnectionSupervisor<C, Hint = undefined> {
   private lost(attempt: Attempt<C>, error: unknown): void {
     if (this.attempt !== attempt) return
     if (!attempt.done) {
-      // Ended before the attempt finished: a failed attempt, whatever it brings later.
-      this.settle(attempt)
-      this.attempt = null
-      this.failed(error, false, this.creditFor(attempt))
+      // Reported before the attempt settled: the transport may have handed the
+      // connection over a moment ago, its promise not yet heard. How the
+      // attempt settles decides: a connection that came up was lost, an
+      // attempt that fails failed.
+      attempt.lostEarly ??= { error }
       return
     }
     this.attempt = null

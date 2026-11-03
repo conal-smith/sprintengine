@@ -73,6 +73,8 @@ export function superviseTabSocket<S extends TabSocket>(options: {
           opened = true
           options.onOpen(socket, everOpened)
           everOpened = true
+          // Up from this event on, so a close in the same tick is a drop of it.
+          attempt.connected(socket)
           resolve(socket)
         })
         socket.addEventListener('close', (event) => {

@@ -367,7 +367,7 @@ export class SshEnvironment {
   }
 
   /** One attempt, for the supervisor: probe, install if need be, start or attach, relay, handshake. */
-  private async bootstrap(attempt: ConnectionAttempt<BootstrapHint>): Promise<LiveSession> {
+  private async bootstrap(attempt: ConnectionAttempt<LiveSession, BootstrapHint>): Promise<LiveSession> {
     const interactive = attempt.hint?.interactive ?? false
     const label = this.deps.label()
     // A machine shown Disconnected is tried again without saying so, so its row
@@ -605,7 +605,7 @@ export class SshEnvironment {
     ready: RelayReady,
     endpoint: MuxEndpoint,
     label: string,
-    attempt: ConnectionAttempt<BootstrapHint>,
+    attempt: ConnectionAttempt<LiveSession, BootstrapHint>,
   ): Promise<LiveSession> {
     const server = ready.server
     if (!server)

@@ -1267,7 +1267,10 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
   }
 
   /** One dial of a watch, for its supervisor: the open socket, or why there is none. */
-  async function dialWatch(watch: Watch, attempt: ConnectionAttempt<undefined>): Promise<RemoteEventsSocket> {
+  async function dialWatch(
+    watch: Watch,
+    attempt: ConnectionAttempt<RemoteEventsSocket, undefined>,
+  ): Promise<RemoteEventsSocket> {
     const connection = store.find(watch.connectionId)
     if (!connection) {
       stopWatch(watch.connectionId)
