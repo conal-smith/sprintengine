@@ -3,7 +3,8 @@ import type { McpToolRegistration } from '../../shared/modules/mcp-tools'
 // The desktop's own gateway tools, in the order agents have always listed
 // them: the browser and the canvas first, then the editor, tours, Studio's
 // core tools, the window and run tools, the worktree pool's, published
-// artifacts, building extensions, and remote-control configuration.
+// artifacts, building extensions, offering plugins, and remote-control
+// configuration.
 //
 // One function, so the composition the app runs and the one its parity test
 // lists are the same. When the shell offers the browser and the canvas as
@@ -26,6 +27,8 @@ export type DesktopGatewayToolParts = {
   artifacts: McpToolRegistration[]
   /** `extension.*`, which main serves because the project is made on this machine's disk. */
   extension: McpToolRegistration[]
+  /** `plugin.*`, which main serves because the plugin sources are the ones main keeps. */
+  plugin: McpToolRegistration[]
   tailnet: McpToolRegistration[]
 }
 
@@ -43,6 +46,7 @@ export function desktopGatewayTools(
     ...parts.worktree,
     ...parts.artifacts,
     ...parts.extension,
+    ...parts.plugin,
     ...parts.tailnet,
   ]
 }

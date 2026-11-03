@@ -69,6 +69,9 @@ const CHAT_TO_CHAT_TOOLS: ReadonlySet<string> = new Set([
  * The `extension.*` family makes an extension project in a folder on this
  * machine that the caller names, and teaches an agent about to work in it; a
  * paired device has neither the folder nor the agent.
+ *
+ * The `plugin.*` family finds a plugin and draws it as a card in the calling
+ * agent's chat, for the person at this machine to install or not.
  */
 export function localOnlyGatewayToolReason(toolName: string): string | null {
   if (toolName.startsWith('tailnet.')) {
@@ -91,6 +94,9 @@ export function localOnlyGatewayToolReason(toolName: string): string | null {
   }
   if (toolName.startsWith('extension.')) {
     return `"${toolName}" makes and explains an extension project on this machine's disk, for an agent working there. Run it from an agent on that machine.`
+  }
+  if (toolName.startsWith('plugin.')) {
+    return `"${toolName}" offers the person at this machine a plugin to install, in the calling agent's chat, and a paired device is not an agent. Run it from an agent on that machine.`
   }
   if (toolName.startsWith('worktree.')) {
     return `"${toolName}" hands the calling agent a worktree on this machine and holds it for that agent, and a paired device is not an agent. Run it from an agent on that machine.`

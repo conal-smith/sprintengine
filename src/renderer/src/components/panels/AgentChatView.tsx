@@ -114,6 +114,7 @@ import {
 } from './agentChat/incrementalConversationProjection'
 import { ConversationLinkProvider } from './agentChat/conversationLinks'
 import { SubagentStopProvider, SubagentTypesProvider } from './agentChat/subagentStatus'
+import { PluginOfferChatProvider, type PluginOfferChat } from './agentChat/pluginOffer/PluginOfferCard'
 import { StopGlyph } from './agentChat/stopGlyph'
 import { recalledConversationScroll, rememberConversationScroll } from './agentChat/conversationViewState'
 import { chatResumesInTerminal, resumeChatInTerminal } from './agentChat/resumeInTerminal'
@@ -3236,6 +3237,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       mcpServerActions,
     ],
   )
+  // What a plugin card an agent drew lends from this chat: its CLI, whose
+  // servers it reads, and a sign-in on this chat's own servers.
+  const pluginOfferChat = useMemo<PluginOfferChat>(
+    () => ({
+      cli: chatCli ?? null,
+      signIn:
+        runMcpServerAction && sessionId && mcpServerActions?.includes('sign-in')
+          ? (serverId: string) => runMcpServerAction({ sessionId, serverId, action: 'sign-in' })
+          : null,
+    }),
+    [chatCli, runMcpServerAction, sessionId, mcpServerActions],
+  )
   const removeDraftFile = useCallback(
     (path: string) =>
       setDraftMetadata((current) => ({ ...current, files: current.files.filter((entry) => entry !== path) })),
@@ -3552,12 +3565,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         }
   chromeRef.current = chrome
   // What rows read besides their own item: it changes with a turn starting or
-  // ending, a retry becoming possible, a jump's flash, never with a token.
+  // ending, a retry becoming possible, a jump's flash, a plugin card's session
+  // changing, never with a token.
   // `chrome` is the previous object while nothing in it changed (above).
   const rowContext = useMemo(
-    () => ({ chrome, flashRowId, hydrated, replayThroughSeq, unreadRowId }),
+    () => ({ chrome, flashRowId, hydrated, replayThroughSeq, unreadRowId, pluginOfferChat }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chrome, flashRowId, hydrated, replayThroughSeq, unreadRowId],
+    [chrome, flashRowId, hydrated, replayThroughSeq, unreadRowId, pluginOfferChat],
   )
 
   const latestCompletedTurnId = shape.latestCompletedTurnId ?? null
@@ -4206,9 +4220,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                       onFlashEnd={clearFlash}
                     >
                       <SubagentStopProvider value={stopSubagent}>
-                        <ChatQuoteActionsProvider value={quoteActions}>
-                          <TimelineRow key={item.id} row={item} chrome={chrome} />
-                        </ChatQuoteActionsProvider>
+                        <PluginOfferChatProvider value={pluginOfferChat}>
+                          <ChatQuoteActionsProvider value={quoteActions}>
+                            <TimelineRow key={item.id} row={item} chrome={chrome} />
+                          </ChatQuoteActionsProvider>
+                        </PluginOfferChatProvider>
                       </SubagentStopProvider>
                     </ConversationRowFrame>
                   </>
