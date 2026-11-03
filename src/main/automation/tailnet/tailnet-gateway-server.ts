@@ -72,7 +72,13 @@ import { parseTailnetEndpoint } from './tailnet-remote-client'
 import { normalizeTailnetScopes, type TailnetReverseGrant } from '../../../shared/tailnet'
 import { tailnetDevicePrincipal, type TailnetDevice } from '../../../shared/tailnet'
 import { authorizeStudioAccess, type StudioAuthorization } from '../../../../packages/studio-protocol/src/permissions'
-import { TAILNET_ROUTE_ACCESS, tailnetToolAccess, type TailnetDeviceRoute } from './tailnet-scopes'
+import {
+  TAILNET_ROUTE_ACCESS,
+  tailnetToolAccess,
+  type TailnetDeviceRoute,
+  type TailnetHttpRoute,
+  type TailnetUpgradeRoute,
+} from './tailnet-scopes'
 import {
   computeWebSocketAcceptKey,
   createWebSocketFrameDecoder,
@@ -928,18 +934,34 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     const { peerNode, peerAddress } = admitted
     options.devices.recordSeen(device.id, peerNode)
     options.onActivity?.({ kind: 'request', device, peerNode, peerAddress })
-    // What the route needs, judged once for every route a token opens, by
-    // the grant the device holds now. A path that is no route is not found below.
+    // Every route a token opens is matched, judged and run from one table:
+    // a path that is no route is not found, before any handler, and a route
+    // is run only by the handler of the route that was judged.
     const route = tailnetDeviceRouteOf(method, path, request.url)
-    if (route) {
-      const decision = authorizeStudioAccess(tailnetDevicePrincipal(device.scopes), TAILNET_ROUTE_ACCESS[route])
-      if (!decision.ok) {
-        writeJson(response, 403, { error: { code: 'tailnet_scope_required', message: routeRefusal(route, decision) } })
-        return
-      }
+    if (!route) {
+      writeJson(response, 404, {
+        error: { code: 'not_found', message: `No tailnet gateway route for ${method} ${path}.` },
+      })
+      return
     }
+    const decision = authorizeStudioAccess(tailnetDevicePrincipal(device.scopes), TAILNET_ROUTE_ACCESS[route])
+    if (!decision.ok) {
+      writeJson(response, 403, { error: { code: 'tailnet_scope_required', message: routeRefusal(route, decision) } })
+      return
+    }
+    await httpRoutes[route]({ request, response, device, peerNode })
+  }
 
-    if (method === 'GET' && path === TAILNET_IDENTITY_PATH) {
+  type RouteCall = {
+    request: IncomingMessage
+    response: ServerResponse
+    device: TailnetDevice
+    peerNode: string | null
+  }
+
+  /** What each authenticated HTTP route does, once `handleRequest` has judged it. */
+  const httpRoutes: { readonly [R in TailnetHttpRoute]: (call: RouteCall) => Promise<void> | void } = {
+    identity: ({ response, device }) => {
       // How the device should draw this desktop: the kind and colour the
       // person chose, else the defaults another desktop gives it. Absent from
       // a desktop built before it was sent, and from one with no conversation
@@ -960,30 +982,16 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         capabilities: [...capabilities],
         protocolVersions: SUPPORTED_MCP_PROTOCOL_VERSIONS,
       })
-      return
-    }
-
-    if (method === 'POST' && path === TAILNET_UPLOAD_PATH) {
-      await handleUpload(request, response, device, parseUrl(request.url))
-      return
-    }
-
-    if (method === 'GET' && path === TAILNET_CONVERSATION_IMAGE_PATH) {
-      await handleConversationImage(response, parseUrl(request.url))
-      return
-    }
-
-    if (method === 'GET' && (path === TAILNET_CONVERSATION_FILES_PATH || path === TAILNET_CONVERSATION_COMMANDS_PATH)) {
-      await handleConversationComposerRead(
-        response,
-        device,
-        parseUrl(request.url),
-        path === TAILNET_CONVERSATION_FILES_PATH ? 'files' : 'commands',
-      )
-      return
-    }
-
-    if (method === 'POST' && path === TAILNET_WS_TICKET_PATH) {
+    },
+    upload: ({ request, response, device }) => handleUpload(request, response, device, parseUrl(request.url)),
+    'conversation-image': ({ request, response }) => handleConversationImage(response, parseUrl(request.url)),
+    'conversation-files': ({ request, response, device }) =>
+      handleConversationComposerRead(response, device, parseUrl(request.url), 'files'),
+    'conversation-commands': ({ request, response, device }) =>
+      handleConversationComposerRead(response, device, parseUrl(request.url), 'commands'),
+    'conversation-commands:refresh': ({ request, response, device }) =>
+      handleConversationComposerRead(response, device, parseUrl(request.url), 'commands'),
+    'ws-ticket': ({ response, device }) => {
       // The upgrade carries its credential in the query string, where it lands
       // in proxy logs and browser history — so what it carries is a 30-second
       // single-use ticket, never the long-lived device token.
@@ -992,10 +1000,8 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       pruneTickets()
       tickets.set(ticket, { deviceId: device.id, expiresAtMs })
       writeJson(response, 200, { ticket, expiresAt: new Date(expiresAtMs).toISOString(), path: TAILNET_STREAM_PATH })
-      return
-    }
-
-    if (method === 'POST' && path === TAILNET_MCP_PATH) {
+    },
+    mcp: async ({ request, response, device, peerNode }) => {
       const body = await readJsonBody(request, response, MAX_MCP_BODY_BYTES)
       if (body === undefined) return
       // This endpoint is stateless: every POST builds a fresh context, so a
@@ -1024,12 +1030,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       // A notification has no answer; 202 says "accepted, nothing to return".
       if (!answer) writeJson(response, 202, {})
       else writeJson(response, 200, answer)
-      return
-    }
-
-    writeJson(response, 404, {
-      error: { code: 'not_found', message: `No tailnet gateway route for ${method} ${path}.` },
-    })
+    },
   }
 
   /** Run one JSON-RPC message; returns the response object, or null for a notification. */
@@ -1266,9 +1267,8 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
   async function handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     if (request.headers.origin) return rejectUpgrade(socket, 403, 'origin_not_allowed')
     const path = pathOf(request.url)
-    if (path !== TAILNET_STREAM_PATH && path !== TAILNET_CONVERSATION_PATH && path !== TAILNET_EVENTS_PATH) {
-      return rejectUpgrade(socket, 404, 'not_found')
-    }
+    const route = tailnetUpgradeRouteOf(path)
+    if (!route) return rejectUpgrade(socket, 404, 'not_found')
     if ((headerOf(request, 'upgrade') ?? '').toLowerCase() !== 'websocket')
       return rejectUpgrade(socket, 400, 'not_a_websocket_upgrade')
     if ((headerOf(request, 'sec-websocket-version') ?? '') !== '13')
@@ -1284,6 +1284,14 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     const admitted = await admitPeer(device, remoteAddressOf(socket), path)
     if (!admitted.ok) return rejectUpgrade(socket, 401, admitted.code)
     const { peerNode, peerAddress } = admitted
+    // What the socket needs, judged as every HTTP route is. The conversation
+    // socket is judged again below, by the grant as it stands after the await.
+    if (!authorizeStudioAccess(tailnetDevicePrincipal(device.scopes), TAILNET_ROUTE_ACCESS[route]).ok)
+      return rejectUpgrade(
+        socket,
+        403,
+        route === 'conversation' ? 'conversation_scope_required' : 'tailnet_scope_required',
+      )
 
     if (path === TAILNET_EVENTS_PATH) {
       // Any paired device may watch: the feed says only that something
@@ -1724,7 +1732,7 @@ function queryOf(url: string | undefined): URLSearchParams {
  * declares it, or null for one this listener does not serve (answered not
  * found). A refresh of the command list is its own route: it starts the CLI.
  */
-export function tailnetDeviceRouteOf(method: string, path: string, url?: string): TailnetDeviceRoute | null {
+export function tailnetDeviceRouteOf(method: string, path: string, url?: string): TailnetHttpRoute | null {
   if (method === 'GET' && path === TAILNET_IDENTITY_PATH) return 'identity'
   if (method === 'POST' && path === TAILNET_UPLOAD_PATH) return 'upload'
   if (method === 'GET' && path === TAILNET_CONVERSATION_IMAGE_PATH) return 'conversation-image'
@@ -1733,6 +1741,14 @@ export function tailnetDeviceRouteOf(method: string, path: string, url?: string)
     return queryOf(url).get('refresh') === '1' ? 'conversation-commands:refresh' : 'conversation-commands'
   if (method === 'POST' && path === TAILNET_WS_TICKET_PATH) return 'ws-ticket'
   if (method === 'POST' && path === TAILNET_MCP_PATH) return 'mcp'
+  return null
+}
+
+/** The route a WebSocket upgrade asks for, or null for a path that opens none. */
+export function tailnetUpgradeRouteOf(path: string): TailnetUpgradeRoute | null {
+  if (path === TAILNET_STREAM_PATH) return 'stream'
+  if (path === TAILNET_EVENTS_PATH) return 'events'
+  if (path === TAILNET_CONVERSATION_PATH) return 'conversation'
   return null
 }
 

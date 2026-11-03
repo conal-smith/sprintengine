@@ -29,11 +29,14 @@ import {
 // (packages/studio-protocol/src/permissions.ts).
 //
 // The tunnel is an owner's: a tab of a browser the owner paired drives the
-// domains the web client draws, and nothing that acts beyond this server or
-// hands out a credential of this machine. Pairing apps and other machines, the
-// tailnet's administration, and setting or clearing provider keys or the
-// GitHub token stay with the desktop app; their reads that the web client
-// shows (whether a key is set) do not.
+// domains the web client draws, and nothing that acts beyond this server.
+// Pairing apps and other machines, the tailnet's administration, and setting
+// or clearing provider keys or the GitHub token stay with the desktop app;
+// their reads that the web client shows (whether a key is set) do not. Two
+// kinds of credential an owner's tab does hand out, as the owner it is: an
+// MCP endpoint's bearer token for a client on this machine
+// (`automation:mcp-http-create`), and the browsers and embeds it pairs
+// (`web:devices:*`, `web:embeds:*`), each under `access:write`.
 //
 // Typed over every channel the server owns and the front door's own, so a
 // channel added to either does not compile until it says here what it needs

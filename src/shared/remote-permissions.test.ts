@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { STUDIO_METHODS, STUDIO_TOPICS } from '../../packages/studio-protocol/src/methods'
+import { STUDIO_METHODS, STUDIO_TOPICS, studioSpecPermissions } from '../../packages/studio-protocol/src/methods'
 import { STUDIO_PERMISSIONS, type StudioAccess } from '../../packages/studio-protocol/src/permissions'
 import {
   CONVERSATION_LANE_ACCESS,
@@ -18,8 +18,9 @@ const RESERVED = ['terminal:read', 'terminal:operate', 'environment:maintain']
 
 test('every permission is needed by some remote method, or is named for remote terminals and upkeep', () => {
   const declarations: StudioAccess[] = [
-    ...Object.values(STUDIO_METHODS),
-    ...Object.values(STUDIO_TOPICS),
+    ...[...Object.values(STUDIO_METHODS), ...Object.values(STUDIO_TOPICS)].map((spec) => ({
+      permissions: studioSpecPermissions(spec),
+    })),
     ...Object.values(TAILNET_ROUTE_ACCESS),
     ...Object.values(CONVERSATION_LANE_ACCESS),
     ...Object.values(WEB_TUNNEL_ACCESS),

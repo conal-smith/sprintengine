@@ -1,6 +1,5 @@
 import type { StudioErrorCode } from './envelope.js'
 import { STUDIO_BOARD_FILES_CAPABILITY } from './handshake.js'
-import { studioScopeRequires, type StudioPermission } from './permissions.js'
 import type { StudioScope } from './scopes.js'
 
 // Files under a workspace's roots: read, list, write, remove and watch, by a
@@ -76,7 +75,6 @@ export type StudioFilesTopicMap = {
 
 type MethodSpec = {
   scope: StudioScope
-  permissions: readonly StudioPermission[]
   mutation: boolean
   capability: typeof STUDIO_BOARD_FILES_CAPABILITY
   owner: true
@@ -84,14 +82,12 @@ type MethodSpec = {
 
 const reading: MethodSpec = {
   scope: 'files:read',
-  permissions: studioScopeRequires('files:read'),
   mutation: false,
   capability: STUDIO_BOARD_FILES_CAPABILITY,
   owner: true,
 }
 const writing: MethodSpec = {
   scope: 'files:write',
-  permissions: studioScopeRequires('files:write'),
   mutation: true,
   capability: STUDIO_BOARD_FILES_CAPABILITY,
   owner: true,
@@ -108,7 +104,6 @@ export const STUDIO_FILES_METHODS: { readonly [M in StudioFilesMethod]: MethodSp
 export const STUDIO_FILES_TOPICS: {
   readonly [T in keyof StudioFilesTopicMap]: {
     scope: StudioScope
-    permissions: readonly StudioPermission[]
     capability: typeof STUDIO_BOARD_FILES_CAPABILITY
     owner: true
     push: true
@@ -116,7 +111,6 @@ export const STUDIO_FILES_TOPICS: {
 } = {
   'files.watch': {
     scope: 'files:read',
-    permissions: studioScopeRequires('files:read'),
     capability: STUDIO_BOARD_FILES_CAPABILITY,
     owner: true,
     push: true,

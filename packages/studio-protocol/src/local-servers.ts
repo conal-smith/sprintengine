@@ -1,6 +1,5 @@
 import type { StudioErrorCode } from './envelope.js'
 import { STUDIO_LOCAL_SERVERS_CAPABILITY } from './handshake.js'
-import { studioScopeRequires, type StudioPermission } from './permissions.js'
 import type { StudioScope } from './scopes.js'
 
 // The local servers a Studio's conversations started: a dev server, a preview,
@@ -120,7 +119,6 @@ export type StudioLocalServersTopicMap = {
 
 type MethodSpec = {
   scope: StudioScope
-  permissions: readonly StudioPermission[]
   mutation: false
   capability: typeof STUDIO_LOCAL_SERVERS_CAPABILITY
   owner: true
@@ -128,7 +126,6 @@ type MethodSpec = {
 
 const read: MethodSpec = {
   scope: 'workspaces:read',
-  permissions: studioScopeRequires('workspaces:read'),
   mutation: false,
   capability: STUDIO_LOCAL_SERVERS_CAPABILITY,
   owner: true,
@@ -137,7 +134,6 @@ const read: MethodSpec = {
 const operate: MethodSpec = {
   ...read,
   scope: 'conversation:operate',
-  permissions: studioScopeRequires('conversation:operate'),
 }
 
 export const STUDIO_LOCAL_SERVERS_METHODS: { readonly [M in StudioLocalServersMethod]: MethodSpec } = {
@@ -150,7 +146,6 @@ export const STUDIO_LOCAL_SERVERS_METHODS: { readonly [M in StudioLocalServersMe
 export const STUDIO_LOCAL_SERVERS_TOPICS: {
   readonly [T in keyof StudioLocalServersTopicMap]: {
     scope: StudioScope
-    permissions: readonly StudioPermission[]
     capability: typeof STUDIO_LOCAL_SERVERS_CAPABILITY
     owner: true
     push: true
@@ -158,7 +153,6 @@ export const STUDIO_LOCAL_SERVERS_TOPICS: {
 } = {
   'localServers.changed': {
     scope: 'workspaces:read',
-    permissions: studioScopeRequires('workspaces:read'),
     capability: STUDIO_LOCAL_SERVERS_CAPABILITY,
     owner: true,
     push: true,

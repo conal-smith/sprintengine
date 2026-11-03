@@ -11,6 +11,7 @@ import {
   type StudioLocalServersMethod,
   type StudioToolsMethod,
   authorizeStudioMethod,
+  studioRefusedGrantName,
   type ConversationCommand,
   type StudioChatMethod,
   type StudioConversationKey,
@@ -966,9 +967,12 @@ export function createStudioRpcRouter(options: StudioRpcRouterOptions): StudioRp
         return refuse('unknown_method', `No method "${method}".`)
       if (!decision.ok) {
         answer =
-          decision.reason === 'owner_required'
-            ? refuse('owner_required', OWNER_ONLY)
-            : refuse('scope_required', `This app's grant does not include "${spec.scope}".`)
+          decision.reason === 'permission_required'
+            ? refuse(
+                'scope_required',
+                `This app's grant does not include "${studioRefusedGrantName(spec, decision.permission)}".`,
+              )
+            : refuse('owner_required', OWNER_ONLY)
       } else {
         const parsed = parseStudioMethodParams(method, params)
         // A mutation's id names one command: the same id for another one is refused.

@@ -15,6 +15,7 @@ import {
   studioClientFrameIds,
   authorizeStudioTopic,
   studioGrantPrincipal,
+  studioRefusedGrantName,
   studioWireFrames,
   type ConversationServerFrame,
   type StudioByeCode,
@@ -589,9 +590,13 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
     const spec = STUDIO_TOPICS[frame.topic]
     const decision = authorizeStudioTopic(grant, frame.topic)
     if (!decision.ok) {
-      if (decision.reason === 'owner_required')
-        subscriptionFailed(frame.id, 'owner_required', 'This stream is served to Studio’s own connections only.')
-      else subscriptionFailed(frame.id, 'scope_required', `This app's grant does not include "${spec.scope}".`)
+      if (decision.reason === 'permission_required')
+        subscriptionFailed(
+          frame.id,
+          'scope_required',
+          `This app's grant does not include "${studioRefusedGrantName(spec, decision.permission)}".`,
+        )
+      else subscriptionFailed(frame.id, 'owner_required', 'This stream is served to Studio’s own connections only.')
       return
     }
     const parsed = parseStudioTopicParams(frame.topic, frame.params)
@@ -951,8 +956,12 @@ export function createStudioRpcConnection(options: StudioRpcConnectionOptions): 
     const grant = liveGrant()
     if (!grant) return
     for (const subscription of [...subscriptions.values()]) {
-      if (authorizeStudioTopic(grant, subscription.topic).ok) continue
-      const scope = STUDIO_TOPICS[subscription.topic].scope
+      const decision = authorizeStudioTopic(grant, subscription.topic)
+      if (decision.ok) continue
+      const scope =
+        decision.reason === 'permission_required'
+          ? studioRefusedGrantName(STUDIO_TOPICS[subscription.topic], decision.permission)
+          : STUDIO_TOPICS[subscription.topic].scope
       dropSubscription(subscription)
       subscriptionFailed(subscription.id, 'scope_required', `This app's grant no longer includes "${scope}".`)
     }

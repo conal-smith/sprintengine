@@ -650,14 +650,19 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     await joined.ready
   }
   const handle = async (frame: ConversationClientMessage): Promise<void> => {
-    // Every frame is judged by what the lane declares for it. Not following
-    // is refused here, for any frame; not driving is refused where the frame
-    // that needs it is answered, in the words each has always had.
-    const decision = authorizeStudioAccess(principal, CONVERSATION_LANE_ACCESS[frame.type])
-    const following =
-      decision.ok || (decision.reason === 'permission_required' && decision.permission === 'conversation:operate')
-    if (!following) {
+    // Not following is refused here, for any frame. Then every frame is judged
+    // by what the lane declares for it, and what is refused past following is
+    // refused where the frame that needs it is answered, in the words each has
+    // always had.
+    if (!authorizeStudioAccess(principal, CONVERSATION_LANE_ACCESS.subscribe).ok) {
       error('conversation_scope_required', 'This device has no conversation read grant.')
+      return
+    }
+    const decision = authorizeStudioAccess(principal, CONVERSATION_LANE_ACCESS[frame.type])
+    // A command and a side question answer a refusal in their own words,
+    // below; any other frame that needs more than following is refused here.
+    if (!decision.ok && frame.type !== 'command' && frame.type !== 'askSideQuestion') {
+      error('conversation_scope_required', 'This device may not do that on this machine’s conversations.')
       return
     }
     if (frame.type === 'hello') {

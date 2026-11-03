@@ -72,8 +72,10 @@ The `welcome`'s `grant` is what the connection may do:
 
 - `scopes` — `conversation:read` (list, follow, read), `conversation:operate`
   (every command; implies read) and `conversation:create` (start a chat). Each
-  method's scope is in `STUDIO_METHODS`, beside the `permissions` it needs
-  (`STUDIO_PERMISSIONS`): a grant's scopes are translated to permissions
+  method's scope is in `STUDIO_METHODS`, and what it needs is the permission
+  that scope names plus any `extraPermissions` it adds
+  (`studioSpecPermissions`, from `STUDIO_PERMISSIONS`): a grant's scopes are
+  translated to permissions
   (`STUDIO_SCOPE_PERMISSIONS`) and checked against those on every request,
   as the grant stands then (`authorizeStudioMethod`). An unknown method is
   refused.

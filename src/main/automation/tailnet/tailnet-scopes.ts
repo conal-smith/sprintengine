@@ -43,6 +43,9 @@ export const TAILNET_ROUTE_ACCESS = {
 } as const satisfies Readonly<Record<string, StudioAccess>>
 
 export type TailnetDeviceRoute = keyof typeof TAILNET_ROUTE_ACCESS
+/** The routes a ticket opens as a WebSocket upgrade; every other route is an HTTP request. */
+export type TailnetUpgradeRoute = Extract<TailnetDeviceRoute, 'stream' | 'events' | 'conversation'>
+export type TailnetHttpRoute = Exclude<TailnetDeviceRoute, TailnetUpgradeRoute>
 
 const FOLLOW: StudioAccess = { permissions: ['conversation:read'] }
 const DRIVE: StudioAccess = { permissions: ['conversation:read', 'conversation:operate'] }

@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
-import { STUDIO_METHODS, STUDIO_TOPICS, type StudioMethod, type StudioTopic } from '../src/methods'
+import {
+  STUDIO_METHODS,
+  STUDIO_TOPICS,
+  authorizeStudioMethod,
+  authorizeStudioTopic,
+  studioRefusedGrantName,
+  studioSpecPermissions,
+  type StudioMethod,
+  type StudioTopic,
+} from '../src/methods'
 import {
   STUDIO_PERMISSIONS,
   STUDIO_SCOPE_PERMISSIONS,
@@ -10,6 +19,7 @@ import {
   studioAccessFor,
   studioGrantPrincipal,
   studioPrincipal,
+  studioScopeRequires,
   type StudioAccess,
 } from '../src/permissions'
 import { STUDIO_SCOPES, type StudioScope } from '../src/scopes'
@@ -28,6 +38,8 @@ function legacyAllows(
   return spec.scope === null || legacyStudioScopesGrant(grant.scopes, spec.scope)
 }
 
+type Grant = { owner: boolean; scopes: StudioScope[] }
+
 function* scopeSubsets(): Generator<StudioScope[]> {
   for (let mask = 0; mask < 1 << STUDIO_SCOPES.length; mask++)
     yield STUDIO_SCOPES.filter((_scope, index) => (mask & (1 << index)) !== 0)
@@ -40,18 +52,37 @@ test('the permission set is closed: each name once, and nothing outside it is on
     assert.equal(isStudioPermission(value), false, String(value))
 })
 
-test('every method and topic declares the permissions it needs, from the closed set', () => {
+test('every method and topic needs the permission its scope names, never less, and only names from the set', () => {
   for (const [name, spec] of [...Object.entries(STUDIO_METHODS), ...Object.entries(STUDIO_TOPICS)]) {
-    assert.ok(Array.isArray(spec.permissions), name)
-    for (const permission of spec.permissions)
+    const needed = studioSpecPermissions(spec)
+    for (const permission of needed) assert.equal(isStudioPermission(permission), true, `${name}: ${permission}`)
+    for (const permission of spec.extraPermissions ?? [])
       assert.equal(isStudioPermission(permission), true, `${name}: ${permission}`)
-    // A method with a scope needs a permission; only the two that any
-    // authenticated client may ask need none.
-    if (spec.scope === null) assert.deepEqual(spec.permissions, [], name)
-    else assert.ok(spec.permissions.length > 0, name)
+    // A method with a scope needs that scope's permission, whatever it adds;
+    // only the two that any authenticated client may ask need none.
+    if (spec.scope === null) assert.deepEqual(needed, [], name)
+    else {
+      for (const own of studioScopeRequires(spec.scope))
+        assert.ok(needed.includes(own), `${name} needs what "${spec.scope}" names`)
+    }
   }
-  assert.deepEqual(STUDIO_METHODS['server.info'].permissions, [])
-  assert.deepEqual(STUDIO_METHODS['server.ping'].permissions, [])
+  assert.deepEqual(studioSpecPermissions(STUDIO_METHODS['server.info']), [])
+  assert.deepEqual(studioSpecPermissions(STUDIO_METHODS['server.ping']), [])
+})
+
+test('a permission a method adds beyond its scope is needed too, and its refusal names it', () => {
+  const spec = { scope: 'conversation:operate' as const, extraPermissions: ['filesystem:write' as const] }
+  assert.deepEqual(studioSpecPermissions(spec), ['conversation:operate', 'filesystem:write'])
+  assert.deepEqual(studioSpecPermissions({ ...spec, extraPermissions: ['conversation:operate'] }), [
+    'conversation:operate',
+  ])
+  // Today's refusals name the scope, as they always have.
+  assert.equal(studioRefusedGrantName(spec, 'conversation:operate'), 'conversation:operate')
+  assert.equal(studioRefusedGrantName({ scope: 'files:read' }, 'filesystem:read'), 'files:read')
+  assert.equal(studioRefusedGrantName(spec, 'filesystem:write'), 'filesystem:write')
+  // No method in the table needs more than its scope yet, so every refusal on the wire is unchanged.
+  for (const [name, method] of [...Object.entries(STUDIO_METHODS), ...Object.entries(STUDIO_TOPICS)])
+    assert.equal(method.extraPermissions, undefined, name)
 })
 
 test('every Studio scope a grant can hold carries only permissions from the closed set', () => {
@@ -74,17 +105,20 @@ test('every Studio scope a grant can hold carries only permissions from the clos
 test('every grant reaches exactly the methods and topics it reached before permissions', () => {
   // All 256 sets of scopes, owner and not, against every method and topic.
   const entries = [
-    ...(Object.keys(STUDIO_METHODS) as StudioMethod[]).map((name) => [name, STUDIO_METHODS[name]] as const),
-    ...(Object.keys(STUDIO_TOPICS) as StudioTopic[]).map((name) => [`topic ${name}`, STUDIO_TOPICS[name]] as const),
+    ...(Object.keys(STUDIO_METHODS) as StudioMethod[]).map(
+      (name) => [name, STUDIO_METHODS[name], (grant: Grant) => authorizeStudioMethod(grant, name)] as const,
+    ),
+    ...(Object.keys(STUDIO_TOPICS) as StudioTopic[]).map(
+      (name) => [`topic ${name}`, STUDIO_TOPICS[name], (grant: Grant) => authorizeStudioTopic(grant, name)] as const,
+    ),
   ]
   let compared = 0
   for (const scopes of scopeSubsets())
     for (const owner of [false, true]) {
       const grant = { owner, scopes }
-      const principal = studioGrantPrincipal(grant)
-      for (const [name, spec] of entries) {
+      for (const [name, spec, after_] of entries) {
         const before = legacyAllows(grant, spec)
-        const after = authorizeStudioAccess(principal, spec).ok
+        const after = after_(grant).ok
         assert.equal(after, before, `${name} for ${owner ? 'an owner' : 'a client'} holding [${scopes.join(', ')}]`)
         compared++
       }
@@ -98,6 +132,11 @@ test('an unknown method is refused, and so is a name only the prototype has', ()
   for (const name of ['conversation.compact', 'constructor', '__proto__', 'toString', 'hasOwnProperty', ''])
     assert.equal(studioAccessFor(STUDIO_METHODS, name), undefined, name)
   assert.equal(authorizeStudioAccess(owner, studioAccessFor(STUDIO_METHODS, 'constructor')).ok, false)
+  for (const name of ['conversation.compact', 'constructor', '__proto__'])
+    assert.deepEqual(authorizeStudioMethod({ owner: true, scopes: [...STUDIO_SCOPES] }, name), {
+      ok: false,
+      reason: 'unknown_method',
+    })
   assert.equal(studioAccessFor(STUDIO_METHODS, 'conversation.send'), STUDIO_METHODS['conversation.send'])
 })
 

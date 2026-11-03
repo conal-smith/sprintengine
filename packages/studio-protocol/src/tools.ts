@@ -1,7 +1,6 @@
 import type { StudioErrorCode } from './envelope.js'
 import { STUDIO_CLIENT_TOOLS_CAPABILITY } from './handshake.js'
 import { parseStudioConversationKey, type StudioConversationKey } from './key.js'
-import { studioScopeRequires, type StudioPermission } from './permissions.js'
 import type { StudioScope } from './scopes.js'
 
 // Client tools: a client offers Studio named toolsets, Studio lists their
@@ -282,7 +281,6 @@ export type StudioToolsTopicMap = {
 
 type MethodSpec = {
   scope: StudioScope
-  permissions: readonly StudioPermission[]
   mutation: boolean
   capability: typeof STUDIO_CLIENT_TOOLS_CAPABILITY
   owner?: true
@@ -290,7 +288,6 @@ type MethodSpec = {
 
 const offering: MethodSpec = {
   scope: 'tools:offer',
-  permissions: studioScopeRequires('tools:offer'),
   mutation: false,
   capability: STUDIO_CLIENT_TOOLS_CAPABILITY,
 }
@@ -306,20 +303,17 @@ export const STUDIO_TOOLS_METHODS: { readonly [M in StudioToolsMethod]: MethodSp
   'tools.focus': offering,
   'tools.catalog': {
     scope: 'conversation:read',
-    permissions: studioScopeRequires('conversation:read'),
     mutation: false,
     capability: STUDIO_CLIENT_TOOLS_CAPABILITY,
   },
   'tools.grants': {
     scope: 'conversation:read',
-    permissions: studioScopeRequires('conversation:read'),
     mutation: false,
     capability: STUDIO_CLIENT_TOOLS_CAPABILITY,
     owner: true,
   },
   'tools.grant': {
     scope: 'conversation:operate',
-    permissions: studioScopeRequires('conversation:operate'),
     mutation: true,
     capability: STUDIO_CLIENT_TOOLS_CAPABILITY,
     owner: true,
@@ -329,14 +323,12 @@ export const STUDIO_TOOLS_METHODS: { readonly [M in StudioToolsMethod]: MethodSp
 export const STUDIO_TOOLS_TOPICS: {
   readonly [T in keyof StudioToolsTopicMap]: {
     scope: StudioScope
-    permissions: readonly StudioPermission[]
     capability: typeof STUDIO_CLIENT_TOOLS_CAPABILITY
     push: true
   }
 } = {
   'tools.catalog': {
     scope: 'conversation:read',
-    permissions: studioScopeRequires('conversation:read'),
     capability: STUDIO_CLIENT_TOOLS_CAPABILITY,
     push: true,
   },
