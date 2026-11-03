@@ -537,6 +537,12 @@ the transcript with the last sequence and log generation it holds, and a
 reconnect sends both back: when the desktop still has that log it replies with
 only the missed events, otherwise with a reset snapshot that replaces the
 cache. Sequence numbers have gaps by design and are never treated as damage.
+A write to the cache that fails is carried by the next one, and a chat whose
+cache fell behind resumes from the older cursor, so a failure is said only
+when the writes keep failing (several in a row, over some seconds), once,
+under the composer, and the first write that lands takes it away. An event
+the cache cannot keep costs the cached transcript and its cursor, never the
+queue of unsent messages and never the write.
 Reconnects back off exponentially with jitter and never sooner than the
 desktop asks. Losing conversation access stops the stream in a no-access
 state, and a revoked phone is sent back to pairing.
