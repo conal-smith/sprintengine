@@ -1,9 +1,8 @@
 import { createIpcRouter, type RendererIpc, type RouterPort } from '../../../preload/ipc-router-core'
 import { SERVER_IPC_CHANNELS } from '../../../shared/ipc-channel-owners'
-import { backoffDelayMs, type ExponentialBackoffOptions } from '../../../shared/exponentialBackoff'
 import { assertJsonSafe } from '../../../shared/json-safe'
 import { WEB_TUNNEL_CHANNELS, webTunnelAllows } from '../../../shared/web-client'
-import { WEB_CLOSE_REVOKED, WEB_TUNNEL_REOPENED_EVENT, watchWebReconnectTriggers } from './webReconnect'
+import { superviseTabSocket, WEB_TUNNEL_REOPENED_EVENT, watchWebReconnectTriggers } from './webReconnect'
 import { returnToPairing, webPageUrl, webSocketUrl, webWindowId } from './webLocation'
 import { webShellIpc } from './webShellIpc'
 
@@ -14,8 +13,9 @@ import { webShellIpc } from './webShellIpc'
 // shell. Here the port is the tab's `/ws/ipc` socket, and the shell is the
 // browser (`webShellIpc`).
 //
-// The socket reconnects by itself, with backoff, and at once when the page
-// comes back online or to the foreground. While it is down, invokes wait in
+// The socket reconnects by itself, on the connection supervisor every
+// reconnecting connection shares (`superviseTabSocket`), and at once when the
+// page comes back online or to the foreground. While it is down, invokes wait in
 // the router's queue and the idempotent reads go out again on the next socket,
 // as across a server restart on the desktop. A close with 4401 means this
 // browser was removed in Studio: the tab goes back to pairing, as it does when
@@ -61,39 +61,6 @@ function socketPort(socket: WebSocket): RouterPort {
   } as RouterPort
 }
 
-let attempt = 0
-let timer: ReturnType<typeof setTimeout> | null = null
-let current: WebSocket | null = null
-let everOpened = false
-
-function connect(): void {
-  if (timer) clearTimeout(timer)
-  timer = null
-  if (current && current.readyState <= WebSocket.OPEN) return
-  const socket = new WebSocket(webSocketUrl('ws/ipc', { windowId: webWindowId() }))
-  current = socket
-  let opened = false
-  socket.addEventListener('open', () => {
-    opened = true
-    attempt = 0
-    router.attachPort(socketPort(socket))
-    if (everOpened) window.dispatchEvent(new Event(WEB_TUNNEL_REOPENED_EVENT))
-    everOpened = true
-  })
-  socket.addEventListener('close', (event) => {
-    if (current === socket) current = null
-    if (event.code === WEB_CLOSE_REVOKED) {
-      returnToPairing()
-      return
-    }
-    // A socket refused at its upgrade closes without a code a page can read.
-    // A browser removed while it was offline (asleep, out of range) is
-    // refused there on every try, and never hears 4401: ask the session.
-    if (!opened) void checkStillPaired()
-    schedule()
-  })
-}
-
 async function checkStillPaired(): Promise<void> {
   try {
     const response = await fetch(webPageUrl('api/session'), { credentials: 'same-origin', cache: 'no-store' })
@@ -103,21 +70,16 @@ async function checkStillPaired(): Promise<void> {
   }
 }
 
-// A quarter second, doubling to ten; each wait is jittered by a quarter either
-// way so tabs a server restart dropped together do not all knock at once.
-const RECONNECT_BACKOFF: ExponentialBackoffOptions = { baseMs: 250, maxMs: 10_000 }
-
-function schedule(): void {
-  if (timer) return
-  const delay = (backoffDelayMs(attempt, RECONNECT_BACKOFF) ?? RECONNECT_BACKOFF.maxMs) * (0.75 + Math.random() * 0.5)
-  attempt = Math.min(attempt + 1, 6)
-  timer = setTimeout(connect, delay)
-}
-
-connect()
-watchWebReconnectTriggers(() => {
-  attempt = 0
-  connect()
+const tab = superviseTabSocket<WebSocket>({
+  open: () => new WebSocket(webSocketUrl('ws/ipc', { windowId: webWindowId() })),
+  onOpen: (socket, reopened) => {
+    router.attachPort(socketPort(socket))
+    if (reopened) window.dispatchEvent(new Event(WEB_TUNNEL_REOPENED_EVENT))
+  },
+  onRevoked: returnToPairing,
+  onRefused: () => void checkStillPaired(),
 })
+tab.start()
+watchWebReconnectTriggers(() => tab.wake())
 
 export const ipc: RendererIpc = router
