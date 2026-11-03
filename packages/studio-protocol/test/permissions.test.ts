@@ -129,15 +129,21 @@ test('every grant reaches exactly the methods and topics it reached before permi
 test('an unknown method is refused, and so is a name only the prototype has', () => {
   const owner = studioPrincipal({ owner: true, permissions: STUDIO_PERMISSIONS })
   assert.deepEqual(authorizeStudioAccess(owner, undefined), { ok: false, reason: 'unknown_method' })
+  // A table of access, as the tailnet's and the tunnel's are: own keys only.
+  const table: Readonly<Record<string, StudioAccess>> = {
+    'conversation.send': { permissions: ['conversation:operate'] },
+  }
   for (const name of ['conversation.compact', 'constructor', '__proto__', 'toString', 'hasOwnProperty', ''])
-    assert.equal(studioAccessFor(STUDIO_METHODS, name), undefined, name)
-  assert.equal(authorizeStudioAccess(owner, studioAccessFor(STUDIO_METHODS, 'constructor')).ok, false)
-  for (const name of ['conversation.compact', 'constructor', '__proto__'])
-    assert.deepEqual(authorizeStudioMethod({ owner: true, scopes: [...STUDIO_SCOPES] }, name), {
-      ok: false,
-      reason: 'unknown_method',
-    })
-  assert.equal(studioAccessFor(STUDIO_METHODS, 'conversation.send'), STUDIO_METHODS['conversation.send'])
+    assert.equal(studioAccessFor(table, name), undefined, name)
+  assert.equal(authorizeStudioAccess(owner, studioAccessFor(table, 'constructor')).ok, false)
+  assert.equal(studioAccessFor(table, 'conversation.send'), table['conversation.send'])
+  // The method and topic tables are judged through their own authorizers.
+  const grant = { owner: true, scopes: [...STUDIO_SCOPES] }
+  for (const name of ['conversation.compact', 'constructor', '__proto__', 'toString', 'hasOwnProperty', '']) {
+    assert.deepEqual(authorizeStudioMethod(grant, name), { ok: false, reason: 'unknown_method' }, name)
+    assert.deepEqual(authorizeStudioTopic(grant, name), { ok: false, reason: 'unknown_method' }, name)
+  }
+  assert.deepEqual(authorizeStudioMethod(grant, 'conversation.send'), { ok: true })
 })
 
 test('the decision: local-only before owner, owner before permissions, the first missing permission named', () => {

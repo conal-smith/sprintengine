@@ -22,7 +22,6 @@ import {
 import type { StudioEnvironment, StudioErrorCode, StudioGrant, StudioServerIdentity } from './envelope.js'
 import {
   authorizeStudioAccess,
-  studioAccessFor,
   studioGrantPrincipal,
   studioScopeRequires,
   type StudioAccess,
@@ -358,8 +357,8 @@ export function studioSpecPermissions(spec: StudioSpec): readonly StudioPermissi
 }
 
 function studioSpecAccess(table: object, name: string): StudioAccess | undefined {
-  // Own keys only, as `studioAccessFor` reads them: `constructor` is not a method.
-  if (!studioAccessFor(table, name)) return undefined
+  // Own keys only: `constructor` is not a method.
+  if (!Object.hasOwn(table, name)) return undefined
   const spec = (table as Record<string, StudioSpec>)[name]
   return { permissions: studioSpecPermissions(spec), ...(spec.owner ? { owner: true as const } : {}) }
 }

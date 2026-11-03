@@ -1285,13 +1285,13 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     if (!admitted.ok) return rejectUpgrade(socket, 401, admitted.code)
     const { peerNode, peerAddress } = admitted
     // What the socket needs, judged as every HTTP route is. The conversation
-    // socket is judged again below, by the grant as it stands after the await.
-    if (!authorizeStudioAccess(tailnetDevicePrincipal(device.scopes), TAILNET_ROUTE_ACCESS[route]).ok)
-      return rejectUpgrade(
-        socket,
-        403,
-        route === 'conversation' ? 'conversation_scope_required' : 'tailnet_scope_required',
-      )
+    // socket is judged below instead, by the device as it stands after the
+    // await and after this build says whether it streams conversations at all.
+    if (
+      route !== 'conversation' &&
+      !authorizeStudioAccess(tailnetDevicePrincipal(device.scopes), TAILNET_ROUTE_ACCESS[route]).ok
+    )
+      return rejectUpgrade(socket, 403, 'tailnet_scope_required')
 
     if (path === TAILNET_EVENTS_PATH) {
       // Any paired device may watch: the feed says only that something

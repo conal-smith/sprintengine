@@ -82,10 +82,8 @@ export type StudioAuthorization =
  * A method's access from its table, or undefined for a name the table does not
  * hold. Own keys only: `constructor` or `__proto__` is not a method.
  */
-export function studioAccessFor<T extends object>(table: T, name: string): StudioAccess | undefined {
-  if (!Object.hasOwn(table, name)) return undefined
-  const access = (table as Record<string, unknown>)[name]
-  return access !== null && typeof access === 'object' ? (access as StudioAccess) : undefined
+export function studioAccessFor(table: Readonly<Record<string, StudioAccess>>, name: string): StudioAccess | undefined {
+  return Object.hasOwn(table, name) ? table[name] : undefined
 }
 
 /**
