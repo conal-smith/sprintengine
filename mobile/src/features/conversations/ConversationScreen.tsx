@@ -75,7 +75,8 @@ import {
   type PickedImage,
 } from "./composerOptions";
 import { openingStillInBox, type ChatOpening } from "./photoLaunch";
-import { pickChatImage } from "./pickChatImage";
+import { pickChatImages } from "./pickChatImage";
+import { uploadEach } from "./photoPicks";
 import { pickChatFile } from "./pickChatFile";
 import { attachmentsOnlyText, rememberSentFile, sentFileName, splitSentUploads } from "./chatFiles";
 import { useChatImages, useSentImages } from "./ConversationImage";
@@ -748,12 +749,27 @@ export function ConversationScreen({
       if (mounted.current && !result.ok) chat.setNotice(result.message);
     });
   };
-  // The picture, picked or taken, or the file, uploaded to the chat's
-  // session at once so send has only an id to carry.
-  const uploadPicked = async (source: AttachSource): Promise<{ id: string; name: string; file?: true } | null> => {
-    if (source === "file") return uploadFile();
-    const picked = await pickChatImage(source === "camera", chatImageMaxBytes(!!session && declaresImageDownscale(session)));
-    return picked ? uploadImage(picked) : null;
+  // The pictures, picked or taken, or the file, uploaded to the chat's
+  // session at once so send has only ids to carry. Each picture joins the
+  // tray the moment it is on the desktop, so one that fails part way through
+  // a pick of several leaves the rest there; what did not go is said.
+  const uploadPicked = async (
+    source: AttachSource,
+    add: (uploaded: { id: string; name: string; file?: true }) => void,
+  ): Promise<string | null> => {
+    if (source === "file") {
+      const file = await uploadFile();
+      if (file) add(file);
+      return null;
+    }
+    const picked = await pickChatImages(
+      source === "camera",
+      chatImageMaxBytes(!!session && declaresImageDownscale(session)),
+      CONVERSATION_MAX_IMAGES - uploads.length,
+    );
+    if (!picked) return null;
+    const failed = await uploadEach(picked.images, uploadImage, add);
+    return [picked.problem, failed].filter(Boolean).join(" ") || null;
   };
   const uploadFile = async (): Promise<{ id: string; name: string; file: true } | null> => {
     const picked = await pickChatFile();
@@ -792,10 +808,17 @@ export function ConversationScreen({
     )
       return;
     setUploading(true);
+    const sessionId = activeThread.sessionId;
     try {
-      const uploaded = await uploadPicked(source);
-      if (uploaded && mounted.current && uploadSession.current === activeThread.sessionId)
-        setUploads((previous) => [...previous, uploaded]);
+      const problem = await uploadPicked(source, (uploaded) => {
+        if (mounted.current && uploadSession.current === sessionId)
+          setUploads((previous) =>
+            previous.length < CONVERSATION_MAX_IMAGES && !previous.some((upload) => upload.id === uploaded.id)
+              ? [...previous, uploaded]
+              : previous,
+          );
+      });
+      if (problem && mounted.current) chat.setNotice(problem);
     } catch (error) {
       if (mounted.current)
         chat.setNotice(
