@@ -624,7 +624,7 @@ test('an approval over there can be allowed for the rest of the conversation, ne
           summary: 'git status',
           input: { command: 'git status' },
           // The folder the request runs in on that machine.
-          cwd: '/Users/conal/project',
+          cwd: '/Users/dev/project',
         }),
       })
     })
