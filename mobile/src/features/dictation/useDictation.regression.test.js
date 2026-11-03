@@ -340,6 +340,81 @@ test("a tap of the mic still stops it and keeps the last words in the draft", as
   chat.unmount();
 });
 
+test("stopping on Android, which answers the stop with a client error, keeps the words and says nothing", async () => {
+  const h = harness();
+  const chat = h.composer();
+  await listening(h, chat);
+  h.emit("result", heard("rename the screen to New"));
+  chat.result.toggle();
+  assert.ok(h.calls.includes("stop"));
+  // Android ends the stopped session with ERROR_CLIENT before "end", in
+  // place of a final result.
+  h.emit("error", { error: "client", code: 5 });
+  h.emit("end");
+  const after = chat.render();
+  assert.equal(chat.draft, "Rename the screen to New");
+  assert.equal(after.state, "idle");
+  assert.equal(after.error, null, "an intentional stop is not reported");
+  chat.unmount();
+});
+
+test("stopping with nothing said, the recogniser's silence says nothing either", async () => {
+  const h = harness();
+  const chat = h.composer();
+  await listening(h, chat);
+  chat.result.toggle();
+  h.emit("error", { error: "no-speech" });
+  h.emit("end");
+  const after = chat.render();
+  assert.equal(after.state, "idle");
+  assert.equal(after.error, null);
+  chat.unmount();
+});
+
+test("a client error the person did not cause is still reported, and keeps the words", async () => {
+  const h = harness();
+  const chat = h.composer();
+  await listening(h, chat);
+  h.emit("result", heard("check the logs"));
+  h.emit("error", { error: "client", code: 5 });
+  h.emit("end");
+  const after = chat.render();
+  assert.equal(chat.draft, "Check the logs");
+  assert.equal(after.state, "idle");
+  assert.match(after.error, /Try again/);
+  assert.equal(after.errorTone, "error");
+  chat.unmount();
+});
+
+test("a real failure while stopping is still reported", async () => {
+  const h = harness();
+  const chat = h.composer();
+  await listening(h, chat);
+  h.emit("result", heard("check the logs"));
+  chat.result.toggle();
+  h.emit("error", { error: "network" });
+  h.emit("end");
+  const after = chat.render();
+  assert.equal(chat.draft, "Check the logs");
+  assert.match(after.error, /connection/);
+  chat.unmount();
+});
+
+test("a send whose stop Android answers with a client error sends the words once and says nothing", async () => {
+  const h = harness();
+  const chat = h.composer();
+  chat.draft = "Two things:";
+  await listening(h, chat);
+  h.emit("result", heard("the header is wrong"));
+  const sending = chat.send();
+  h.emit("error", { error: "client", code: 5 });
+  h.emit("end");
+  await sending;
+  assert.deepEqual(chat.sent, ["Two things: The header is wrong"]);
+  assert.equal(chat.render().error, null);
+  chat.unmount();
+});
+
 test("leaving the chat while a send waits calls the send off and the microphone with it", async () => {
   const h = harness();
   const chat = h.composer();

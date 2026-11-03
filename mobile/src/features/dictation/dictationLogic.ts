@@ -49,6 +49,33 @@ export function isDictationSilence(code: string): boolean {
 }
 
 /**
+ * What a recogniser's error means for the dictation:
+ *
+ * - `"pause"`: a silence it gave up on while the person was still dictating.
+ *   It ends the run, not the dictation; the next run starts.
+ * - `"stopped"`: the recogniser saying it was stopped, which the app did,
+ *   because the person tapped the mic, sent, or the limit ran out. It is not
+ *   a failure and the composer says nothing.
+ * - `"failure"`: something went wrong, and the composer says what.
+ *
+ * A stop can come back as an error rather than as a final result. On
+ * Android, continuous dictation is a segmented session fed from the app's own
+ * recording, and asking it to stop listening can end that session with
+ * `ERROR_CLIENT`, which the module reports as `"client"`, after the words
+ * have been heard. With nothing said, either phone answers `"no-speech"`, and
+ * `"aborted"` follows an abort on both. After a stop the person asked for,
+ * those are the stop itself: the words heard so far are kept either way, and
+ * a red "Try again" under them would read as though they were lost. Any other
+ * error after a stop, a lost connection or a microphone taken away, is still
+ * a failure, and so is `"client"` without a stop.
+ */
+export function readDictationError(code: string, stopping: boolean): "pause" | "stopped" | "failure" {
+  if (code === "aborted") return "stopped";
+  if (stopping) return code === "client" || isDictationSilence(code) ? "stopped" : "failure";
+  return isDictationSilence(code) ? "pause" : "failure";
+}
+
+/**
  * The words a run settled on. A final result is normally the words to keep,
  * but a recogniser can settle on less than it had shown — a final that is the
  * start of the interim it replaces — and the words it dropped were said, so
