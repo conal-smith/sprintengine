@@ -99,7 +99,8 @@ import {
   attachedConversations,
   buildRemoteBand,
   openSpecOfConversation,
-  remoteFinishUnseen,
+  remoteRowActivity,
+  remoteRowFinishUnseen,
   remoteConversationTitle,
   remoteOriginChatWorkspaceId,
   followedRemoteRestsToKeep,
@@ -122,6 +123,7 @@ import {
   withRemoteChatMarks,
   remoteWatchedPullRequest,
   remoteManageWritable,
+  type ChatListEntry,
   type PendingRemoteMarks,
   type RemoteChatMarks,
   type RemoteChatPending,
@@ -140,6 +142,7 @@ import { followRestAnswer, restRefusalToast, stillWorkingToast } from './sidebar
 import { PANEL_COMMAND_EVENT } from '../../utils/panelCommands'
 import { chatSettleStep } from './chatSettleCommand'
 import { waitingChatCount, waitingLabel } from './sidebar/projectWaiting'
+import { chatStatusRank, orderByStatus } from './sidebar/statusOrder'
 import {
   canSnoozeWorkspace,
   isSnoozedWorkspace,
@@ -1500,6 +1503,31 @@ function WorkspaceSidebar({
         : attachedConversations(remoteGroups, railWorkspaces),
     [remoteGroups, remoteLink, railWorkspaces],
   )
+  // What each row says its agents are doing, and which finished a turn nobody
+  // has seen. A chat opened here from a paired machine reads its machine's
+  // too: its turns run over there, so this desktop's sessions alone call it
+  // idle, and its row drew no working mark, no gold and no green.
+  const rowActivityRef = useRef<Record<WorkspaceId, Activity> | null>(null)
+  const rowActivityByWorkspaceId = useMemo(() => {
+    if (remoteConversationByWorkspace.size === 0) return activityByWorkspaceId
+    const map: Record<WorkspaceId, Activity> = { ...activityByWorkspaceId }
+    for (const [workspaceId, conversation] of remoteConversationByWorkspace)
+      map[workspaceId] = remoteRowActivity(map[workspaceId], conversation)
+    const stable = stableRecord(map, rowActivityRef.current)
+    rowActivityRef.current = stable
+    return stable
+  }, [activityByWorkspaceId, remoteConversationByWorkspace])
+  const rowUnseenDoneIds = useMemo<ReadonlySet<string>>(() => {
+    const remote = [...remoteConversationByWorkspace]
+      .filter(
+        ([workspaceId, conversation]) =>
+          workspaceId !== onScreenWorkspaceId &&
+          !unseenDoneIds.has(workspaceId) &&
+          remoteRowFinishUnseen(conversation, now),
+      )
+      .map(([workspaceId]) => workspaceId)
+    return remote.length === 0 ? unseenDoneIds : new Set([...unseenDoneIds, ...remote])
+  }, [remoteConversationByWorkspace, onScreenWorkspaceId, unseenDoneIds, now])
 
   // Rows born on a paired machine (`workspace.remoteOrigin`) file under a
   // project header like every other chat (owner, 2026-09-11). They used to be
@@ -2419,7 +2447,7 @@ function WorkspaceSidebar({
       if (isShelved(workspace) || isAsleep(workspace)) continue
       const chat = { starred: starredWorkspaceIds.has(workspace.id), front: workspace.id === frontWorkspaceId }
       const sources = {
-        activity: activityByWorkspaceId[workspace.id] ?? 'idle',
+        activity: rowActivityByWorkspaceId[workspace.id] ?? 'idle',
         conversations: conversationsByWorkspaceId.get(workspace.id) ?? NO_CONVERSATIONS,
         terminals: sessionsByWorkspaceId.get(workspace.id) ?? NO_SESSIONS,
       }
@@ -2433,7 +2461,7 @@ function WorkspaceSidebar({
     isAsleep,
     starredWorkspaceIds,
     frontWorkspaceId,
-    activityByWorkspaceId,
+    rowActivityByWorkspaceId,
     conversationsByWorkspaceId,
     sessionsByWorkspaceId,
   ])
@@ -3066,10 +3094,10 @@ function WorkspaceSidebar({
         // selection, so a highlighted project row here would be a second,
         // conflicting selected state.
         active={!globalSurfaceActive && workspace.id === activeWorkspaceId}
-        activity={activityByWorkspaceId[workspace.id] ?? 'idle'}
+        activity={rowActivityByWorkspaceId[workspace.id] ?? 'idle'}
         recency={rowRecencyByWorkspaceId[workspace.id]}
         wokeAt={wokeAtOf(workspace)}
-        unseenDoneMark={unseenDoneIds.has(workspace.id)}
+        unseenDoneMark={rowUnseenDoneIds.has(workspace.id)}
         resident={residentWorkspaceIds.has(workspace.id)}
         dropMark={
           dropIndicator?.kind === 'workspace' && dropIndicator.targetId === workspace.id ? dropIndicator.position : null
@@ -3125,7 +3153,7 @@ function WorkspaceSidebar({
     const open = () => onOpenRemoteSession?.(openSpecOfConversation(conversation))
     const agent = conversation.agents[0]!
     const needsAttention = conversation.activity === 'needs-input'
-    const unseenDone = !needsAttention && conversation.agents.some((row) => remoteFinishUnseen(row, now))
+    const unseenDone = !needsAttention && remoteRowFinishUnseen(conversation, now)
     const scheduledAgentId = conversation.agents.find((row) => row.scheduledAgentId)?.scheduledAgentId ?? null
     const working = conversation.activity === 'working'
     const flatProject = options?.flatProject ?? null
@@ -3614,9 +3642,26 @@ function WorkspaceSidebar({
     )
   }
 
+  // Where a row of the By status list sits (`statusOrder.ts`): by the marks
+  // the row wears, a paired machine's chat by its machine's.
+  const statusRankOf = (entry: ChatListEntry): number => {
+    if (entry.kind === 'remote') {
+      const conversation = entry.conversation
+      return chatStatusRank({
+        activity: conversation.activity,
+        unseenDone: remoteRowFinishUnseen(conversation, now),
+      })
+    }
+    return chatStatusRank({
+      activity: rowActivityByWorkspaceId[entry.workspace.id],
+      unseenDone: rowUnseenDoneIds.has(entry.workspace.id),
+    })
+  }
+
   // The flat stream, newest message first, for All chats and By status. By
   // status lifts the working chats out of it into the shelf above the Snoozed
-  // one, so what is left in the stream is what waits on the person.
+  // one, and leads with what waits on the person, then what finished while
+  // nobody was looking.
   const renderChatStream = (byStatus: boolean) => {
     const snoozedRows = sortByWake(localRailWorkspaces.filter((w) => !isShelved(w) && isAsleep(w)))
     const streamRows = sortWorkspacesByUserMessage(
@@ -3632,7 +3677,10 @@ function WorkspaceSidebar({
     const snoozeExpanded = expandedShelves[ALL_CHATS_SNOOZE_SHELF_KEY] === true
     return (
       <section role="group" className="relative pt-1" aria-label={byStatus ? 'Chats by status' : 'All chats'}>
-        {interleaveChats(streamRows, remoteStream, chatRecency).map((entry) =>
+        {(byStatus
+          ? orderByStatus(interleaveChats(streamRows, remoteStream, chatRecency), statusRankOf)
+          : interleaveChats(streamRows, remoteStream, chatRecency)
+        ).map((entry) =>
           entry.kind === 'local'
             ? renderWorkspaceRow(entry.workspace, keyOf(entry.workspace), {
                 keyPrefix: 'all-',
@@ -3700,7 +3748,7 @@ function WorkspaceSidebar({
           waitingChatCount([
             ...visibleWorkspaces
               .filter((workspace) => !isShelved(workspace) && !isAsleep(workspace))
-              .map((workspace) => activityByWorkspaceId[workspace.id]),
+              .map((workspace) => rowActivityByWorkspaceId[workspace.id]),
             ...group.remoteRows.map((conversation) => conversation.activity),
           ]),
         )

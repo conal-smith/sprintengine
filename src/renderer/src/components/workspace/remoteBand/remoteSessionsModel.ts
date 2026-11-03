@@ -771,6 +771,29 @@ export function remoteRowRecency(local: RowRecency | undefined, conversation: Re
   }
 }
 
+/** The marks a row wears, loudest first; a local row may also say `failed`. */
+const ROW_ACTIVITY_LOUDNESS: readonly string[] = ['needs-input', 'working', 'failed', 'idle']
+
+/**
+ * What a row here that is a chat on a paired machine says its agents are
+ * doing: the louder of what this desktop's own sessions say and what its
+ * machine says. Its turns run over there, so this desktop's sessions alone
+ * read it as idle while it works or waits on the person.
+ */
+export function remoteRowActivity<A extends string>(
+  local: A | undefined,
+  conversation: RemoteConversation,
+): A | RemoteRowActivity {
+  const remote = conversation.activity
+  if (local === undefined) return remote
+  return ROW_ACTIVITY_LOUDNESS.indexOf(remote) < ROW_ACTIVITY_LOUDNESS.indexOf(local) ? remote : local
+}
+
+/** One of a paired machine's chat's agents finished a turn nobody has seen since (`remoteFinishUnseen`). */
+export function remoteRowFinishUnseen(conversation: RemoteConversation, now: number = Date.now()): boolean {
+  return conversation.agents.some((row) => remoteFinishUnseen(row, now))
+}
+
 /** Rows here, most recently written to first by `recencyOf`; ties keep the order they came in. */
 export function sortChatsByRecency(
   workspaces: readonly Workspace[],

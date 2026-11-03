@@ -175,7 +175,11 @@ test('by status leads with what waits on the person and folds working chats away
   await render()
 
   assert.ok(byStatus(), 'the stream is drawn as the by-status list')
-  assert.deepEqual(idsIn(tree()), ['w1', 'w3'], 'the working chats are not in the list while their shelf is shut')
+  assert.deepEqual(
+    idsIn(tree()),
+    ['w3', 'w1'],
+    'the chat waiting on the person leads, ahead of a newer idle one, and the working chats are not in the list while their shelf is shut',
+  )
   const fold = workingFold()
   assert.ok(fold, 'a Working shelf sits in the list')
   assert.equal(fold.getAttribute('aria-expanded'), 'false', 'closed until the person opens it')
