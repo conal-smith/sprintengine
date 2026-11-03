@@ -698,6 +698,9 @@ export function createTailnetDeviceStore(options: {
           ? normalizeTailnetScopes(input.requestedScopes)
           : readRequestedScopes(input.requestedScopes),
         ...(oauth ? { oauth } : {}),
+        // A retry is announced in the window but raises no second
+        // notification: the person was already told about this sign-in.
+        ...(replaced.length > 0 ? { retry: true as const } : {}),
       }
       pairRequests.set(request.id, {
         request,
@@ -923,6 +926,7 @@ function readOAuthView(value: TailnetOAuthRequestView): TailnetOAuthRequestView 
     clientName: displayText(value.clientName, 100) || 'MCP client',
     redirectHost: displayText(value.redirectHost, 253),
     redirectKind: value.redirectKind === 'https' ? 'https' : 'loopback',
+    ...(value.viaServe ? { viaServe: true as const } : {}),
   }
 }
 

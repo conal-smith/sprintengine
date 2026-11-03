@@ -291,6 +291,8 @@ export type TailnetPairRequest = {
    * access. Surfaces show both as untrusted text and never as links.
    */
   oauth?: TailnetOAuthRequestView
+  /** A sign-in retried from the same machine, replacing the one it left waiting. */
+  retry?: true
 }
 
 /** What an approving surface shows of an OAuth sign-in (see `TailnetPairRequest.oauth`). */
@@ -304,6 +306,11 @@ export type TailnetOAuthRequestView = {
    */
   redirectHost: string
   redirectKind: 'loopback' | 'https'
+  /**
+   * Arrived over HTTPS through Tailscale Serve, where the machine named is the
+   * one Serve reports and a program on this machine could have claimed any.
+   */
+  viaServe?: true
 }
 
 /** What a requesting client learns when it polls its own request. */
@@ -454,6 +461,8 @@ type TailnetLiveEvent =
       peerNode: string | null
       /** An MCP client signing in with OAuth rather than a machine asking to pair. */
       oauth?: true
+      /** A sign-in retried from the same machine: announced already, so not notified again. */
+      retry?: true
     }
   | { kind: 'device-connection'; deviceId: string; deviceName: string; connected: boolean }
   | { kind: 'devices-changed' }

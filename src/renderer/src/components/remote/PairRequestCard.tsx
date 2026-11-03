@@ -102,6 +102,7 @@ export function PairRequestCard({
         <dd className="truncate font-mono text-[color:var(--text-default)]">
           {asker}
           {signIn && !request.peerNode ? ' (unverified)' : ''}
+          {signIn?.viaServe && request.peerNode ? ' (as Tailscale Serve reports it)' : ''}
         </dd>
         {signIn ? (
           <>

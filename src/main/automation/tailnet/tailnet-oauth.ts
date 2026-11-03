@@ -81,6 +81,16 @@ const MAX_REDIRECT_URIS = 5
 const MAX_REDIRECT_URI_LENGTH = 512
 const MAX_ACCESS_TOKENS_PER_GRANT = 4
 const MAX_RETIRED_REFRESH_HASHES = 64
+
+/**
+ * How long the refresh token just replaced still answers, from the node the
+ * grant is bound to: several processes sharing one client's token store
+ * refresh at the same moment, and the loser would otherwise look like a thief
+ * and sign everyone out. It answers with the very tokens the winner got
+ * (held in memory for this minute only), so both end up holding the same
+ * pair. From any other node, or after the minute, it is a replay.
+ */
+export const OAUTH_REFRESH_GRACE_MS = 60 * 1000
 const CLIENT_ID_PREFIX = 'mcc_'
 const DEFAULT_CLIENT_NAME = 'MCP client'
 
@@ -206,6 +216,9 @@ export function createTailnetOAuthStore(options: {
   let signingKey = loaded.signingKey
   const pending = new Map<string, OAuthPendingAuthorization>()
   const codes = new Map<string, CodeRecord>()
+  // Per grant, the refresh token last replaced and what replaced it, for the
+  // grace minute. Memory only: plaintext tokens never reach disk.
+  const lastRefresh = new Map<string, { previousHash: string; tokens: OAuthTokens; issuedAtMs: number }>()
   // A grant whose device is gone is gone too. Read before anything trusts it:
   // a device revoked by an older build, or by hand, has no listener to say so.
   grants = grants.filter((grant) => options.devices.listDevices().some((device) => device.id === grant.deviceId))
@@ -213,6 +226,7 @@ export function createTailnetOAuthStore(options: {
   const unsubscribe = options.devices.onDeviceRevoked((deviceId) => {
     const before = grants.length
     grants = grants.filter((grant) => grant.deviceId !== deviceId)
+    lastRefresh.delete(deviceId)
     for (const [hash, code] of codes) if (code.deviceId === deviceId) codes.delete(hash)
     if (grants.length !== before) safePersist()
   })
@@ -263,6 +277,7 @@ export function createTailnetOAuthStore(options: {
 
   function revokeGrant(deviceId: string, why: string): void {
     options.log?.(`OAuth grant for device ${deviceId} revoked: ${why}`)
+    lastRefresh.delete(deviceId)
     grants = grants.filter((grant) => grant.deviceId !== deviceId)
     // The device goes with it, which closes whatever it had open.
     options.devices.revokeDevice(deviceId)
@@ -422,6 +437,27 @@ export function createTailnetOAuthStore(options: {
         const replayed = grants.find((entry) =>
           entry.retiredRefreshHashes.some((hash) => secretsMatch(presented, hash)),
         )
+        const recent = replayed ? lastRefresh.get(replayed.deviceId) : undefined
+        if (
+          replayed &&
+          recent &&
+          secretsMatch(presented, recent.previousHash) &&
+          now() - recent.issuedAtMs <= OAUTH_REFRESH_GRACE_MS &&
+          input.clientId === replayed.clientId &&
+          !input.admit?.(replayed.deviceId)
+        ) {
+          // The same client, from its own node, a moment late: the pair it
+          // would have got is the one the other caller just did.
+          const elapsedSeconds = Math.floor((now() - recent.issuedAtMs) / 1000)
+          return {
+            ok: true,
+            deviceId: replayed.deviceId,
+            tokens: {
+              ...recent.tokens,
+              expiresInSeconds: Math.max(0, recent.tokens.expiresInSeconds - elapsedSeconds),
+            },
+          }
+        }
         if (replayed) {
           // Rotated away already: two parties hold this grant's refresh token.
           // Which one is the client cannot be told, so neither keeps it.
@@ -438,8 +474,10 @@ export function createTailnetOAuthStore(options: {
         return { ok: false, error: 'invalid_target', description: 'resource does not match the one signed in for.' }
       const refused = input.admit?.(grant.deviceId)
       if (refused) return refused
-      grant.retiredRefreshHashes = [...grant.retiredRefreshHashes, grant.refreshHash].slice(-MAX_RETIRED_REFRESH_HASHES)
+      const previousHash = grant.refreshHash
+      grant.retiredRefreshHashes = [...grant.retiredRefreshHashes, previousHash].slice(-MAX_RETIRED_REFRESH_HASHES)
       const tokens = mintTokens(grant)
+      lastRefresh.set(grant.deviceId, { previousHash, tokens, issuedAtMs: now() })
       safePersist()
       return { ok: true, deviceId: grant.deviceId, tokens }
     },
@@ -492,6 +530,7 @@ export function createTailnetOAuthStore(options: {
       unsubscribe()
       pending.clear()
       codes.clear()
+      lastRefresh.clear()
     },
   }
 }
@@ -540,7 +579,7 @@ export function readRegistration(
         ok: false,
         error: 'invalid_redirect_uri',
         description:
-          'Every redirect URI must be http on a loopback address (localhost, 127.0.0.1, [::1]) or https, with no fragment.',
+          'Every redirect URI must be http on a loopback address (localhost, 127.0.0.1 or [::1]), with no fragment. Studio is on your tailnet only, so it signs in clients running on a machine there.',
       }
     redirectUris.push(uri as string)
   }
@@ -562,13 +601,17 @@ function invalidClientMetadata(description: string): OAuthError {
   return { ok: false, error: 'invalid_client_metadata', description }
 }
 
-export type RedirectUriKind = { kind: 'loopback' | 'https'; host: string }
+export type RedirectUriKind = { kind: 'loopback'; host: string }
 
 /**
  * Whether a browser may be sent to `uri` with a code: http on a loopback
- * address (RFC 8252 7.3, which a client on the person's machine listens on),
- * or https anywhere. Nothing else: no custom schemes, no plain http off the
- * machine, no fragment, no credentials in the URL.
+ * address (RFC 8252 7.3), which is where a client on the browser's own machine
+ * listens. Nothing else — no https, no custom schemes, no fragment, no
+ * credentials in the URL. Studio is reachable on the tailnet alone, so every
+ * client that can use it runs on a machine there and signs in through a
+ * loopback redirect (Claude Code and Codex both do); an https redirect would
+ * only ever send a code to a web service, which could not reach Studio to use
+ * it, and would make every sign-in link a way to send the browser anywhere.
  */
 export function checkRedirectUri(uri: string): RedirectUriKind | null {
   if (uri.length === 0 || uri.length > MAX_REDIRECT_URI_LENGTH) return null
@@ -579,7 +622,6 @@ export function checkRedirectUri(uri: string): RedirectUriKind | null {
     return null
   }
   if (parsed.hash || uri.includes('#') || parsed.username || parsed.password) return null
-  if (parsed.protocol === 'https:') return parsed.hostname ? { kind: 'https', host: parsed.hostname } : null
   if (parsed.protocol === 'http:' && LOOPBACK_HOSTS.has(parsed.hostname))
     return { kind: 'loopback', host: parsed.hostname }
   return null

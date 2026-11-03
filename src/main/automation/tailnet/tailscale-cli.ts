@@ -152,3 +152,59 @@ export function runTailscaleResult(
     ok ? { ok: true, stdout } : { ok: false, stdout, stderr, timedOut },
   )
 }
+
+/**
+ * A `tailscale` command that runs until it is stopped — `serve` in the
+ * foreground, whose mapping lasts exactly as long as the process — and that
+ * dies with this one.
+ *
+ * Node does not take a child down with it, and a foreground serve outliving a
+ * Studio that crashed would keep forwarding tailnet callers to a loopback port
+ * nothing of Studio's holds any more. So on POSIX the command runs under a
+ * small shell that holds the read end of our stdin and kills the command when
+ * it reaches end of file, which happens the moment this process goes away for
+ * any reason, a SIGKILL included. Windows has no such shell; there the command
+ * runs directly, and a crash can leave it running until the next start's
+ * cleanup ends it (`withdrawRecordedGatewayHttps`).
+ *
+ * `stop` asks it to end (closing stdin) and ends the group if it has not gone
+ * in a few seconds.
+ */
+export function spawnTailscaleUntilStopped(args: readonly string[]): {
+  child: import('child_process').ChildProcess
+  stop: () => void
+} {
+  const binary = resolveTailscaleBinary()
+  const grouped = process.platform !== 'win32'
+  const watchdog = [
+    'exec 3<&0',
+    '"$0" "$@" </dev/null &',
+    'pid=$!',
+    '( read _ <&3; kill "$pid" 2>/dev/null ) &',
+    'watcher=$!',
+    'wait "$pid"',
+    'status=$?',
+    'kill "$watcher" 2>/dev/null',
+    'exit "$status"',
+  ].join('\n')
+  const child = grouped
+    ? spawn('/bin/sh', ['-c', watchdog, binary, ...args], {
+        env: tailscaleEnv(),
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: true,
+      })
+    : spawn(binary, [...args], { env: tailscaleEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+  let stopped = false
+  return {
+    child,
+    stop: () => {
+      if (stopped) return
+      stopped = true
+      child.stdin?.end()
+      const timer = setTimeout(() => killProcessTree(child, { processGroup: grouped }), 3000)
+      timer.unref?.()
+      child.once('exit', () => clearTimeout(timer))
+      if (!grouped) killProcessTree(child, { processGroup: false })
+    },
+  }
+}

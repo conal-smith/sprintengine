@@ -50,8 +50,14 @@ const MAX_FORM_BYTES = 16 * 1024
 const MAX_STATE_LENGTH = 2048
 /** How often the sign-in page asks again while it waits for the Studio window. */
 const WAIT_REFRESH_SECONDS = 2
-/** Sign-ins one peer may start a minute. A retry replaces the last; this stops a loop doing it forever. */
-const AUTHORIZE_PER_PEER_PER_MINUTE = 6
+/**
+ * Sign-in prompts one machine may raise in a window. A retry replaces the
+ * prompt it left waiting, so without a budget one machine could keep a fresh
+ * prompt on this screen forever. Four in ten minutes is a person retrying a
+ * client a few times; a loop is told to wait.
+ */
+const PROMPTS_PER_PEER = 4
+const PROMPT_WINDOW_MS = 10 * 60 * 1000
 
 /** Which listener a request arrived on: the tailnet address, or loopback behind Tailscale Serve. */
 export type TailnetListenerKind = 'tailnet' | 'serve'
@@ -140,17 +146,23 @@ export function createTailnetOAuthHttp(options: {
       return true
     }
     // The sign-in pages are opened by the client (a terminal opening the
-    // browser, or a link pasted into one), never by another site: a page
-    // elsewhere that navigates here could raise sign-in prompts on this
-    // machine at will. `Sec-Fetch-Site` is sent by every current browser on a
-    // navigation, and `cross-site` is a navigation started by some other site.
-    if (route.kind === 'page' && headerValue(request, 'sec-fetch-site') === 'cross-site') {
+    // browser, or a link pasted into one), never by another page: a page that
+    // navigates here could raise sign-in prompts on this machine at will, and
+    // replace one the person started. `Sec-Fetch-Site` is sent by every
+    // current browser on a navigation. `same-site` is not enough to tell them
+    // apart, since every machine on a tailnet is the same site (`ts.net` is a
+    // public suffix, the tailnet name the registrable part): so the sign-in
+    // starts only from no page at all (`none`, or no header from a client that
+    // sends none), and the waiting page is reached only from itself.
+    const fetchSite = headerValue(request, 'sec-fetch-site')
+    const allowedSites = path === TAILNET_OAUTH_WAIT_PATH ? ['none', 'same-origin'] : ['none']
+    if (route.kind === 'page' && fetchSite !== null && !allowedSites.includes(fetchSite)) {
       writePage(
         response,
         403,
         errorPage(
           'Open this sign-in from your MCP client.',
-          'Studio does not start a sign-in from a link on another website. Start it again from your MCP client.',
+          'Studio starts a sign-in only when your MCP client opens it, not from a link on a web page. Start it again from your MCP client.',
         ),
       )
       return true
@@ -259,18 +271,14 @@ export function createTailnetOAuthHttp(options: {
         ),
       )
     const redirectKind = checkRedirectUri(redirectUri)!
-    // From here the return address is one the client registered, so errors go
-    // back to it as RFC 6749 4.1.2.1 has them, where it can say what went
-    // wrong — when it is a loopback address on the browser's own machine. An
-    // https one is anywhere on the web, and registering is open to anyone, so
-    // until a person has approved the sign-in an error is shown here instead:
-    // otherwise any link to this page would be a redirect to any site.
+    // From here the return address is one the client registered, and always a
+    // loopback one on the browser's own machine (`checkRedirectUri`), so
+    // errors go back to it as RFC 6749 4.1.2.1 has them, where it can say what
+    // went wrong. Nothing here can send the browser off the machine.
     const rawState = query.get('state')
     const state = rawState !== null && rawState.length <= MAX_STATE_LENGTH ? rawState : null
     const refuse = (error: string, description: string): void =>
-      redirectKind.kind === 'loopback'
-        ? redirect(response, redirectUri, { error, error_description: description, state, iss: origin })
-        : writePage(response, 400, errorPage('This sign-in cannot continue.', `${description} (${error})`))
+      redirect(response, redirectUri, { error, error_description: description, state, iss: origin })
     if (repeated) return refuse('invalid_request', `${repeated} is given more than once.`)
     if (rawState !== null && state === null) return refuse('invalid_request', 'state is too long.')
     if (query.get('response_type') !== 'code')
@@ -291,7 +299,7 @@ export function createTailnetOAuthHttp(options: {
     if (!allowAttempt(context.peerAddress))
       return refuse(
         'temporarily_unavailable',
-        'Too many sign-ins were started from this machine just now. Wait a minute.',
+        'Too many sign-ins were started from this machine recently. Wait ten minutes, or answer the one waiting in Studio.',
       )
     const peer = await context.identify()
     const key = randomBytes(24).toString('base64url')
@@ -306,6 +314,7 @@ export function createTailnetOAuthHttp(options: {
         clientName: client.clientName,
         redirectHost: redirectKind.host,
         redirectKind: redirectKind.kind,
+        ...(context.via === 'serve' ? { viaServe: true as const } : {}),
       },
     })
     if (!raised.ok) {
@@ -372,14 +381,7 @@ export function createTailnetOAuthHttp(options: {
       options.store.endAuthorization(id)
       redirect(response, pending.redirectUri, { ...params, state: pending.state, iss: pending.issuer })
     }
-    // A refusal goes back to a client on this browser's machine; to a web
-    // service it is shown here, for the reason the authorize step gives.
-    const refuseBack = (description: string): void => {
-      if (checkRedirectUri(pending.redirectUri)?.kind === 'loopback')
-        return back({ error: 'access_denied', error_description: description })
-      options.store.endAuthorization(id)
-      writePage(response, 200, errorPage('This sign-in was not allowed.', description))
-    }
+    const refuseBack = (description: string): void => back({ error: 'access_denied', error_description: description })
     switch (outcome.status) {
       case 'pending':
         return writePage(
@@ -476,8 +478,8 @@ export function createTailnetOAuthHttp(options: {
 
   function allowAttempt(peer: string): boolean {
     const at = now()
-    const recent = (authorizeAttempts.get(peer) ?? []).filter((time) => time > at - 60_000)
-    if (recent.length >= AUTHORIZE_PER_PEER_PER_MINUTE) {
+    const recent = (authorizeAttempts.get(peer) ?? []).filter((time) => time > at - PROMPT_WINDOW_MS)
+    if (recent.length >= PROMPTS_PER_PEER) {
       authorizeAttempts.set(peer, recent)
       return false
     }
@@ -506,6 +508,11 @@ function headerValue(request: IncomingMessage, name: string): string | null {
 type RouteKind = 'resource-metadata' | 'server-metadata' | 'register' | 'page' | 'token' | 'revoke'
 
 /** The well-known documents and the endpoints they name. The path-suffixed resource document is RFC 9728 3.1's. */
+/** Whether a path is one of the OAuth routes (the documents and endpoints below). */
+export function isTailnetOAuthPath(path: string): boolean {
+  return ROUTES.has(path)
+}
+
 const ROUTES: ReadonlyMap<string, { kind: RouteKind; methods: string[] }> = new Map([
   ['/.well-known/oauth-protected-resource', { kind: 'resource-metadata', methods: ['GET'] }],
   [`/.well-known/oauth-protected-resource${TAILNET_MCP_PATH}`, { kind: 'resource-metadata', methods: ['GET'] }],

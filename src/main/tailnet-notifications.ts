@@ -74,6 +74,8 @@ export function tailnetNotice(payload: TailnetPushPayload): TailnetNotice | null
   const event = payload.event
   if (event.kind !== 'pair-request' || event.phase !== 'received') return null
   const who = event.peerNode ?? event.deviceName
+  // A retried sign-in replaced one already announced: one banner per sign-in.
+  if (event.oauth && event.retry) return null
   if (event.oauth) {
     return {
       key: `pair-request:${event.requestId}`,

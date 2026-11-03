@@ -217,3 +217,32 @@ test('an MCP client signing in is announced as one, never with its code', () => 
   assert.match(notice.body, /sign-in page/u)
   assert.doesNotMatch(notice.body, /\d{6}/u)
 })
+
+test('a retried sign-in raises no second notification', () => {
+  const notice = tailnetNotice({
+    revision: 2,
+    event: {
+      kind: 'pair-request',
+      phase: 'received',
+      requestId: 'r3',
+      deviceName: 'Claude Code',
+      peerNode: 'dev-macbook-air',
+      oauth: true,
+      retry: true,
+    },
+    status: {
+      enabled: true,
+      running: true,
+      endpoint: null,
+      port: 8471,
+      tailnetAddress: null,
+      lastError: null,
+      notifications: true,
+      devices: [],
+      pairing: null,
+      pairRequests: [],
+    },
+    live: { revision: 2, devices: [] },
+  })
+  assert.equal(notice, null)
+})

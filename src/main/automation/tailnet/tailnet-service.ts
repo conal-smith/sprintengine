@@ -37,8 +37,8 @@ import { createTailnetOAuthStore, type TailnetOAuthStore } from './tailnet-oauth
 import type { TailnetPublicOrigins } from './tailnet-oauth-http'
 import {
   publishGatewayOverHttps,
-  withdrawGatewayHttps,
   withdrawRecordedGatewayHttps,
+  type GatewayHttps,
   type GatewayHttpsResult,
 } from './tailnet-gateway-https'
 import { readSelfDnsName } from './tailscale-serve'
@@ -202,7 +202,6 @@ export type TailnetRemoteServiceOptions = {
   resolveSelfDnsName?: () => Promise<string | null>
   /** Tailscale Serve for HTTPS. Injected in tests; production runs the `tailscale` CLI. */
   publishHttps?: (localPort: number) => Promise<GatewayHttpsResult>
-  withdrawHttps?: (localPort: number) => Promise<void>
   /** Remove a mapping an earlier run left behind. Injected in tests. */
   withdrawStaleHttps?: () => Promise<void>
   log?: (message: string) => void
@@ -272,6 +271,8 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
   // HTTPS through Tailscale Serve, as last applied.
   let https: TailnetHttpsState = { enabled: false, state: 'off', origin: null, message: null }
   let httpsWork: Promise<void> = Promise.resolve()
+  // The foreground `tailscale serve` while HTTPS is on: stopping it ends the mapping.
+  let httpsSession: GatewayHttps | null = null
 
   // ── live-connection accounting (remote-sessions-ux) ────────────────────────
   // A count, not a boolean: one device may hold several streams (two clients
@@ -413,6 +414,7 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
         deviceName: request.deviceName,
         peerNode: request.peerNode,
         ...(request.oauth ? { oauth: true as const } : {}),
+        ...(request.retry ? { retry: true as const } : {}),
       })
     }
     for (const [id, entry] of [...announcedRequests]) {
@@ -533,6 +535,7 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
         try {
           localPort = await current.openServeListener()
           const published = await (options.publishHttps ?? defaultPublish)(localPort)
+          if (published.ok) httpsSession = published
           https = published.ok
             ? { enabled: true, state: 'on', origin: published.origin, message: null }
             : { enabled: true, state: 'error', origin: null, message: published.message }
@@ -551,10 +554,11 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
   }
 
   async function takeDownHttps(current: TailnetGatewayServer | null): Promise<void> {
-    const behindServe = current?.serveAddress() ?? null
-    if (behindServe && https.state === 'on') {
+    const session = httpsSession
+    httpsSession = null
+    if (session) {
       try {
-        await (options.withdrawHttps ?? defaultWithdraw)(behindServe.port)
+        await session.stop()
       } catch (error) {
         options.log?.(`tailnet HTTPS could not be withdrawn: ${message(error)}`)
       }
@@ -583,10 +587,6 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
 
   function defaultPublish(localPort: number): Promise<GatewayHttpsResult> {
     return publishGatewayOverHttps({ localPort, recordDir: options.resolveUserDataDir(), log: options.log })
-  }
-
-  function defaultWithdraw(localPort: number): Promise<void> {
-    return withdrawGatewayHttps({ localPort, recordDir: options.resolveUserDataDir(), log: options.log })
   }
 
   /**
@@ -787,15 +787,12 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
 
   return {
     async initialize(): Promise<TailnetRemoteStatus> {
-      // A mapping a crashed run left is withdrawn unless this run is about to
-      // put up its own (which replaces it).
-      const current = loadSettings()
-      if (!current.enabled || current.https !== true) {
-        await (
-          options.withdrawStaleHttps ??
-          (() => withdrawRecordedGatewayHttps({ recordDir: options.resolveUserDataDir(), log: options.log }))
-        )().catch((error: unknown) => options.log?.(`tailnet HTTPS cleanup failed: ${message(error)}`))
-      }
+      // Whatever an earlier run left of its HTTPS mapping is ended first,
+      // whether or not this run will publish its own.
+      await (
+        options.withdrawStaleHttps ??
+        (() => withdrawRecordedGatewayHttps({ recordDir: options.resolveUserDataDir(), log: options.log }))
+      )().catch((error: unknown) => options.log?.(`tailnet HTTPS cleanup failed: ${message(error)}`))
       await startServer()
       return getStatus()
     },

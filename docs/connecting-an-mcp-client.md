@@ -74,21 +74,26 @@ In Studio, a card appears in the Remote popover and in **Settings → Remote**
 (and a notification, if no Studio window is focused):
 **"<agent> wants access to this Studio"**. Check two things on it:
 
-- **Sign-in page opened on**: the machine whose browser opened the page.
-- **Access goes to**: `localhost` or `127.0.0.1` means an agent on that same
-  machine gets the access. Any other host name means a web service gets it,
-  and so does whoever runs that service.
+- **Sign-in page opened on**: the machine whose browser opened the page, as
+  Tailscale names it. Over HTTPS this is the machine Tailscale Serve reports,
+  and a program on the Studio machine itself could claim any name there.
+- **Access goes to**: the agent listening on `localhost` or `127.0.0.1` on
+  that same machine. Studio signs in only agents that run on a machine on your
+  tailnet, so a sign-in never returns to a web service.
 
 A sign-in has to be opened by the agent itself, either in a browser it opens
-or from a link it prints. Studio refuses a sign-in started from a link on
-another website. Only approve a sign-in you just started. Type the code from the sign-in page,
+or from a link it prints. Studio refuses one opened from a link on any web
+page, including a page on another machine of your tailnet. Only approve a
+sign-in you just started. Type the code from the sign-in page,
 choose what the agent may do, and choose **Allow**. The card opens on **Read
 only**: the agent can read workspaces, the backlog and conversations but cannot
 change anything. **Standard** also lets it operate them. An agent is never
 given more than it asked for. Three wrong codes decline the request. Declining
-sends an agent on your machine an `access_denied` answer. A sign-in that
-returns to a web service is told no on the sign-in page instead: until you
-allow it, Studio sends the browser nowhere off the machine.
+sends the agent an `access_denied` answer.
+
+One machine can raise at most four sign-in prompts in ten minutes. A retry
+replaces the prompt it left waiting, and it is not announced with a second
+notification.
 
 Once you allow it, the sign-in page sends your browser back to the agent and
 the agent finishes on its own. `claude mcp list` or `codex mcp list` then shows
@@ -103,8 +108,12 @@ the MCP endpoint only:
 - The tools that configure who may reach this machine, start terminals, or act
   for an agent running on this machine stay on this machine's own socket, for
   every remote caller.
-- Its sign-in only works from the machine that finished it. A copied token
-  presented from another machine on the tailnet is refused.
+- Its sign-in only works from the machine that finished it, as Tailscale names
+  that machine. A copied token presented from another machine on the tailnet
+  is refused. Behind HTTPS, the machine is the one Tailscale Serve reports. A
+  program on the Studio machine can reach the port Serve forwards to and claim
+  to be any machine, so that port serves only sign-in and signed-in agents'
+  MCP calls. It does not serve paired devices, pairing or streams.
 
 ## How long a sign-in lasts
 
@@ -113,8 +122,10 @@ the MCP endpoint only:
 - Inside those 30 days the agent renews its access by itself every hour.
 - If the agent's renewal credential is ever used twice, which means someone
   else has a copy, Studio ends the sign-in at once and the agent has to sign in
-  again. There is no grace period. An agent that loses the answer to a renewal
-  and retries with the old credential is signed out the same way.
+  again. The one exception is a renewal from the agent's own machine with the
+  credential it held a moment ago, within a minute, as happens when two of its
+  processes renew at once. That renewal gets the same answer the first one
+  got.
 
 ## Revoke an agent or change what it may do
 
@@ -122,7 +133,7 @@ Signed-in agents are listed under **Settings → Remote → MCP clients**, with 
 machine they connect from and when their sign-in ends.
 
 - **Revoke** cuts an agent off at once. Its next request is refused, and so
-  is its next renewal.
+  is its next renewal. A tool call it had already started runs to its end.
 - The scope link on its row changes what it may do. The change applies to its
   next request.
 - **Reset** under **Client registrations** makes every agent register again
@@ -148,10 +159,13 @@ serves something else, or has Tailscale Funnel on (which would put Studio on
 the internet), Studio leaves it alone and says so beside the switch. Behind
 Serve, Studio answers only machines on your tailnet. It refuses a request that
 came in through Funnel, even if Funnel is turned on later, and one with no
-tailnet machine behind it. Turning HTTPS off removes the mapping, but only
-while it is still the one Studio made. A mapping left behind by a Studio that
-quit without removing it is removed the next time Studio starts with HTTPS
-off.
+tailnet machine behind it.
+
+Studio runs the mapping as a `tailscale serve` process of its own, in the
+foreground, so it lasts only while Studio runs. Turning HTTPS off, quitting,
+or a crash ends it. On macOS and Linux it ends even if Studio is killed. On
+Windows a crash can leave it running until the next time Studio starts, which
+ends it.
 
 ## Pairing without OAuth
 
@@ -164,6 +178,11 @@ token: an agent that sends one as `Authorization: Bearer` is told so and how
 to redeem it. Never paste a pairing code into a chat, because anyone who reads
 it can pair once.
 
+The sign-in approval is refused to tools: an agent on this machine cannot
+approve an MCP client's sign-in for itself. This does not make this machine's
+own agents unable to pair: as before, a local agent can mint a pairing code
+with `tailnet.offer_pairing`.
+
 ## For client authors
 
 - Discovery: the `401` from `POST /tailnet/v1/mcp` carries
@@ -175,16 +194,18 @@ it can pair once.
 - Registration: dynamic client registration (RFC 7591) at
   `/tailnet/v1/oauth/register`. Clients are public (`token_endpoint_auth_method`
   `none`). Redirect URIs must be `http` on `localhost`, `127.0.0.1` or `[::1]`,
-  where any port matches (RFC 8252), or `https` with an exact match. At most
-  five are allowed. The client ID carries the registration itself, signed by
+  where any port matches (RFC 8252). `https` redirect URIs are not taken:
+  Studio is reachable on the tailnet only, so its clients run on a machine
+  there. At most five are allowed. The client ID carries the registration itself, signed by
   Studio, so registering stores nothing.
 - Authorization: authorization code with PKCE, `S256` only and required.
   `state` is passed back, and `iss` is included (RFC 9207). Errors are sent
-  back by redirect to a loopback redirect URI. For an https redirect URI they
-  are shown on the page until the sign-in has been approved. `resource`
+  back by redirect. The authorization endpoint answers only a navigation that
+  no page started (`Sec-Fetch-Site` absent or `none`). `resource`
   (RFC 8707) must name this Studio's MCP endpoint or its origin.
 - Tokens: access tokens last an hour. Refresh tokens rotate on every use, and
-  a reused one revokes the grant. A refresh must name its `client_id`. Revocation (RFC 7009) is at
+  a reused one revokes the grant, except the token replaced in the last minute
+  presented from the same node. A refresh must name its `client_id`. Revocation (RFC 7009) is at
   `/tailnet/v1/oauth/revoke`. The scopes are Studio's own: `workspace:read`,
   `workspace:operate`, `backlog:read`, `backlog:operate`, `conversation:read`,
   `conversation:operate`. An access token is accepted on the MCP endpoint

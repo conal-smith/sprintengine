@@ -51,6 +51,7 @@ import {
 import type { TailnetOAuthStore } from './tailnet-oauth'
 import {
   createTailnetOAuthHttp,
+  isTailnetOAuthPath,
   type TailnetListenerKind,
   type TailnetOAuthHttp,
   type TailnetPublicOrigins,
@@ -134,9 +135,13 @@ import {
 // `X-Forwarded-For` to the tailnet address of the node that connected
 // (replacing any the client sent), and that is the peer on that listener and
 // only there: on the tailnet listener the socket's own address is the peer, as
-// it always was. A process on this machine can reach loopback and write that
-// header itself; it can reach the tailnet address too, so the line between a
-// stranger and this machine's own processes is where it was.
+// it always was. A process on this machine can also reach that loopback port
+// and write the header itself, claiming to be any node, so the listener
+// serves only what a forged node cannot use: the OAuth sign-in (which a person
+// still approves in the window, and which may then name a node it did not come
+// from) and the MCP endpoint for OAuth access tokens (already bound to their
+// node by the token). Device tokens, pairing and streams are refused there,
+// and Host is checked on every request.
 
 export {
   TAILNET_HEALTH_PATH,
@@ -978,6 +983,31 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       writeJson(response, 403, { error: behindServe })
       return
     }
+    // The loopback listener behind Serve is for MCP clients signing in with
+    // OAuth and nothing else. Anything on this machine can reach it and write
+    // the forwarded address itself, so it must open nothing a forged node
+    // could use: no device tokens (their node binding is the whole point of
+    // them), no pairing, no streams. What is left is a sign-in a person still
+    // has to approve, and access tokens, which are bound already.
+    if (via === 'serve') {
+      const servedPath = pathOf(request.url)
+      if (!oauthHttp || !oauthHttp.originFor(request, 'serve')) {
+        writeJson(response, 421, {
+          error: { code: 'host_not_allowed', message: 'This Studio does not answer to that host name here.' },
+        })
+        return
+      }
+      if (!isTailnetOAuthPath(servedPath) && !(servedPath === TAILNET_MCP_PATH && request.method === 'POST')) {
+        writeJson(response, 404, {
+          error: {
+            code: 'not_served_over_https',
+            message:
+              'Over HTTPS this Studio serves MCP sign-in and the MCP endpoint only. Paired apps use its tailnet address.',
+          },
+        })
+        return
+      }
+    }
     if (request.headers.origin) {
       writeJson(response, 403, {
         error: {
@@ -1074,7 +1104,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     // a path that is no route is not found, before any handler, and a route
     // is run only by the handler of the route that was judged.
     const route = tailnetDeviceRouteOf(method, path, request.url)
-    const caller = authenticate(request, route)
+    const caller = authenticate(request, route, via)
     if (!caller.ok) {
       writeUnauthorized(response, unauthorizedOrigin(request, via), caller)
       return
@@ -1240,10 +1270,13 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       } else {
         context = contextFor(device, peerNode)
         if (isRecord(body) && body.method === 'initialize' && 'id' in body) {
-          pruneSessions()
-          const minted = randomBytes(24).toString('base64url')
-          mcpSessions.set(minted, { deviceId: device.id, context, lastUsedAt: now() })
-          response.setHeader('Mcp-Session-Id', minted)
+          // At the overall ceiling the client is served without a session,
+          // as a stateless client is, rather than taking another's.
+          if (pruneSessions(device.id)) {
+            const minted = randomBytes(24).toString('base64url')
+            mcpSessions.set(minted, { deviceId: device.id, context, lastUsedAt: now() })
+            response.setHeader('Mcp-Session-Id', minted)
+          }
         }
       }
       const answer = await handleMessage(body, context, device, versionHeader || null, jsonRpcIdOf(body))
@@ -1456,10 +1489,18 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
   }
 
-  function pruneSessions(): void {
+  /**
+   * Make room for one more of `deviceId`'s sessions. Each device has its own
+   * allowance and gives up its own oldest, so one device opening sessions
+   * without end pushes out only its own. The overall ceiling is a backstop
+   * that a person's approved devices are not expected to reach.
+   */
+  function pruneSessions(deviceId: string): boolean {
     const cutoff = now() - MCP_SESSION_IDLE_MS
     for (const [id, session] of mcpSessions) if (session.lastUsedAt < cutoff) mcpSessions.delete(id)
-    while (mcpSessions.size >= MAX_MCP_SESSIONS) mcpSessions.delete(mcpSessions.keys().next().value!)
+    const own = [...mcpSessions].filter(([, session]) => session.deviceId === deviceId)
+    for (const [id] of own.slice(0, Math.max(0, own.length - MAX_MCP_SESSIONS_PER_DEVICE + 1))) mcpSessions.delete(id)
+    return mcpSessions.size < MAX_MCP_SESSIONS
   }
 
   /**
@@ -1471,9 +1512,22 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
    * apps' — and only while the resource it names is still one of this
    * Studio's own. Its device is read live, so a revoked grant stops here.
    */
-  function authenticate(request: IncomingMessage, route: TailnetHttpRoute | null): Authentication {
+  function authenticate(
+    request: IncomingMessage,
+    route: TailnetHttpRoute | null,
+    via: TailnetListenerKind,
+  ): Authentication {
     const token = bearerOf(request)
     if (!token) return { ok: false, presented: false }
+    if (via === 'serve' && !token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)) {
+      return {
+        ok: false,
+        presented: true,
+        code: 'oauth_required_here',
+        message:
+          'Over HTTPS the MCP endpoint takes OAuth sign-ins only. A paired device uses this Studio’s tailnet address.',
+      }
+    }
     if (looksLikePairingSecret(token)) {
       return { ok: false, presented: true, code: 'pairing_code_not_a_token', message: PAIRING_CODE_AS_BEARER_MESSAGE }
     }
@@ -1561,10 +1615,8 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     via: TailnetListenerKind,
   ): Promise<void> {
     if (request.headers.origin) return rejectUpgrade(socket, 403, 'origin_not_allowed')
-    if (via === 'serve') {
-      const refused = serveRefusal(request)
-      if (refused) return rejectUpgrade(socket, 403, refused.code)
-    }
+    // No stream opens behind Serve: see the loopback listener's rule above.
+    if (via === 'serve') return rejectUpgrade(socket, 404, 'not_served_over_https')
     const path = pathOf(request.url)
     const route = tailnetUpgradeRouteOf(path)
     if (!route) return rejectUpgrade(socket, 404, 'not_found')
@@ -1580,11 +1632,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     if (!device) return rejectUpgrade(socket, 401, 'unauthorized')
     // The ticket was minted behind `admitPeer`, but it rides in a URL; the
     // socket presenting it is held to the device's node all the same.
-    const admitted = await admitPeer(
-      device,
-      via === 'serve' ? forwardedPeerAddress(request) : normalizeAddress(remoteAddressOf(socket)),
-      path,
-    )
+    const admitted = await admitPeer(device, normalizeAddress(remoteAddressOf(socket)), path)
     if (!admitted.ok) return rejectUpgrade(socket, 401, admitted.code)
     const { peerNode, peerAddress } = admitted
     // What the socket needs, judged as every HTTP route is. The conversation
@@ -1929,7 +1977,8 @@ type Authentication =
 
 const OAUTH_ACCESS_TOKEN_PREFIX = 'mcat_'
 const MCP_SESSION_IDLE_MS = 60 * 60_000
-const MAX_MCP_SESSIONS = 256
+const MAX_MCP_SESSIONS = 1024
+const MAX_MCP_SESSIONS_PER_DEVICE = 16
 /** Streamable HTTP's HeaderMismatch (2026-07-28). */
 const JSONRPC_HEADER_MISMATCH = -32020
 /** The SDKs' "session not found" for a session id the server does not hold. */
