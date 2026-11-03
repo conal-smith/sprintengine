@@ -38,7 +38,7 @@ export type ComposerOption =
   | { kind: "schedule"; label: "Schedule"; on: boolean; repeats: boolean; disabledReason: string | null };
 
 export const ATTACH_LABELS: Record<AttachSource, string> = {
-  library: "Choose a photo",
+  library: "Choose photos",
   camera: "Take a photo",
   file: "Choose a file",
 };

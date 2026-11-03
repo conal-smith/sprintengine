@@ -16,7 +16,7 @@ interface SheetOptionProps {
    */
   selected?: boolean;
   onPress: () => void;
-  /** A leading glyph, for a sheet of actions ("Choose a photo", "Take a photo"). */
+  /** A leading glyph, for a sheet of actions ("Choose photos", "Take a photo"). */
   icon?: ReactNode;
   /** Off, with `sub` saying why: a row that is there but cannot be taken now. */
   disabled?: boolean;
