@@ -148,7 +148,10 @@ function VisualPage({ source, onFail }: { source: string; onFail: (note: string)
       allowsInlineMediaPlayback={false}
       allowsLinkPreview={false}
       cacheEnabled={false}
-      dataDetectorTypes="none"
+      // An array: the native prop is one on both platforms. Only iOS's
+      // wrapper turns a string into one; Android hands it on as it is, and
+      // the new architecture's prop parser crashes the app on a string here.
+      dataDetectorTypes={["none"]}
       domStorageEnabled={false}
       geolocationEnabled={false}
       incognito
