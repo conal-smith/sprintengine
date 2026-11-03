@@ -98,7 +98,7 @@ import { resolveConversationMentions } from './conversation-mentions'
 import { attachedFilesContext } from './conversation-attached-files'
 import { noteUploadsSent } from './upload-references'
 import { parseConversationAttachedFiles, type ConversationAttachedFile } from '../shared/conversation/attachedFiles'
-import { worktreeLeases, type WorktreeHold, type WorktreeLeases } from './worktree-leases'
+import { worktreeLeases, type WorktreeBusy, type WorktreeHold, type WorktreeLeases } from './worktree-leases'
 import { ConversationCheckpoints } from './conversation-checkpoints'
 import { ConversationIndex } from './conversation-index'
 import type {
@@ -477,6 +477,9 @@ export class ConversationRuntime {
   private readonly resolveSkills: ConversationSkillsResolver
   private readonly prepareChatFolder: NonNullable<ConversationRuntimeOptions['prepareChatFolder']>
   private readonly worktreeLeases: WorktreeLeases
+  // Starts waiting for their folder's hold, by session id ('' for a start
+  // with no session yet, and a revert): see `holdChatFolder`.
+  private readonly folderWaits = new Map<string, Set<AbortController>>()
   private readonly checkpoints = new ConversationCheckpoints()
   private readonly approvalRules: ConversationApprovalRuleStore
   private readonly attachmentStore: ConversationAttachmentStore
@@ -708,9 +711,7 @@ export class ConversationRuntime {
     try {
       // Held until the session is up: a return or removal of the folder waits
       // for it, and one under way is waited for (worktree-leases.ts).
-      const folderHold = await this.worktreeLeases.acquireShared(input.workspaceRoot, {
-        reason: 'a chat is starting in it',
-      })
+      const folderHold = await this.holdChatFolder(null, input.workspaceRoot, 'a chat is starting in it')
       if ('busy' in folderHold) return { ok: false, message: folderHold.busy }
       try {
         // The chat's worktree, given back while it sat idle, is brought back
@@ -1045,15 +1046,45 @@ export class ConversationRuntime {
     // removal of the folder waits for the start, and the start for one under
     // way (worktree-leases.ts). Released on every way out, early or not. A
     // busy session's turn already keeps its folder live.
-    const folderHold = isSessionBusy(session)
+    const held = isSessionBusy(session)
       ? null
-      : await this.worktreeLeases.acquireShared(session.workspaceRoot, { reason: 'a turn is starting in it' })
-    if (folderHold && 'busy' in folderHold) return { ok: false, message: folderHold.busy }
+      : await this.holdChatFolder(session.sessionId, session.workspaceRoot, 'a turn is starting in it')
+    if (held && 'busy' in held) return { ok: false, message: held.busy }
+    const folder = { hold: held }
     try {
-      return await this.sendTurnInFolder(session, input, { message, attachments, files }, folderHold)
+      return await this.sendTurnInFolder(session, input, { message, attachments, files }, folder)
     } finally {
-      folderHold?.release()
+      folder.hold?.release()
     }
+  }
+
+  /**
+   * The folder's shared hold for a start (worktree-leases.ts), waited for at
+   * most the lease's limit. Stopping the session (`waitKey` its id) or the
+   * runtime (any wait) abandons the wait, and the start with it.
+   */
+  private async holdChatFolder(
+    waitKey: string | null,
+    workspaceRoot: string,
+    reason: string,
+  ): Promise<WorktreeHold | WorktreeBusy> {
+    const stop = new AbortController()
+    const key = waitKey ?? ''
+    let waits = this.folderWaits.get(key)
+    if (!waits) this.folderWaits.set(key, (waits = new Set()))
+    waits.add(stop)
+    try {
+      return await this.worktreeLeases.acquireShared(workspaceRoot, { reason, signal: stop.signal })
+    } finally {
+      waits.delete(stop)
+      if (waits.size === 0 && this.folderWaits.get(key) === waits) this.folderWaits.delete(key)
+    }
+  }
+
+  /** Abandon the folder waits of one session, or of every start when none is named. */
+  private abandonFolderWaits(sessionId?: string): void {
+    const keys = sessionId === undefined ? [...this.folderWaits.keys()] : [sessionId]
+    for (const key of keys) for (const stop of this.folderWaits.get(key) ?? []) stop.abort()
   }
 
   /** {@link sendTurn} once its checks have passed, under the folder's hold while the turn starts. */
@@ -1069,7 +1100,9 @@ export class ConversationRuntime {
       attachments: NonNullable<ConversationSendTurnInput['attachments']>
       files: ConversationAttachedFile[]
     },
-    folderHold: WorktreeHold | null,
+    // The folder's hold while the turn starts; set here when a steer turns
+    // into an ordinary send, and given up by `sendTurn` on every way out.
+    folder: { hold: WorktreeHold | null },
   ): Promise<ConversationSessionActionResult> {
     // A resting session respawns in the chat's folder for this turn: one the
     // worktree pool gave back while the chat sat idle is brought back first,
@@ -1125,18 +1158,31 @@ export class ConversationRuntime {
     }
     // Resolving a skill may await disk or installation; another send can take
     // the session while that happens, so acquire the turn only after rechecking.
-    if (
+    const gone = (): boolean =>
       this.sessions.get(input.sessionId)?.status === 'stopped' ||
       this.sessions.get(input.sessionId) !== session ||
       this.revertingScopes.has(session.fileScope) ||
       this.deletingTranscripts.has(this.transcriptPath(session.workspaceRoot, session.workspaceId, session.agentId)) ||
       this.rewindingTranscripts.has(this.transcriptPath(session.workspaceRoot, session.workspaceId, session.agentId))
-    )
-      return { ok: false, message: 'Conversation is no longer available.' }
+    if (gone()) return { ok: false, message: 'Conversation is no longer available.' }
     // A steer is sent only over a turn that is still open; a send made as a
     // steer over a turn that has since ended is an ordinary send.
     if (isSessionBusy(session) && !input.steer)
       return { ok: false, message: 'Conversation turn is already in progress.' }
+    // An ordinary send now, though it came in over a busy session: it starts
+    // its turn as any send to a resting session does, under the folder's hold
+    // and after the folder check (`sendTurn`).
+    if (!isSessionBusy(session) && !folder.hold) {
+      const held = await this.holdChatFolder(session.sessionId, session.workspaceRoot, 'a turn is starting in it')
+      if ('busy' in held) return { ok: false, message: held.busy }
+      folder.hold = held
+      const prepared = await this.prepareChatFolder({
+        workspaceId: session.workspaceId,
+        workspaceRoot: session.workspaceRoot,
+      })
+      if (!prepared.ok) return { ok: false, message: prepared.message }
+      if (gone()) return { ok: false, message: 'Conversation is no longer available.' }
+    }
     // The resolver keeps one of each skill, so a skill attached again is sent once.
     if (opensWithCommand) {
       if (input.skills?.length) session.pendingSkills = [...(session.pendingSkills ?? []), ...input.skills]
@@ -1189,7 +1235,7 @@ export class ConversationRuntime {
     session.activeTurnId = turnId
     // Live from here (`liveConversationWorkspaceRoots`): the folder's hold has
     // done its part.
-    folderHold?.release()
+    folder.hold?.release()
     session.pendingRequestId = requestId
     session.turnLockRequestId = requestId
     session.activeTurnAbort = turnAbort
@@ -2061,6 +2107,8 @@ export class ConversationRuntime {
       )
     const session = this.sessions.get(input.sessionId)
     if (!session) return sessionNotFound()
+    // A turn still waiting for its folder is not started at all.
+    this.abandonFolderWaits(session.sessionId)
     const adapter = this.getAdapterForProviderId(session.providerId)
     if (!adapter) return { ok: false, message: 'Conversation provider is unavailable.' }
 
@@ -2418,6 +2466,7 @@ export class ConversationRuntime {
 
   async shutdown(): Promise<void> {
     this.stopIdleSweep()
+    this.abandonFolderWaits()
     // All at once: each stop waits on its own child to go, and one after
     // another, a quit with many chats open outran any budget its caller has.
     // Best-effort each: adapter disposeAll below is the backstop.
@@ -3906,9 +3955,7 @@ export class ConversationRuntime {
       // The chat's children are stopped below, so nothing shows the folder as
       // live while its files are written: held for the whole revert, so the
       // pool and the cleanup leave it alone (worktree-leases.ts).
-      const held = await this.worktreeLeases.acquireShared(input.key.workspaceRoot, {
-        reason: 'its chat is reverting files in it',
-      })
+      const held = await this.holdChatFolder(null, input.key.workspaceRoot, 'its chat is reverting files in it')
       if ('busy' in held) return { ok: false, message: held.busy }
       folderHold = held
       await this.initializeSequence(input.key)

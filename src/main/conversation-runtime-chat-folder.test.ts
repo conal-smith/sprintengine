@@ -5,7 +5,12 @@ import { join } from 'node:path'
 import { test } from 'vitest'
 import { ConversationRuntime } from './conversation-runtime'
 import { createMockConversationProvider } from './providers/mock-conversation-provider'
-import { createWorktreeLeases } from './worktree-leases'
+import { createWorktreeLeases, type WorktreeBlocked, type WorktreeHold } from './worktree-leases'
+
+function exclusive(result: WorktreeHold | WorktreeBlocked): WorktreeHold {
+  assert.ok('release' in result, 'blockedBy' in result ? `blocked by ${result.blockedBy[0]?.reason}` : '')
+  return result
+}
 
 // A worktree chat whose pool slot was given back while it sat idle has its
 // branch checked out again before any agent runs in its folder, whoever sent
@@ -150,8 +155,7 @@ test('a turn whose folder is being returned waits for the return, then starts', 
     const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
     const started = await runtime.startSession({ ...key, providerId: 'mock-provider', modelId: 'mock-model' })
     assert.ok(started.ok)
-    const returning = await leases.tryExclusive(workspaceRoot, 'the pool is returning this worktree')
-    assert.ok(returning)
+    const returning = exclusive(await leases.tryExclusive(workspaceRoot, 'the pool is returning this worktree'))
     let sent = false
     const sending = runtime.sendTurn({ sessionId: started.session.sessionId, message: 'hello' }).then((result) => {
       sent = true
@@ -163,6 +167,85 @@ test('a turn whose folder is being returned waits for the return, then starts', 
     returning.release()
     assert.equal((await sending).ok, true)
     assert.equal(asked, 2, 'asked once the return is done, so a slot given back is brought back')
+  } finally {
+    await runtime.shutdown()
+    await rm(workspaceRoot, { recursive: true, force: true })
+  }
+})
+
+test('a revert holds its folder for its whole length, and waits for a return under way', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'conversation-chat-folder-'))
+  const leases = createWorktreeLeases()
+  const runtime = new ConversationRuntime({ getProviderById: () => undefined, worktreeLeases: leases })
+  try {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const returning = exclusive(await leases.tryExclusive(workspaceRoot, 'the pool is returning this worktree'))
+    let done = false
+    const reverting = runtime.revertToTurn({ key, turnSeq: 1 }).finally(() => (done = true))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(done, false, 'waits while the return runs')
+    assert.deepEqual(
+      (await leases.holders(workspaceRoot)).map(({ reason, waiting }) => ({ reason, waiting })),
+      [
+        { reason: 'the pool is returning this worktree', waiting: false },
+        { reason: 'its chat is reverting files in it', waiting: true },
+      ],
+    )
+    returning.release()
+    await reverting
+    assert.deepEqual(await leases.holders(workspaceRoot), [], 'let go when the revert ends')
+  } finally {
+    await runtime.shutdown()
+    await rm(workspaceRoot, { recursive: true, force: true })
+  }
+})
+
+test('stopping a chat abandons its turn’s wait for the folder, and quitting abandons a start’s', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'conversation-chat-folder-'))
+  const leases = createWorktreeLeases()
+  let asked = 0
+  const mock = createMockConversationProvider()
+  const runtime = new ConversationRuntime({
+    adapters: [{ ...mock, sendTurn: (input) => mock.sendTurn({ ...input, message: '/tools' }) }],
+    getProviderById: () => undefined,
+    worktreeLeases: leases,
+    prepareChatFolder: async () => {
+      asked += 1
+      return { ok: true }
+    },
+  })
+  try {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const started = await runtime.startSession({ ...key, providerId: 'mock-provider', modelId: 'mock-model' })
+    assert.ok(started.ok)
+    const returning = exclusive(await leases.tryExclusive(workspaceRoot, 'the pool is returning this worktree'))
+    const sending = runtime.sendTurn({ sessionId: started.session.sessionId, message: 'hello' })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal((await runtime.stopSession({ sessionId: started.session.sessionId })).ok, true)
+    const sent = await sending
+    assert.equal(sent.ok, false)
+    assert.match(
+      sent.ok ? '' : sent.message,
+      /Stopped waiting for the worktree \(the pool is returning this worktree\)/,
+    )
+    assert.equal(asked, 1, 'the abandoned turn never asked for its folder')
+
+    const starting = runtime.startSession({
+      ...key,
+      agentId: 'other',
+      providerId: 'mock-provider',
+      modelId: 'mock-model',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await runtime.shutdown()
+    const start = await starting
+    assert.equal(start.ok, false)
+    assert.deepEqual(
+      (await leases.holders(workspaceRoot)).map(({ waiting }) => waiting),
+      [false],
+      'only the return is left',
+    )
+    returning.release()
   } finally {
     await runtime.shutdown()
     await rm(workspaceRoot, { recursive: true, force: true })

@@ -11,7 +11,8 @@ import {
   readSlotStatus,
   removePerAgentFiles,
 } from './slot-git'
-import { type PoolContext, type PoolRuntime, tail, messageOf } from './pool-context'
+import { WORKTREE_POOL_OWNER } from '../worktree-leases'
+import { type PoolContext, type PoolRuntime, holdIdle, tail, messageOf } from './pool-context'
 import type { WorktreePoolSweepEntry, WorktreePoolReturnInput } from './worktree-pool-service'
 import { lockReasonOf, isOurLock, hold, holdAfterFailure, forgetSlotsGoneFromDisk } from './pool-slot-steps'
 import { evictOverLimit, measureSlot, enforceDiskLimit } from './pool-eviction'
@@ -47,18 +48,21 @@ export async function returnSlot(
   recovering = false,
   park: SlotKeeper | null = null,
 ): Promise<'returned' | 'held' | 'postponed' | 'skipped'> {
+  if (!returnable(pool, slot, recovering, park)) return 'skipped'
   // Held from before the slot is marked until it is idle or put back: a turn
-  // or terminal starting in it holds the path shared until it is live, so a
-  // return that cannot have the path changes nothing, not even the record,
-  // and the next sweep asks again. Given up before the limits below, which
-  // may evict this very slot under a hold of their own.
-  const pathHold = await ctx.leases.tryExclusive(slot.path, 'the pool is returning this worktree')
-  if (!pathHold) {
+  // or terminal starting in it holds the path shared until it is live, and
+  // one already live is on the list read under the hold, so a return that
+  // cannot go ahead changes nothing, not even the record, and the next sweep
+  // asks again. Given up before the limits below, which may evict this very
+  // slot under a hold of their own.
+  const pathHold = await holdIdle(ctx, slot.path, 'the pool is returning this worktree')
+  if (!('release' in pathHold)) {
     // Only another of the pool's own steps has it (a sweep and a release at
     // once): that one decides, as for a slot marked busy. Anything else, a
     // start included, is asked about again at the next sweep.
-    const holders = await ctx.leases.holders(slot.path)
-    const ownStepOnly = holders.length > 0 && holders.every((holder) => holder.kind === 'exclusive')
+    const ownStepOnly =
+      'blockedBy' in pathHold &&
+      pathHold.blockedBy.every((holder) => holder.kind === 'exclusive' && holder.owner === WORKTREE_POOL_OWNER)
     return ownStepOnly ? 'skipped' : 'postponed'
   }
   let outcome: 'returned' | 'held' | 'postponed' | 'skipped'
@@ -78,6 +82,16 @@ export async function returnSlot(
   return 'returned'
 }
 
+/** Whether a return may take `slot` as it stands: not busy, and in a state a return starts from. */
+function returnable(pool: PoolRuntime, slot: SlotRecord, recovering: boolean, park: SlotKeeper | null): boolean {
+  if (pool.busy.has(slot.id)) return false
+  const from = slot.state
+  if (!(from === 'leased' || from === 'held' || from === 'returning' || (recovering && from === 'leasing'))) {
+    return false
+  }
+  return !park || from === 'leased'
+}
+
 /** {@link returnSlot}'s checks and git steps, under the path's exclusive hold. */
 async function returnHolding(
   ctx: PoolContext,
@@ -86,20 +100,24 @@ async function returnHolding(
   recovering: boolean,
   park: SlotKeeper | null,
 ): Promise<'returned' | 'held' | 'postponed' | 'skipped'> {
-  const began = await ctx.withPool(pool, async () => {
-    if (pool.busy.has(slot.id)) return null
-    const from = slot.state
-    if (!(from === 'leased' || from === 'held' || from === 'returning' || (recovering && from === 'leasing'))) {
-      return null
-    }
-    if (park && from !== 'leased') return null
-    pool.busy.add(slot.id)
-    slot.state = 'returning'
-    slot.op = { kind: 'return', startedAt: ctx.now(), pid: process.pid }
-    if (park) slot.parked = park
-    await ctx.persist(pool)
-    return { from, lease: slot.lease, held: slot.held }
-  })
+  let marked = false
+  const began = await ctx
+    .withPool(pool, async () => {
+      if (!returnable(pool, slot, recovering, park)) return null
+      const from = slot.state
+      pool.busy.add(slot.id)
+      marked = true
+      slot.state = 'returning'
+      slot.op = { kind: 'return', startedAt: ctx.now(), pid: process.pid }
+      if (park) slot.parked = park
+      await ctx.persist(pool)
+      return { from, lease: slot.lease, held: slot.held }
+    })
+    .catch((error: unknown) => {
+      // The record could not be written: nothing ran, and the busy mark goes.
+      if (marked) pool.busy.delete(slot.id)
+      throw error
+    })
   if (!began) return 'skipped'
   const branch = began.lease?.branch ?? began.held?.branch ?? null
   const putBack = async (): Promise<'postponed'> => {
@@ -122,10 +140,6 @@ async function returnHolding(
     return 'held'
   }
   try {
-    // The agent's terminal (or anyone's) is still in there: put it back as
-    // it was, and the next sweep asks again. Asked under the hold, so a turn
-    // or terminal that started since the sweep looked is seen here.
-    if (await ctx.somethingRunsIn(slot.path)) return await putBack()
     // Locked by another Studio profile (which adopted or leased it) or by a
     // person: theirs, whatever this profile's record says. Held for a person
     // to sort out, with their lock left on it; unreadable, asked again later.

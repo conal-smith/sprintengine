@@ -9,10 +9,9 @@ import type {
 import { comparablePath } from '../../shared/host-paths'
 import { LOCAL_HOST_ID } from '../../shared/execution-host'
 import { worktreeContainerPath } from '../../shared/worktree-paths'
-import { insideAny, pathSpellings } from '../agent-worktree-keep-checks'
 import { worktreeBranchLedger, type WorktreeBranchLedger } from '../worktree-branch-ledger'
 import { worktreeBranchPrefix } from '../worktree-branch-prefix'
-import { worktreeLeases, type WorktreeLeases } from '../worktree-leases'
+import { liveInside, worktreeLeases, type WorktreeLeases } from '../worktree-leases'
 import { measureDiskUsage, type MeasureDiskUsage } from './disk-usage'
 import {
   acquireInstanceLock,
@@ -409,12 +408,8 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
    * spelling (agent-worktree-keep-checks.ts): a terminal opened through a
    * symlink to the container is still in the slot.
    */
-  async function somethingRunsIn(path: string): Promise<boolean> {
-    const live = ((await deps.livePaths?.()) ?? []).filter(Boolean)
-    if (live.length === 0) return false
-    const slotSpellings = await pathSpellings(path)
-    for (const each of live) if (insideAny(await pathSpellings(each), slotSpellings)) return true
-    return false
+  function somethingRunsIn(path: string): Promise<boolean> {
+    return liveInside(path, deps.livePaths)
   }
 
   async function getSettings(): Promise<WorktreePoolSettings> {

@@ -541,7 +541,12 @@ export async function lease(ctx: PoolContext, input: WorktreePoolLeaseInput): Pr
     let pathHold: WorktreeHold | null = null
     try {
       if (!created) {
-        pathHold = await holdIdle(ctx, slot.path, 'the pool is preparing this worktree for a new lease')
+        // No start waits for it: once the lease has it, the slot is someone
+        // else's, and a chat whose folder it was could only be refused then.
+        const taken = await holdIdle(ctx, slot.path, 'the pool is preparing this worktree for a new lease', {
+          refuseWaiters: true,
+        })
+        pathHold = 'release' in taken ? taken : null
         if (!pathHold) {
           // Someone opened a terminal in an idle slot, or is opening one; it
           // is not reset under them.

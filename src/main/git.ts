@@ -31,7 +31,7 @@ import {
 import type { WorktreePoolLeaseResult } from './worktree-pool/worktree-pool-service'
 import { removeWorktreeLeftovers } from './worktree-leftovers'
 import { removeLinkedWorktree } from './worktree-removal'
-import { worktreeLeases } from './worktree-leases'
+import { blockedMessage, worktreeLeases } from './worktree-leases'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import { repoRootFromWorktreePath, WORKTREE_CONTAINER_DIR, worktreeContainerPath } from '../shared/worktree-paths'
 import { dependencyInstallSettingFor, type WorktreeDependencyInstallView } from '../shared/ipc/worktree-pool'
@@ -993,7 +993,7 @@ export async function removeGitWorktree(
   // live it shows nowhere a person (or the caller) could have looked. A
   // running one is the caller's to judge, as it always was.
   const hold = await worktreeLeases.tryExclusive(worktreePath, 'this worktree is being removed')
-  if (!hold) return { ok: false, message: 'A chat or terminal is starting in this worktree; try again.' }
+  if ('blockedBy' in hold) return { ok: false, message: blockedMessage(hold) }
   try {
     // The in-use lock this profile put on its own agent worktree is the app's
     // mark, not the person's, and a person removing the worktree releases it.

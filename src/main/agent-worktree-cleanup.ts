@@ -11,7 +11,7 @@ import { listGitWorktrees } from './git-worktree-list'
 import { resolveRepoRoot } from './git-worktree-validation'
 import { lockAgentWorktree, relockWorktree } from './agent-worktree-lock'
 import { worktreeBranchLedger, type WorktreeBranchLedger } from './worktree-branch-ledger'
-import { worktreeLeases, type WorktreeHold, type WorktreeLeases } from './worktree-leases'
+import { holdIfIdle, worktreeLeases, type WorktreeHold, type WorktreeLeases } from './worktree-leases'
 import { removeWorktreeLeftovers } from './worktree-leftovers'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import { removeWorktreeKeepingSubmoduleWork, type SubmoduleWork } from './worktree-submodule-removal'
@@ -314,20 +314,9 @@ export async function cleanupAgentWorktrees(
    * it. The checks take a while on a big worktree, so the live list is read
    * again under the hold, the last thing before it goes.
    */
-  const holdForRemoval = async (path: string, spellings: readonly string[]): Promise<WorktreeHold | null> => {
-    const hold = await leases.tryExclusive(path, 'the cleanup is removing this worktree')
-    if (!hold) return null
-    try {
-      const liveNow = await Promise.all(
-        ((await deps.livePaths?.()) ?? []).filter(Boolean).map((live) => pathSpellings(live)),
-      )
-      if (!liveNow.some((live) => insideAny(live, spellings))) return hold
-    } catch (error) {
-      hold.release()
-      throw error
-    }
-    hold.release()
-    return null
+  const holdForRemoval = async (path: string): Promise<WorktreeHold | null> => {
+    const hold = await holdIfIdle(leases, path, 'the cleanup is removing this worktree', deps.livePaths)
+    return 'release' in hold ? hold : null
   }
   const entries: AgentWorktreeCleanupEntry[] = []
   const record = (entry: AgentWorktreeCleanupEntry): void => {
@@ -392,7 +381,7 @@ export async function cleanupAgentWorktrees(
       }
       // A chat bringing its worktree back to this very path holds it while it
       // does: the note it is about to need is not forgotten under it.
-      const forgetHold = await holdForRemoval(worktree.path, worktreeSpellings)
+      const forgetHold = await holdForRemoval(worktree.path)
       if (!forgetHold) {
         record({ ...base, verdict: 'in-use' })
         continue
@@ -510,7 +499,7 @@ export async function cleanupAgentWorktrees(
     // The checks above take a while on a big worktree: a terminal opened in it
     // meanwhile, or a chat's session started there, is asked about once more,
     // under the hold that keeps one starting now out until it is done.
-    const removalHold = await holdForRemoval(worktree.path, worktreeSpellings)
+    const removalHold = await holdForRemoval(worktree.path)
     if (!removalHold) {
       record({ ...base, verdict: 'in-use' })
       continue

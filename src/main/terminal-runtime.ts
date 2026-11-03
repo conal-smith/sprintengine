@@ -375,6 +375,8 @@ let onObservedCheckoutResolved: TerminalRuntimeOptions['onObservedCheckoutResolv
 let onAgentToolCall: TerminalRuntimeOptions['onAgentToolCall']
 let onAgentSessionExit: TerminalRuntimeOptions['onAgentSessionExit']
 let leases: WorktreeLeases = worktreeLeases
+// Launches waiting for their folder's hold, by session (`spawnTerminalFromIpc`).
+const spawnWaits = new Map<string, AbortController>()
 
 // Whether a CLI can report authoritative agent state: true exactly when its
 // plugin manifest declares an `agentStateSpec` (the capability that also drives
@@ -465,7 +467,10 @@ export function createTerminalRuntime(options: TerminalRuntimeOptions): Terminal
       setTerminalVisible: setTerminalVisible,
       suspendTerminal: suspendTerminal,
       resumeTerminal: resumeTerminal,
-      killTerminal: disposeTerminal,
+      killTerminal(sessionId) {
+        spawnWaits.get(sessionId)?.abort()
+        disposeTerminal(sessionId)
+      },
       setIdleSuspendThresholdMs: setIdleSuspendThresholdMs,
       setKeepRecentTerminalsAlive: setKeepRecentTerminalsAlive,
       setTerminalReapExempt: setTerminalReapExempt,
@@ -1853,6 +1858,7 @@ export function listTerminalRoots(): TerminalRootInfo[] {
 
 async function shutdownTerminalRuntime(): Promise<void> {
   stopStaleTerminalSweep()
+  for (const stop of spawnWaits.values()) stop.abort()
   await disposeAllTerminals()
   // A prompt that arrived just before quit is still being written.
   await agentPrompts?.flush()
@@ -3045,7 +3051,19 @@ function attachTerminalSession(
 async function spawnTerminalFromIpc(sender: WebContents, payload: TerminalSpawnPayload): Promise<TerminalSpawnResult> {
   const existing = terminals.get(payload.sessionId)
   if ((existing && !existing.isDisposed) || !payload.cwd) return spawnTerminalNow(sender, payload)
-  const folderHold = await leases.acquireShared(payload.cwd, { reason: 'a terminal is starting in it' })
+  // Killing the session (or quitting) while it waits abandons the launch.
+  const stop = new AbortController()
+  spawnWaits.get(payload.sessionId)?.abort()
+  spawnWaits.set(payload.sessionId, stop)
+  let folderHold: Awaited<ReturnType<WorktreeLeases['acquireShared']>>
+  try {
+    folderHold = await leases.acquireShared(payload.cwd, {
+      reason: 'a terminal is starting in it',
+      signal: stop.signal,
+    })
+  } finally {
+    if (spawnWaits.get(payload.sessionId) === stop) spawnWaits.delete(payload.sessionId)
+  }
   if ('busy' in folderHold) return { ok: false, sessionId: payload.sessionId, message: folderHold.busy, exitCode: 1 }
   try {
     return await spawnTerminalNow(sender, payload)

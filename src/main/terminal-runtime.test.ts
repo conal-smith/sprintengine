@@ -10,8 +10,13 @@ import { createTerminalSnapshotSidecarStore } from './terminal-snapshot-sidecar'
 import { createAgentPromptStore } from './agent-prompt-store'
 import { createAgentLaunchService } from './agent-launch-service'
 import { emptyAgentLaunchSettings } from '../shared/launch-settings'
-import { createWorktreeLeases } from './worktree-leases'
+import { createWorktreeLeases, type WorktreeBlocked, type WorktreeHold } from './worktree-leases'
 import { test } from 'vitest'
+
+function exclusive(result: WorktreeHold | WorktreeBlocked): WorktreeHold {
+  assert.ok('release' in result, 'blockedBy' in result ? `blocked by ${result.blockedBy[0]?.reason}` : '')
+  return result
+}
 
 test('terminal-runtime', async () => {
   type RuntimeModule = typeof import('./terminal-runtime')
@@ -4173,8 +4178,7 @@ test('terminal-runtime', async () => {
         'live by then',
       )
 
-      const returning = await leases.tryExclusive(workspaceRoot, 'the pool is returning this worktree')
-      assert.ok(returning)
+      const returning = exclusive(await leases.tryExclusive(workspaceRoot, 'the pool is returning this worktree'))
       let done = false
       const waiting = spawn('session_folder_wait').then((result) => {
         done = true
@@ -4185,6 +4189,17 @@ test('terminal-runtime', async () => {
       assert.equal(heldWhileSyncing.length, 1, 'writes nothing into the folder meanwhile')
       returning.release()
       assert.equal((await waiting).ok, true)
+
+      // Killed while it waits, the launch is abandoned before it writes anything.
+      const removing = exclusive(await leases.tryExclusive(workspaceRoot, 'this worktree is being removed'))
+      const killed = spawn('session_folder_killed')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      runtime.ipcHandlers.killTerminal('session_folder_killed')
+      const abandoned = await killed
+      assert.equal(abandoned.ok, false)
+      assert.match(abandoned.ok ? '' : (abandoned.message ?? ''), /Stopped waiting for the worktree/)
+      assert.equal(heldWhileSyncing.length, 2, 'nothing written for it')
+      removing.release()
 
       syncFails = true
       assert.equal((await spawn('session_folder_refused')).ok, false)
