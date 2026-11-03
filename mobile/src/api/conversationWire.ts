@@ -449,6 +449,10 @@ const generation = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 200;
 const optionalDelay = (value: unknown) =>
   value === undefined || nonnegative(value);
+/** Whether a value is an event the wire takes; a page read outside a frame is held to the same. */
+export function isConversationEvent(value: unknown): value is ConversationEvent {
+  return event(value);
+}
 function event(value: unknown): value is ConversationEvent {
   if (!record(value)) return false;
   return (

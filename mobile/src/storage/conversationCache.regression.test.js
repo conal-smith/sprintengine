@@ -240,3 +240,62 @@ test("a handed-over send keeps the cursor it was queued at, and a malformed one 
   for (const heldAfter of [-1, 1.5, "7", null])
     assert.throws(() => boundedConversationCache({ lastSeq: 7, events: [], pending: [{ ...held, heldAfter }] }), /Invalid/);
 });
+
+test("an event the wire takes is one the cache keeps, and one it cannot keep costs the transcript, not the write", async () => {
+  const { store } = fixture();
+  // The wire never asked for these ids: an event without them is on screen.
+  const { sessionId: _s, workspaceId: _w, agentId: _a, ...bare } = event(2, "content_delta", "turn-1");
+  const kept = await store.update("aa", () => ({ lastSeq: 2, generation: "g", events: [event(1), bare], pending: [pending("keep")] }));
+  assert.equal(kept.events.length, 2);
+  assert.equal(kept.lastSeq, 2);
+  // Something no frame carries: the write lands, the queue is kept, and the
+  // cursor goes with the transcript so the next subscription asks afresh.
+  const broken = await store.update("aa", (current) => ({
+    ...current,
+    lastSeq: 3,
+    events: [...current.events, { ...event(3), createdAt: 1.5 }],
+  }));
+  assert.deepEqual(broken, { lastSeq: 0, events: [], pending: [pending("keep")] });
+  assert.deepEqual((await store.load("aa")).pending.map((item) => item.commandId), ["keep"]);
+});
+
+test("a copy whose transcript is damaged still reads, keeping its queue, so the chat is not refused every write", async () => {
+  const { store, files } = fixture();
+  await store.save("aa", value("queued"));
+  const [key, text] = [...files][0];
+  const copy = JSON.parse(text);
+  copy.data.events[0].createdAt = "yesterday";
+  files.set(key, JSON.stringify(copy));
+  assert.deepEqual((await store.load("aa")).pending.map((item) => item.commandId), ["queued"]);
+  const saved = await store.update("aa", (current) => ({ ...current, lastSeq: 2, events: [event(2)] }));
+  assert.deepEqual(saved.pending.map((item) => item.commandId), ["queued"]);
+});
+
+test("a failed read of one copy is not left running into the next write", async () => {
+  const { store, adapter } = fixture();
+  await store.save("aa", value("first"));
+  await store.save("aa", value("second"));
+  const read = adapter.read;
+  const running = new Set();
+  const overlaps = [];
+  adapter.read = async (key) => {
+    running.add(key);
+    try {
+      if (key.endsWith("-0.json")) throw new Error("storage unavailable");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return await read(key);
+    } finally {
+      running.delete(key);
+    }
+  };
+  const write = adapter.write;
+  adapter.write = async (key, text) => {
+    if (running.size) overlaps.push([...running]);
+    return write(key, text);
+  };
+  await assert.rejects(store.save("aa", value("third")), /storage unavailable/);
+  adapter.read = read;
+  await store.save("aa", value("fourth"));
+  assert.deepEqual(overlaps, []);
+  assert.equal((await store.load("aa")).pending[0].commandId, "fourth");
+});

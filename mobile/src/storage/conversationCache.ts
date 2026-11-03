@@ -13,6 +13,19 @@ export {
 } from "./conversationCacheModel";
 
 const folder = () => new Directory(Paths.document, "conversation-cache");
+/**
+ * Every file whose `text()` is still being read. On Android an async call on
+ * a native object names it by id, and the native queue looks the id up only
+ * when it gets to the call, which can be after another read of up to a
+ * megabyte. A `File` nothing in JS holds any more may be collected in that
+ * gap, which releases its native half, and the read then rejects with "Cannot
+ * use shared object that was already released". A streaming reply makes
+ * garbage fast enough for that to happen every so often, and each time the
+ * whole write failed. Holding the file here until its read settles closes
+ * the gap. The sync calls (`exists`, `info`, `write`) run while the caller
+ * still holds the file, so they need nothing.
+ */
+const reading = new Set<File>();
 const store = createConversationCacheStore({
   async keys() {
     const directory = folder();
@@ -26,7 +39,12 @@ const store = createConversationCacheStore({
     const file = new File(folder(), key);
     if (!file.exists || (file.info().size ?? Infinity) > MAX_CACHE_CHARS * 4)
       return null;
-    return file.text();
+    reading.add(file);
+    try {
+      return await file.text();
+    } finally {
+      reading.delete(file);
+    }
   },
   async write(key, text) {
     folder().create({ idempotent: true, intermediates: true });

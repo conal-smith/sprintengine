@@ -10,6 +10,7 @@ import {
 import {
   conversationSendProblem,
   conversationSessionWasLost,
+  isConversationEvent,
   LOST_REQUEST_SENTENCE,
   plainLineBreaks,
   type ConversationClientFrame,
@@ -42,6 +43,7 @@ import {
 import type { AgentLane } from "./agentLogic";
 import { chatWorksInBackground } from "./conversationListLogic";
 import { keepUnchanged } from "./keepUnchanged";
+import { CACHE_SAVE_NOTICE, createCacheSaveHealth } from "./cacheSaveHealth";
 import {
   loadConversationCache,
   updateConversationCache,
@@ -247,6 +249,9 @@ export function usePhoneConversation(
   // Sends being written to the cache now: one may land after the screen closes.
   const sendsWriting = useRef(0);
   const lifecycle = useRef(0);
+  // How this chat's writes to the cache are going: a failure is said only
+  // once they keep failing (`cacheSaveHealth.ts`). One per chat opened.
+  const cacheHealth = useRef(createCacheSaveHealth());
   const actionRequests = useRef(new Map<string, string>());
   // Model switches and preset changes waiting on their commandResult, by command id.
   const threadChanges = useRef(new Map<string, PendingThreadChange>());
@@ -331,6 +336,29 @@ export function usePhoneConversation(
       });
     return { events: eventsRef.current, cursor: cursorRef.current };
   }, [memoryKey]);
+  // Every write to the cache goes through here, and is what says whether the
+  // cache is keeping the chat: a write a newer one replaced before it ran,
+  // or one dropped because the chat changed, never reached the disk and says
+  // nothing. The callers' own catches stay quiet.
+  const writeCache = useCallback(
+    async (
+      deviceId: string,
+      owner: number,
+      updater: (current: CachedConversation) => CachedConversation,
+    ): Promise<CachedConversation> => {
+      const health = cacheHealth.current;
+      try {
+        const saved = await updateConversationCache(deviceId, cacheKey, updater);
+        if (health.succeeded() && owner === lifecycle.current)
+          setNotice((shown) => (shown === CACHE_SAVE_NOTICE ? "" : shown));
+        return saved;
+      } catch (error) {
+        if (health.failed(Date.now()) && owner === lifecycle.current) setNotice(CACHE_SAVE_NOTICE);
+        throw error;
+      }
+    },
+    [cacheKey],
+  );
   const persist = useCallback(
     async (
       // Captured together when the frame was applied: the write runs later,
@@ -346,9 +374,9 @@ export function usePhoneConversation(
         );
         return;
       }
-      const saved = await updateConversationCache(
+      const saved = await writeCache(
         session.deviceId,
-        cacheKey,
+        owner,
         (current) => {
           const pending = current.pending.filter(
             (item) => !acknowledged.includes(item.commandId),
@@ -378,7 +406,7 @@ export function usePhoneConversation(
       );
       if (owner === lifecycle.current) pendingRef.current = saved.pending;
     },
-    [session?.deviceId, apiOverride, cacheKey],
+    [session?.deviceId, apiOverride, writeCache],
   );
   const mutatePending = useCallback(
     async (change: {
@@ -407,9 +435,9 @@ export function usePhoneConversation(
           pendingRef.current = [...pendingRef.current, change.add];
         return;
       }
-      const saved = await updateConversationCache(
+      const saved = await writeCache(
         session.deviceId,
-        cacheKey,
+        owner,
         (current) => ({
           ...current,
           pending: [
@@ -426,7 +454,7 @@ export function usePhoneConversation(
       );
       if (owner === lifecycle.current) pendingRef.current = saved.pending;
     },
-    [session?.deviceId, apiOverride, cacheKey],
+    [session?.deviceId, apiOverride, writeCache],
   );
   const serialize = useCallback(<T>(work: () => Promise<T>): Promise<T> => {
     const owner = lifecycle.current;
@@ -475,7 +503,15 @@ export function usePhoneConversation(
         const replaces = queue.reset;
         queue.acknowledged = new Set();
         queue.reset = false;
-        await persist(snapshot, carried, replaces);
+        try {
+          await persist(snapshot, carried, replaces);
+        } catch (error) {
+          // Not written: the next write carries them, as it carries the log,
+          // so a send the desktop took is not left in the cache's queue.
+          for (const id of carried) queue.acknowledged.add(id);
+          if (replaces) queue.reset = true;
+          throw error;
+        }
       });
     },
     [persist, serialize],
@@ -580,6 +616,7 @@ export function usePhoneConversation(
     eventsRef.current = recalled?.events ?? [];
     pendingRef.current = [];
     unsaved.current = { latest: 0, acknowledged: new Set(), reset: false };
+    cacheHealth.current = createCacheSaveHealth();
     const streamed = (streamSave.current = { at: 0, timer: null, snapshot: null });
     // What a streaming reply had waiting, written now: on leaving the chat
     // straight to the cache, since the line of writes no longer takes this
@@ -736,9 +773,7 @@ export function usePhoneConversation(
               await mutatePending({
                 patch: { commandId, update: (item) => ({ ...item, command, heldAfter }) },
               });
-            }).catch(() => {
-              if (!disposed) setNotice("Conversation cache could not be saved.");
-            });
+            }).catch(() => {});
           },
           // No longer sent without asking: Not sent, with Send now and
           // Discard, and kept so across a restart until the person decides.
@@ -764,9 +799,7 @@ export function usePhoneConversation(
               await mutatePending({
                 patch: { commandId, update: (item) => ({ ...item, stale: true }) },
               });
-            }).catch(() => {
-              if (!disposed) setNotice("Conversation cache could not be saved.");
-            });
+            }).catch(() => {});
           },
           onFrame(frame) {
             if (disposed) return;
@@ -800,10 +833,7 @@ export function usePhoneConversation(
                 held(),
                 [...acknowledgments],
                 frame.reset === true,
-              ).catch(() => {
-                if (!disposed)
-                  setNotice("Conversation cache could not be saved.");
-              });
+              ).catch(() => {});
               setQueued((previous) =>
                 previous.filter((item) => !acknowledgments.has(item.commandId)),
               );
@@ -831,10 +861,7 @@ export function usePhoneConversation(
                 lastSeq: frame.seq,
                 ...(generation === undefined ? {} : { generation }),
               };
-              void persistLatest(held()).catch(() => {
-                if (!disposed)
-                  setNotice("Conversation cache could not be saved.");
-              });
+              void persistLatest(held()).catch(() => {});
             } else if (frame.type === "event") {
               eventsRef.current = mergeConversationEvents(eventsRef.current, [
                 frame.event,
@@ -888,10 +915,7 @@ export function usePhoneConversation(
                       held(),
                       typeof commandId === "string" ? [commandId] : [],
                     )
-              ).catch(() => {
-                if (!disposed)
-                  setNotice("Conversation cache could not be saved.");
-              });
+              ).catch(() => {});
               if (
                 [
                   "approval_resolved",
@@ -949,9 +973,7 @@ export function usePhoneConversation(
                   current?.cancelPending(commandId);
                   void serialize(async () => {
                     await mutatePending({ remove: commandId });
-                  }).catch(() => {
-                    if (!disposed) setNotice("Conversation cache could not be saved.");
-                  });
+                  }).catch(() => {});
                 }
               }
               setHanding((previous) => {
@@ -1056,10 +1078,7 @@ export function usePhoneConversation(
               );
               void serialize(async () => {
                 await mutatePending({ remove: frame.commandId });
-              }).catch(() => {
-                if (!disposed)
-                  setNotice("Conversation cache could not be saved.");
-              });
+              }).catch(() => {});
               if (requestId) {
                 actionRequests.current.delete(frame.commandId);
                 setPendingActionIds((previous) => {
@@ -1532,15 +1551,15 @@ export function usePhoneConversation(
       if (owner !== lifecycle.current) return;
       const older = recordValue(result.page);
       if (result.ok === true && Array.isArray(older.events)) {
+        // A page answers a request, not a frame, so nothing checked its
+        // events on the way in: held to what a frame's are, they are what
+        // the screen draws and the cache keeps.
         eventsRef.current = mergeConversationEvents(
           eventsRef.current,
-          older.events as ConversationEvent[],
+          older.events.filter(isConversationEvent),
         );
         setEvents(eventsRef.current);
-        void persistLatest(held()).catch(() => {
-          if (owner === lifecycle.current)
-            setNotice("Conversation cache could not be saved.");
-        });
+        void persistLatest(held()).catch(() => {});
         setPage({
           hasMore: older.hasMore === true,
           beforeCursor:
