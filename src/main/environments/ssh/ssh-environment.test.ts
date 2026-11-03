@@ -14,7 +14,7 @@ import { afterAll, beforeAll, test } from 'vitest'
 import { WSL_NODE_VERSION } from '../../hosts/wsl-node-runtime'
 import { BACKEND_WIRE_VERSION } from '../../../server/wsl/backend-wire'
 import { DEFAULT_SSH_ENVIRONMENT_SETTINGS, type SshEnvironmentSettings } from '../../../shared/ssh-environments'
-import { installFailureWords, SshEnvironment, type SshEnvironmentDeps } from './ssh-environment'
+import { DEFAULT_TIMING, installFailureWords, SshEnvironment, type SshEnvironmentDeps } from './ssh-environment'
 import { serverTreeDigest } from './ssh-install'
 import type { SessionProcess } from './ssh-session'
 
@@ -492,6 +492,19 @@ test('Connect on a machine shown Disconnected replaces the quiet background try 
     machine.changes.slice(shown).join('\n'),
   )
 }, 120_000)
+
+test('a bootstrap that outlives its backstop is given up on in words, and its ssh killed', async () => {
+  const machine = harness(scratch, { spawnWith: () => hangingSsh(), timing: { bootstrapMs: 2_000 } })
+  await assert.rejects(machine.env.connect({ interactive: true }))
+  assert.equal(machine.env.summary().state, 'failed')
+  assert.equal(
+    machine.env.summary().stateText,
+    'build-box did not finish connecting in 2 seconds; see its diagnostics.',
+  )
+  assert.ok(await until(() => killed(machine.spawned[0]!.child), 5_000), 'its ssh was killed')
+  // The real one is the 45 minutes the words name.
+  assert.equal(DEFAULT_TIMING.bootstrapMs, 45 * 60_000)
+})
 
 test('install failures read as sentences', () => {
   assert.match(installFailureWords('unpack tar: Disk quota exceeded', 'build-box'), /your disk quota is full/u)

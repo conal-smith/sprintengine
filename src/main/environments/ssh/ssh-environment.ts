@@ -22,6 +22,7 @@ import { buildInstallArchive } from './ssh-install'
 import { RemoteSession, SessionClosedError, type SessionProcess } from './ssh-session'
 import {
   ConnectionSupervisor,
+  ConnectTimeoutError,
   type ConnectionAttempt,
   type ConnectionState,
 } from '../../../../packages/connection-supervisor/src/connectionSupervisor'
@@ -229,7 +230,7 @@ export class SshEnvironment {
       // A backend snapshot is what a session that answers can always give.
       ping: (live) => live.connection.backend.refresh(),
       classify: (error, { reconnecting }) => {
-        const step = asStep(error)
+        const step = this.stepOf(error)
         this.heldWhileReconnecting = reconnecting
         if (step.failure?.code === 'needs-sign-in') return { kind: 'needs-sign-in' }
         // A first connect that fails was seen by whoever asked: it is not retried
@@ -330,6 +331,25 @@ export class SshEnvironment {
     return this.joinNext()
   }
 
+  /**
+   * A failure the supervisor holds, as a step's words: what the bootstrap
+   * threw, a loss's reason, or the backstop running out, said the way the
+   * machine's other failures are.
+   */
+  private stepOf(error: unknown): StepError {
+    if (error instanceof ConnectTimeoutError) {
+      const minutes = Math.round(this.timing.bootstrapMs / 60_000)
+      const took =
+        minutes >= 2
+          ? `${minutes} minutes`
+          : minutes === 1
+            ? 'a minute'
+            : `${Math.max(1, Math.round(this.timing.bootstrapMs / 1000))} seconds`
+      return new StepError('failed', `${this.deps.label()} did not finish connecting in ${took}; see its diagnostics.`)
+    }
+    return asStep(error)
+  }
+
   /** The connection the attempt under way, or the backoff's next one, brings. */
   private joinNext(): Promise<SshServerConnection> {
     return this.supervisor.next().then((live) => live.connection)
@@ -357,13 +377,13 @@ export class SshEnvironment {
           // Background callers are answered with these words meanwhile.
           this.set({
             state: 'disconnected',
-            stateText: `Disconnected from ${label}${this.lastReachedAt ? ` — last reached ${minutesAgo(this.now() - this.lastReachedAt)}` : ''}. ${messageOf(state.lastError)}`,
+            stateText: `Disconnected from ${label}${this.lastReachedAt ? ` — last reached ${minutesAgo(this.now() - this.lastReachedAt)}` : ''}. ${this.stepOf(state.lastError).message}`,
             action: 'connect',
           })
         } else this.set({ state: 'reconnecting', stateText: this.reconnectingText(label), working: true })
         return
       case 'needs-sign-in': {
-        const step = asStep(state.lastError)
+        const step = this.stepOf(state.lastError)
         this.set({
           state: 'needs-sign-in',
           stateText: this.heldWhileReconnecting ? `${label} needs you to sign in.` : step.message,
@@ -372,7 +392,7 @@ export class SshEnvironment {
         return
       }
       case 'failed': {
-        const step = asStep(state.lastError)
+        const step = this.stepOf(state.lastError)
         this.set({
           state: step.state,
           stateText: step.message,

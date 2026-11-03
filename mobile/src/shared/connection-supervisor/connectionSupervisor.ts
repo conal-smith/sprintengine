@@ -35,8 +35,9 @@
 //   repeats the refusal.
 // - A delay the far end asked for is a floor that a wake does not cut short: a
 //   wake shortens the wait to that delay, not below it.
-// - Listeners hear a state once the transition that made it is complete, so a
-//   listener that calls back into the supervisor never runs inside one.
+// - Listeners, and an abandoned attempt's own listeners, hear of a change once
+//   the transition that made it is complete, so one that calls back into the
+//   supervisor never runs inside one.
 //
 // Pure TypeScript with no imports: the clock, timers and randomness are
 // injected, and nothing here needs Node, a DOM or React, so the desktop's main
@@ -170,6 +171,8 @@ const DEFAULT_JITTER = 0.5
 const DEFAULT_STABLE_AFTER_MS = 30_000
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
 const DEFAULT_PING_TIMEOUT_MS = 10_000
+/** How many rounds of telling listeners one transition may set off before they are taken to be looping. */
+const MAX_NOTIFY_ROUNDS = 100
 
 /**
  * The wait before the retry after `failures` failures in a row (1 or more):
@@ -247,6 +250,8 @@ export class ConnectionSupervisor<C, Hint = undefined> {
   private depth = 0
   private notified: ConnectionState | null = null
   private notifying = false
+  /** Abandoned attempts' listeners, heard once the transition that dropped them is done. */
+  private abandoned: { listeners: ((reason: string) => void)[]; reason: string }[] = []
 
   constructor(options: ConnectionSupervisorOptions<C, Hint>) {
     this.options = options
@@ -439,9 +444,11 @@ export class ConnectionSupervisor<C, Hint = undefined> {
   }
 
   private connected(attempt: Attempt<C>, connection: C): void {
-    // Reported twice (the event, then the promise): it is up already.
+    // Reported twice (the event, then the promise): it is up already, or was
+    // closed the first time.
     if (attempt.connection === connection) return
     if (this.attempt !== attempt || attempt.done) {
+      attempt.connection = connection
       this.closeQuietly(connection, 'This connection is no longer wanted.')
       return
     }
@@ -632,15 +639,10 @@ export class ConnectionSupervisor<C, Hint = undefined> {
     if (!attempt || attempt.done) return
     this.settle(attempt)
     attempt.abandoned = reason
-    const listeners = attempt.abandonListeners
+    // Heard after the transition, so a listener that calls back in (a retry)
+    // cannot start an attempt the transition under way then overwrites.
+    this.abandoned.push({ listeners: attempt.abandonListeners, reason })
     attempt.abandonListeners = []
-    for (const listener of listeners) {
-      try {
-        listener(reason)
-      } catch {
-        // The attempt's own cleanup failing is its own.
-      }
-    }
   }
 
   private clearRetry(): void {
@@ -668,11 +670,14 @@ export class ConnectionSupervisor<C, Hint = undefined> {
   }
 
   private update(change: Partial<ConnectionState>): void {
+    // Nothing changed: no new state, so nobody is told it again.
+    const current = this.snapshot as Record<string, unknown>
+    if (Object.entries(change).every(([key, value]) => Object.is(current[key], value))) return
     this.snapshot = { ...this.snapshot, ...change }
     if (this.depth === 0) this.flush()
   }
 
-  /** Run one transition; its listeners hear the state it ends in, after it is done. */
+  /** Run one transition; what it changed is heard after it is done. */
   private run<T>(transition: () => T): T {
     this.depth += 1
     try {
@@ -684,15 +689,36 @@ export class ConnectionSupervisor<C, Hint = undefined> {
   }
 
   /**
-   * Tell every listener the current state, once per change. A listener that
-   * calls back into the supervisor runs a transition of its own, which is done
-   * before anyone hears its state; this loop then tells everyone that one.
+   * Tell abandoned attempts, then every listener the current state, once per
+   * change. One that calls back into the supervisor runs a transition of its
+   * own, which is done before anyone hears of it; this loop then tells that
+   * too. Listeners that move the state on every time they hear it would keep
+   * it going for ever, so it stops after a bound and says so.
    */
   private flush(): void {
     if (this.notifying) return
     this.notifying = true
     try {
-      while (this.notified !== this.snapshot) {
+      for (let round = 0; ; round++) {
+        const dropped = this.abandoned.shift()
+        if (!dropped && this.notified === this.snapshot) return
+        if (round >= MAX_NOTIFY_ROUNDS) {
+          this.abandoned = []
+          this.notified = this.snapshot
+          if (typeof console !== 'undefined')
+            console.warn('ConnectionSupervisor: listeners kept changing the state; stopped telling them.')
+          return
+        }
+        if (dropped) {
+          for (const listener of dropped.listeners) {
+            try {
+              listener(dropped.reason)
+            } catch {
+              // The attempt's own cleanup failing is its own.
+            }
+          }
+          continue
+        }
         const state = this.snapshot
         this.notified = state
         for (const listener of [...this.listeners]) {

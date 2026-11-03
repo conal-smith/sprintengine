@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import {
   ConnectionSupervisor,
   ConnectTimeoutError,
@@ -554,6 +554,71 @@ test('a listener that calls back into the supervisor never runs inside a transit
   last().resolve()
   await time.advance()
   expect(supervisor.state().phase).toBe('stopped')
+})
+
+test('an abandoned attempt that retries from its own listener leaves no attempt orphaned', async () => {
+  const { supervisor, time, attempts, last } = harness()
+  supervisor.start()
+  const first = last()
+  let retried = false
+  first.attempt.onAbandoned(() => {
+    if (retried) return
+    retried = true
+    supervisor.retryNow('from the listener')
+  })
+  supervisor.retryNow('from the person')
+  // The person's retry dropped the first attempt; its listener's retry then
+  // dropped the second, which heard so, and the third is the only one wanted.
+  expect(attempts).toHaveLength(3)
+  const [, second, third] = attempts
+  const heard: string[] = []
+  second!.attempt.onAbandoned((reason) => heard.push(reason))
+  expect(heard).toHaveLength(1)
+  expect(attempts.map((entry) => entry.attempt.current())).toEqual([false, false, true])
+  expect(third!.attempt.hint).toBe('from the listener')
+  third!.resolve()
+  await time.advance()
+  expect(supervisor.state()).toMatchObject({ phase: 'up', generation: 1 })
+})
+
+test('a listener that answers every state does not keep the supervisor telling it for ever', async () => {
+  const { supervisor, time, attempts } = harness()
+  let heard = 0
+  // Waking an attempt in flight changes nothing it can see, so it is not told again.
+  supervisor.subscribe((state) => {
+    heard += 1
+    if (state.phase === 'connecting') supervisor.wake()
+  })
+  supervisor.start()
+  expect(heard).toBe(1)
+  expect(attempts).toHaveLength(1)
+  // One that moves the state on every time it hears it is cut off, and said so.
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  try {
+    const looping = harness()
+    looping.supervisor.subscribe((state) => {
+      if (state.phase === 'connecting') looping.supervisor.stop('again')
+      else if (state.phase === 'stopped') looping.supervisor.start()
+    })
+    looping.supervisor.start()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(looping.attempts.length).toBeLessThanOrEqual(101)
+  } finally {
+    warn.mockRestore()
+  }
+  await time.advance()
+})
+
+test('a connection an abandoned attempt brings is closed once, however often it is reported', async () => {
+  const { supervisor, time, closed, last } = harness()
+  supervisor.start()
+  const dropped = last()
+  supervisor.stop('Disconnected.')
+  const connection: Conn = { id: 7, alive: true }
+  dropped.attempt.connected(connection)
+  dropped.resolve(connection)
+  await time.advance()
+  expect(closed).toEqual([{ id: 7, reason: expect.stringMatching(/no longer wanted/u) }])
 })
 
 test('a wake pings the connection that is up now, not one an earlier wake pinged', async () => {
