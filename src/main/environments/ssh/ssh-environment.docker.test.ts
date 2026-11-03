@@ -123,7 +123,7 @@ test.skipIf(!DOCKER_TESTS)(
       serverTree: () => ({ dir: tree, digest }),
       nodeBinary: (target) => ensureNodeBinary(target, { cacheDir: CACHE, subject: 'build-box' }),
       onChange: () => changes.push(`${env.summary().state}: ${env.summary().stateText}`),
-      timing: { backoffMs: [200, 500, 1_000] },
+      timing: { backoff: { baseMs: 200, maxMs: 1_000 } },
     })
     try {
       const connection = await env.connect({ interactive: true })

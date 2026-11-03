@@ -87,7 +87,7 @@ function harness(
     nodeBinary: async () => ({ binary: fakeNode }),
     onChange: () => changes.push(`${env.summary().state}: ${env.summary().stateText}`),
     onEnvironmentId: (id) => environmentIds.push(id),
-    timing: { backoffMs: [50, 100, 200], giveUpMs: 60_000, livenessMs: 500 },
+    timing: { backoff: { baseMs: 50, maxMs: 200 }, giveUpMs: 60_000, livenessMs: 500 },
     ...overrides,
   })
   return { env, spawned, changes, environmentIds, settings }
@@ -339,7 +339,7 @@ test('a machine Studio cannot run on is named, and nothing is installed there', 
   assert.match(alpine.env.summary().stateText, /uses musl \(as Alpine does\)/u)
 })
 
-test('a wake tries again: time asleep is not counted, a machine that gave up reconnects, what the person holds stays held', async () => {
+test('a wake tries again: time asleep is not counted, a machine shown Disconnected reconnects, what the person holds stays held', async () => {
   const home = join(scratch, 'woke')
   mkdirSync(home)
   let skew = 0
@@ -348,7 +348,7 @@ test('a wake tries again: time asleep is not counted, a machine that gave up rec
   const machine = harness(home, {
     now: () => Date.now() + skew,
     spawnWith: (interactive) => (refuse ? refusing(interactive) : undefined),
-    timing: { backoffMs: [50, 100, 200], giveUpMs: 2_000, livenessMs: 500 },
+    timing: { backoff: { baseMs: 50, maxMs: 200 }, giveUpMs: 2_000, disconnectedRetryMs: 1_000, livenessMs: 500 },
   })
   await machine.env.connect({ interactive: true })
   const record = JSON.parse(
@@ -367,7 +367,7 @@ test('a wake tries again: time asleep is not counted, a machine that gave up rec
   assert.ok(await until(() => machine.spawned.length > tried + 1, 5_000))
   assert.equal(machine.env.summary().state, 'reconnecting', machine.changes.join('\n'))
 
-  // Ten minutes awake and failing: it gives up, and background callers are told.
+  // Ten minutes awake and failing: it is shown Disconnected, and background callers are told.
   assert.ok(await until(() => machine.env.summary().state === 'disconnected', 10_000))
   await assert.rejects(machine.env.connect({ interactive: false }), /Disconnected from build-box/u)
   // The network comes back: the online check wakes it, and it reconnects on its own.
@@ -375,6 +375,21 @@ test('a wake tries again: time asleep is not counted, a machine that gave up rec
   machine.env.wake()
   assert.ok(await until(() => machine.env.summary().state === 'connected', 30_000), machine.changes.join('\n'))
   assert.equal(machine.spawned.at(-1)!.interactive, false, 'a reconnect after a wake never prompts')
+
+  // Disconnected is not a give-up: with no wake at all, it keeps trying, more
+  // slowly and without its row flickering back to Reconnecting, and comes back.
+  refuse = true
+  machine.spawned.at(-1)!.child.kill()
+  assert.ok(await until(() => machine.env.summary().state === 'disconnected', 10_000), machine.changes.join('\n'))
+  const shownDisconnected = machine.changes.length
+  const triedBefore = machine.spawned.length
+  assert.ok(await until(() => machine.spawned.length > triedBefore, 5_000), 'still tried while Disconnected')
+  refuse = false
+  assert.ok(await until(() => machine.env.summary().state === 'connected', 30_000), machine.changes.join('\n'))
+  assert.ok(
+    machine.changes.slice(shownDisconnected).every((line) => !line.startsWith('reconnecting')),
+    machine.changes.slice(shownDisconnected).join('\n'),
+  )
 
   // The person's Disconnect is not undone by a wake.
   machine.env.disconnect()

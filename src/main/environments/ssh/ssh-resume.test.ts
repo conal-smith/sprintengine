@@ -82,7 +82,7 @@ function machine(home: string, id: string, sessions: SessionProcess[] = []): Ssh
     serverTree: () => ({ dir: tree, digest }),
     nodeBinary: async () => ({ binary: fakeNode }),
     onChange: () => undefined,
-    timing: { backoffMs: [100, 200, 400] },
+    timing: { backoff: { baseMs: 100, maxMs: 400 } },
   })
 }
 
