@@ -72,8 +72,11 @@ The `welcome`'s `grant` is what the connection may do:
 
 - `scopes` — `conversation:read` (list, follow, read), `conversation:operate`
   (every command; implies read) and `conversation:create` (start a chat). Each
-  method's scope is in `STUDIO_METHODS`, and is checked on every request
-  against the grant as it stands then.
+  method's scope is in `STUDIO_METHODS`, beside the `permissions` it needs
+  (`STUDIO_PERMISSIONS`): a grant's scopes are translated to permissions
+  (`STUDIO_SCOPE_PERMISSIONS`) and checked against those on every request,
+  as the grant stands then (`authorizeStudioMethod`). An unknown method is
+  refused.
 - `ceiling` — the loosest permission preset the client's chats may run on. A
   chat it starts, or switches, with a looser preset is lowered to the ceiling,
   and one it starts without a preset is pinned to it. A chat that already runs

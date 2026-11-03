@@ -5,6 +5,7 @@ import {
   STUDIO_PULL_REQUEST_WATCH_CAPABILITY,
   STUDIO_PULL_REQUESTS_CAPABILITY,
 } from './handshake.js'
+import { studioScopeRequires, type StudioPermission } from './permissions.js'
 import type { StudioScope } from './scopes.js'
 
 // The pull requests a Studio's conversations opened. A conversation owns a
@@ -201,6 +202,7 @@ export type StudioPullRequestsTopicMap = {
 
 type MethodSpec = {
   scope: StudioScope
+  permissions: readonly StudioPermission[]
   mutation: false
   capability:
     | typeof STUDIO_PULL_REQUESTS_CAPABILITY
@@ -212,6 +214,7 @@ type MethodSpec = {
 
 const owned: MethodSpec = {
   scope: 'workspaces:read',
+  permissions: studioScopeRequires('workspaces:read'),
   mutation: false,
   capability: STUDIO_PULL_REQUESTS_CAPABILITY,
   owner: true,
@@ -231,6 +234,7 @@ export const STUDIO_PULL_REQUESTS_METHODS: { readonly [M in StudioPullRequestsMe
 export const STUDIO_PULL_REQUESTS_TOPICS: {
   readonly [T in keyof StudioPullRequestsTopicMap]: {
     scope: StudioScope
+    permissions: readonly StudioPermission[]
     capability: typeof STUDIO_PULL_REQUESTS_CAPABILITY
     owner: true
     push: true
@@ -238,6 +242,7 @@ export const STUDIO_PULL_REQUESTS_TOPICS: {
 } = {
   'pullRequests.changed': {
     scope: 'workspaces:read',
+    permissions: studioScopeRequires('workspaces:read'),
     capability: STUDIO_PULL_REQUESTS_CAPABILITY,
     owner: true,
     push: true,

@@ -10,7 +10,7 @@ import {
   type StudioPullRequestsMethod,
   type StudioLocalServersMethod,
   type StudioToolsMethod,
-  studioScopesGrant,
+  authorizeStudioMethod,
   type ConversationCommand,
   type StudioChatMethod,
   type StudioConversationKey,
@@ -957,10 +957,18 @@ export function createStudioRpcRouter(options: StudioRpcRouterOptions): StudioRp
       const started = now()
       let answer: StudioRpcAnswer
       let read: unknown = params
-      if (spec.owner && !grant.owner) {
-        answer = refuse('owner_required', OWNER_ONLY)
-      } else if (spec.scope && !studioScopesGrant(grant.scopes, spec.scope)) {
-        answer = refuse('scope_required', `This app's grant does not include "${spec.scope}".`)
+      // The one decision, from the method's declared permissions and the
+      // grant as it stands; the refusals keep the codes and words they had.
+      const decision = authorizeStudioMethod(grant, method)
+      // A name the table does not hold has no spec to audit by: refused here,
+      // as the connection refuses it before it ever reaches this router.
+      if (!decision.ok && decision.reason === 'unknown_method')
+        return refuse('unknown_method', `No method "${method}".`)
+      if (!decision.ok) {
+        answer =
+          decision.reason === 'owner_required'
+            ? refuse('owner_required', OWNER_ONLY)
+            : refuse('scope_required', `This app's grant does not include "${spec.scope}".`)
       } else {
         const parsed = parseStudioMethodParams(method, params)
         // A mutation's id names one command: the same id for another one is refused.
