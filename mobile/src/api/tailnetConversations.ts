@@ -19,6 +19,11 @@ import {
   type ConversationThread,
 } from "./conversationWire";
 import { readPeerRefusal, type TailnetPeerRefusal } from "./tailnetTransport";
+import {
+  ConnectionSupervisor,
+  connectionRetryDelayMs,
+  type ConnectionAttempt,
+} from "../shared/connection-supervisor/connectionSupervisor";
 import { queuedSendStale, turnEndedSince } from "../features/conversations/queuedSends";
 import {
   conversationImageSource,
@@ -63,8 +68,8 @@ const IDLE_PROBE_MS = 15_000;
 const REVOKED_CLOSE_CODE = 4401;
 const POLICY_CLOSE_CODE = 1008;
 const REVOKED_MESSAGE = "Pairing was revoked.";
-const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_CAP_MS = 30_000;
+/** A stream's redials: from one second, doubling to thirty, the upper half of each wait jittered. */
+const RECONNECT_POLICY = { baseMs: 1_000, maxMs: 30_000, jitter: 0.5 };
 const BUSY_RETRY_MS = 1_000;
 /** Away for this long, the app back in front redials rather than probes the socket it left. */
 const FOREGROUND_REDIAL_MS = 10_000;
@@ -83,13 +88,23 @@ export function conversationReconnectDelay(
   advisedMs?: number,
   random: () => number = Math.random,
 ): number {
-  const ceiling = Math.min(
-    RECONNECT_CAP_MS,
-    RECONNECT_BASE_MS * 2 ** Math.min(Math.max(0, attempt), 5),
+  return Math.max(
+    advisedMs ?? 0,
+    connectionRetryDelayMs(Math.max(0, attempt) + 1, RECONNECT_POLICY, random),
   );
-  const backoff = ceiling / 2 + random() * (ceiling / 2);
-  return Math.round(Math.max(advisedMs ?? 0, backoff));
 }
+
+/** A dial that failed, or a stream that dropped: worth another, no sooner than the desktop asked. */
+class StreamDropped extends Error {
+  readonly advisedMs: number | undefined;
+  constructor(message: string, advisedMs?: number) {
+    super(message);
+    this.advisedMs = advisedMs;
+  }
+}
+
+/** The desktop refused the subscription and said retrying will not help: only `retry()` dials again. */
+class StreamUnavailable extends Error {}
 
 type NativeSocket = new (
   url: string,
@@ -355,17 +370,9 @@ export function createTailnetConversationsApi(input: {
       let closed = false;
       let afterSeq = initialSeq;
       let logGeneration = options?.generation;
-      let attempt = 0;
-      let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
       // The desktop's own retry delay from the latest refusal on this socket,
       // applied to the reconnect that follows its close.
       let advisedRetryMs: number | undefined;
-      // A reconnect the desktop asked to be delayed; foregrounding the app
-      // must not cut it short.
-      let heldByDesktop = false;
-      // The desktop refused the subscription and retrying cannot help, so
-      // nothing redials until the person asks to.
-      let halted = false;
       let sendRetryTimer: ReturnType<typeof setTimeout> | null = null;
       let probeTimer: ReturnType<typeof setTimeout> | null = null;
       let probeRequestId: string | null = null;
@@ -631,7 +638,7 @@ export function createTailnetConversationsApi(input: {
           }
           detach();
           handlers.onState("connecting");
-          reconnect(undefined, true);
+          supervisor.wake({ replace: true });
         }, PROBE_TIMEOUT_MS);
       };
       // Anything the socket says is proof it is there.
@@ -654,31 +661,45 @@ export function createTailnetConversationsApi(input: {
           watchIdle();
         }, IDLE_PROBE_MS);
       };
-      const reconnect = (advisedMs?: number, immediate = false) => {
-        if (closed) return;
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        advisedRetryMs = undefined;
-        heldByDesktop = !immediate && (advisedMs ?? 0) > 0;
-        const wait = immediate
-          ? 0
-          : conversationReconnectDelay(attempt++, advisedMs);
-        reconnectTimer = setTimeout(() => {
-          reconnectTimer = null;
-          heldByDesktop = false;
-          void dial();
-        }, wait);
-      };
       const stop = (
         state: Extract<ConversationConnectionState, "blocked" | "revoked">,
         detail: string,
       ) => {
         closed = true;
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        reconnectTimer = null;
+        supervisor.stop(detail);
         detach();
         handlers.onState(state, detail);
       };
-      const dial = async () => {
+      // One dial, for the supervisor: it is up once the desktop's fence says
+      // the replay is complete (`synchronized`), not when the socket opens, so
+      // a socket that opens and is closed again straight away still backs off.
+      const dial = (attempt: ConnectionAttempt<WebSocket, undefined>) =>
+        new Promise<WebSocket>((resolve, reject) => {
+          let live = false;
+          const dropped = (message: string, advisedMs?: number) => {
+            advisedRetryMs = undefined;
+            const error = new StreamDropped(message, advisedMs);
+            if (live) attempt.lost(error);
+            else reject(error);
+          };
+          const unavailable = (message: string) => {
+            const error = new StreamUnavailable(message);
+            if (live) attempt.lost(error);
+            else reject(error);
+          };
+          void dialOnce(resolve, dropped, unavailable, (socket) => {
+            live = true;
+            // Up from the fence itself, so a close in the same tick is a drop
+            // of a live stream (whose delay a foreground then cannot cut short).
+            attempt.connected(socket);
+          });
+        });
+      const dialOnce = async (
+        resolve: (socket: WebSocket) => void,
+        dropped: (message: string, advisedMs?: number) => void,
+        unavailable: (message: string) => void,
+        synchronizedOn: (socket: WebSocket) => void,
+      ) => {
         if (closed) return;
         const dialing = ++dialGeneration;
         synchronized = false;
@@ -735,7 +756,7 @@ export function createTailnetConversationsApi(input: {
                 // again rather than apply a partial transcript.
                 detach();
                 handlers.onState("offline", "Reloading the conversation…");
-                reconnect();
+                dropped("Part of the replay went missing.");
                 return;
               }
               // A snapshot from another log generation replaces everything
@@ -830,7 +851,8 @@ export function createTailnetConversationsApi(input: {
                 if (staleAfterAbsence(commandId)) park(commandId);
               away.clear();
               synchronized = true;
-              attempt = 0;
+              synchronizedOn(next);
+              resolve(next);
               watchIdle();
               handlers.onState("live");
               flushSend();
@@ -961,10 +983,10 @@ export function createTailnetConversationsApi(input: {
               handlers.onFrame(frame);
               if (frame.retryable) {
                 handlers.onState("offline", frame.message);
-                reconnect(frame.retryAfterMs);
+                dropped(frame.message, frame.retryAfterMs);
               } else {
-                halted = true;
                 handlers.onState("unavailable", frame.message);
+                unavailable(frame.message);
               }
               return;
             }
@@ -1005,7 +1027,7 @@ export function createTailnetConversationsApi(input: {
                 ? "Catching up with the desktop…"
                 : event.reason,
             );
-            reconnect(advised);
+            dropped(event.reason || "The desktop closed the stream.", advised);
           };
           next.onerror = () => {
             /* onclose owns retry */
@@ -1023,14 +1045,40 @@ export function createTailnetConversationsApi(input: {
             stop("blocked", error.message);
             return;
           }
-          handlers.onState(
-            "offline",
-            error instanceof Error ? error.message : "Desktop is unavailable.",
-          );
-          reconnect();
+          const message = error instanceof Error ? error.message : "Desktop is unavailable.";
+          handlers.onState("offline", message);
+          dropped(message);
         }
       };
-      void dial();
+      // When to dial, how long to wait and what coming back to the front does
+      // are the connection supervisor's, as for every reconnecting connection
+      // in the app. The stream keeps what is its own: the replay, the sends it
+      // holds, and the idle probes that tell a silent socket from a dead one.
+      const supervisor = new ConnectionSupervisor<WebSocket>({
+        connect: dial,
+        // The stream's own socket takes its state with it; an older one the
+        // stream already let go of is only closed.
+        close: (stale) => {
+          if (stale === socket) detach();
+          else stale.close();
+        },
+        classify: (error) =>
+          error instanceof StreamUnavailable
+            ? { kind: "fatal" }
+            : { kind: "transient", retryAfterMs: error instanceof StreamDropped ? error.advisedMs : undefined },
+        backoff: RECONNECT_POLICY,
+        // The fence is the stability that matters: a stream that reaches it starts its waits over.
+        stableAfterMs: 0,
+        // The ticket has its own deadline, and a replay may be long.
+        connectTimeoutMs: null,
+        clock: {
+          now,
+          setTimeout: (run, ms) => setTimeout(run, ms),
+          clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+        },
+        random: () => Math.random(),
+      });
+      supervisor.start();
       // Said once the stream is handed back, so a caller that closes on it
       // closes this stream rather than one not yet returned.
       if (staleAtOpen.length)
@@ -1072,7 +1120,7 @@ export function createTailnetConversationsApi(input: {
           return requestId;
         },
         foreground(backgroundMs) {
-          if (closed || halted) return;
+          if (closed || supervisor.state().phase === "failed") return;
           if (
             backgroundMs >= FOREGROUND_REDIAL_MS ||
             !socket ||
@@ -1082,30 +1130,29 @@ export function createTailnetConversationsApi(input: {
             // still young and its turn did not end meanwhile: the redial's
             // replay says which.
             for (const commandId of [...outbox.keys(), ...held.keys()]) away.add(commandId);
-            if (heldByDesktop && reconnectTimer) return;
+            // A wait the desktop asked for is not cut short.
+            const { phase, heldByPeer } = supervisor.state();
+            if (phase === "backoff" && heldByPeer) return;
             // Back in front is a fresh start: a dial that fails now retries
             // in a second, not after the half-minute that failures while the
             // phone was away built up. Those failures said the phone had no
             // network, not that the desktop wanted to be left alone.
-            attempt = 0;
             detach();
             handlers.onState("connecting");
-            reconnect(undefined, true);
+            supervisor.wake({ replace: true });
             return;
           }
           probe();
         },
         retry() {
           if (closed) return;
-          halted = false;
-          attempt = 0;
           detach();
           handlers.onState("connecting");
-          reconnect(undefined, true);
+          supervisor.retryNow();
         },
         close() {
           closed = true;
-          if (reconnectTimer) clearTimeout(reconnectTimer);
+          supervisor.stop("Closed.");
           if (sendRetryTimer) clearTimeout(sendRetryTimer);
           if (heldRetryTimer) clearTimeout(heldRetryTimer);
           if (probeTimer) clearTimeout(probeTimer);
