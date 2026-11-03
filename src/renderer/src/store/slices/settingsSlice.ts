@@ -911,15 +911,22 @@ export interface SettingsSliceState {
   // and the glyph that reads current stays whichever one was showing. Selecting
   // a workspace or starting a chat flips it to `home`.
   sidebarSection: SidebarSection
-  // How the chat rail lists conversations (all-chats-view, 2026-09-07):
-  // `projects` is the folder tree — a header per project over its chats;
-  // `all` is one stream of every chat, newest activity first, with each row
-  // naming the project it belongs to. The stream is what a fresh profile opens
-  // on. Persisted in the settings envelope, so
-  // the rail reopens in the shape the person left it in. App-wide rather than
-  // per window: it is how this person reads their work, not a property of one
-  // window.
+  // How the chat rail lists conversations by default (all-chats-view,
+  // 2026-09-07): `projects` is the folder tree — a header per project over its
+  // chats; `all` is one stream of every chat, newest activity first, with each
+  // row naming the project it belongs to; `status` is that stream with every
+  // chat whose agent is at work folded into a closed Working shelf at its
+  // foot, so the list leads with what is waiting on the person. The stream is
+  // what a fresh profile opens on. Persisted in the settings envelope and set
+  // in Settings ▸ Appearance: it is how this person reads their work, so every
+  // window opens in it.
   chatListView: ChatListView
+  // The shape this window lists chats in when the person has picked one from
+  // the rail's grouping menu, beside New chat (owner request 2026-11-02); null
+  // follows `chatListView`. Per window and transient, like
+  // `activeGlobalSurface`: the menu is for looking at the list another way
+  // for a while, and Settings holds what the list opens in.
+  chatListViewOverride: ChatListView | null
   sidebarCollapsed: boolean
   // User-resizable expanded width of the workspace sidebar, in px. Persisted so
   // the rail reopens at the width the user dragged it to. Only meaningful while
@@ -957,12 +964,25 @@ export interface SettingsSliceState {
 
 export type SidebarSection = 'home' | 'extensions'
 
-// The two shapes the chat rail can take. See `chatListView` above.
-export type ChatListView = 'projects' | 'all'
+// The shapes the chat rail can take. See `chatListView` above.
+export type ChatListView = 'projects' | 'status' | 'all'
+
+export function isChatListView(value: unknown): value is ChatListView {
+  return value === 'projects' || value === 'status' || value === 'all'
+}
+
+/** The shape this window's rail lists chats in: its own pick, else the default. */
+export function selectChatListView(state: {
+  chatListView: ChatListView
+  chatListViewOverride: ChatListView | null
+}): ChatListView {
+  return state.chatListViewOverride ?? state.chatListView
+}
 
 export interface SettingsSliceActions {
   setSidebarSection: (section: SidebarSection) => void
   setChatListView: (view: ChatListView) => void
+  setChatListViewOverride: (view: ChatListView | null) => void
   setSidebarCollapsed: (collapsed: boolean) => void
   setSidebarWidth: (width: number) => void
   setWorkspacePaneWidth: (width: number) => void
@@ -1202,6 +1222,7 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
     activeModalSurfaceWorkspaceId: null,
     sidebarSection: 'home',
     chatListView: 'all',
+    chatListViewOverride: null,
     sidebarCollapsed: false,
     sidebarWidth: SIDEBAR_DEFAULT_WIDTH,
     workspacePaneWidth: WORKSPACE_ASIDE_DEFAULT_WIDTH,
@@ -1217,9 +1238,18 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.sidebarSection = section
       }),
 
+    // Choosing a default is also choosing it here: the window that Settings
+    // is open in shows the shape just picked, not an older pick of its own.
     setChatListView: (view) =>
       set((state) => {
         state.chatListView = view
+        state.chatListViewOverride = null
+      }),
+
+    // Picking the default from the rail's menu is following it again.
+    setChatListViewOverride: (view) =>
+      set((state) => {
+        state.chatListViewOverride = view === state.chatListView ? null : view
       }),
 
     setSidebarCollapsed: (collapsed) =>

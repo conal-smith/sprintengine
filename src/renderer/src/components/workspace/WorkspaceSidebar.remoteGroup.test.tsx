@@ -216,7 +216,7 @@ test('WorkspaceSidebar.remoteGroup', async () => {
       })
     }
 
-    const headers = [...container.querySelectorAll('button[aria-expanded]')]
+    const headers = [...container.querySelectorAll('[role="tree"] button[aria-expanded]')]
     const headerText = headers.map((header) => header.textContent?.trim() ?? '')
     assert.deepEqual(
       headerText,

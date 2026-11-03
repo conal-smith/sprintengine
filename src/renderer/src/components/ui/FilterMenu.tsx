@@ -33,11 +33,17 @@ type FilterMenuProps = {
   ariaLabel: string
   groups: ReadonlyArray<FilterMenuGroup>
   className?: string
+  // `sm`, the default, is a panel toolbar's glyph. `md` is the icon button's
+  // `md` step, for a trigger that stands in a row of `md` icon buttons (the
+  // chat rail's, beside New chat) and has to read as one of them.
+  size?: 'sm' | 'md'
 }
+
+const TRIGGER_BOX = { sm: 'h-6 w-6', md: 'size-control-sm' } as const
 
 const OPTION_SELECTOR = '[data-filter-option="true"]'
 
-export function FilterMenu({ ariaLabel, groups, className }: FilterMenuProps): JSX.Element {
+export function FilterMenu({ ariaLabel, groups, className, size = 'sm' }: FilterMenuProps): JSX.Element {
   const [open, setOpen] = useState(false)
   const surfaceRef = useRef<HTMLElement | null>(null)
 
@@ -98,7 +104,8 @@ export function FilterMenu({ ariaLabel, groups, className }: FilterMenuProps): J
           aria-label={active ? `${ariaLabel} — filters active` : ariaLabel}
           onClick={togglePopover}
           className={[
-            'interactive relative inline-flex h-6 w-6 items-center justify-center rounded-sm',
+            'interactive relative inline-flex items-center justify-center rounded-sm',
+            TRIGGER_BOX[size],
             FOCUS_RING_CLASS,
             opened || active
               ? 'text-[color:var(--accent-primary)]'
