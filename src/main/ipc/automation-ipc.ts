@@ -11,6 +11,7 @@ import {
   TAILNET_REVOKE_DEVICE_CHANNEL,
   TAILNET_SET_ENABLED_CHANNEL,
   TAILNET_UPDATE_DEVICE_SCOPES_CHANNEL,
+  TAILNET_SET_HTTPS_CHANNEL,
 } from '../../shared/tailnet'
 import { TAILNET_FORGET_MACHINE_CHANNEL } from '../../shared/tailnet-mesh'
 import { TAILNET_LIST_PEERS_CHANNEL } from '../../shared/tailnet-peers'
@@ -71,6 +72,10 @@ export function registerAutomationIpc(ipcMain: IpcMain, service: AutomationServi
   ipcMain.handle(TAILNET_UPDATE_DEVICE_SCOPES_CHANNEL, (_event, deviceId: unknown, scopes: unknown) =>
     service.updateTailnetDeviceScopes(typeof deviceId === 'string' ? deviceId : '', scopes),
   )
+  // Publishing the listener over HTTPS rewrites this machine's Tailscale
+  // Serve configuration, which outlives the app: the person's decision, on
+  // this door alone.
+  ipcMain.handle(TAILNET_SET_HTTPS_CHANNEL, (_event, enabled: unknown) => service.setTailnetHttps(enabled === true))
   // Both halves of one pairing, ended together: the device that machine holds
   // here, and the credential this machine holds there. Either may be absent.
   ipcMain.handle(TAILNET_FORGET_MACHINE_CHANNEL, (_event, input: unknown) => {

@@ -253,6 +253,7 @@ test('tailnet-pairing-roundtrip', async () => {
         'approval-rules',
         'scheduled-agents',
         'scheduled-agents-edit',
+        'mcp-oauth',
       ])
 
       // The pairing is real only if the token it produced actually drives tools.
@@ -445,6 +446,7 @@ test('tailnet-pairing-roundtrip', async () => {
         'approval-rules',
         'scheduled-agents',
         'scheduled-agents-edit',
+        'mcp-oauth',
       ])
 
       const scanned = parsePairingUrl(harness.service.offerPairing().pairingUrl ?? '')

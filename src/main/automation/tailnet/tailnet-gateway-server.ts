@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Duplex } from 'stream'
 import { pipeline } from 'stream/promises'
 
-import { SUPPORTED_MCP_PROTOCOL_VERSIONS } from '../../../shared/mcp/protocol'
+import { isSupportedMcpProtocolVersion, SUPPORTED_MCP_PROTOCOL_VERSIONS } from '../../../shared/mcp/protocol'
 import { STUDIO_MCP_SERVER_NAME } from '../../../shared/product-identity'
 import {
   toolError,
@@ -48,6 +48,14 @@ import {
   TAILNET_UPLOAD_PATH,
   TAILNET_WS_TICKET_PATH,
 } from './tailnet-routes'
+import type { TailnetOAuthStore } from './tailnet-oauth'
+import {
+  createTailnetOAuthHttp,
+  type TailnetListenerKind,
+  type TailnetOAuthHttp,
+  type TailnetPublicOrigins,
+} from './tailnet-oauth-http'
+import { isTailnetAddress } from './tailnet-interface'
 import { openConversationImage } from './tailnet-conversation-images'
 import { CONVERSATION_MAX_FILE_SEARCH_QUERY_CHARS } from '../../../../packages/conversation-protocol/src/public'
 import {
@@ -106,12 +114,29 @@ import {
 // which asks whois who is calling and refuses a token presented from any other
 // node. The threat model is on `verifyPeer` in `tailnet-devices.ts`.
 //
-// The transport is deliberately NOT spec Streamable HTTP. It is a small,
-// explicit surface: one JSON-in/JSON-out MCP endpoint, plus WebSockets for
-// clients that need a persistent channel — the RPC stream (tool-list
-// notifications, connection-scoped identity), the change feed, and the
-// conversation socket. No SSE, no session resumption — those are
-// advertised nowhere, so nothing can quietly depend on a half version.
+// The MCP endpoint is Streamable HTTP as a stock MCP client expects it: one
+// JSON-RPC message per POST, answered with one JSON object (which the
+// transport allows for every request), 202 with no body for a notification, a
+// session minted on `initialize` for a client of the revisions that keep one,
+// and 405 for the GET stream and DELETE this server does not offer. Beside it,
+// WebSockets for clients that need a persistent channel — the RPC stream
+// (tool-list notifications, connection-scoped identity), the change feed, and
+// the conversation socket. No SSE and no resumption: they are advertised
+// nowhere, so nothing can quietly depend on a half version.
+//
+// An outside MCP client that has not paired can sign in with OAuth instead
+// (`tailnet-oauth-http.ts`): the 401 names where to start, the person
+// approves it in the Studio window, and its access tokens open the MCP
+// endpoint and nothing else.
+//
+// With HTTPS on, the same handlers also answer on a loopback listener that
+// Tailscale Serve proxies to from https://<node>.<tailnet>.ts.net. Serve sets
+// `X-Forwarded-For` to the tailnet address of the node that connected
+// (replacing any the client sent), and that is the peer on that listener and
+// only there: on the tailnet listener the socket's own address is the peer, as
+// it always was. A process on this machine can reach loopback and write that
+// header itself; it can reach the tailnet address too, so the line between a
+// stranger and this machine's own processes is where it was.
 
 export {
   TAILNET_HEALTH_PATH,
@@ -195,6 +220,17 @@ export type TailnetGatewayServerOptions = {
   log?: (message: string) => void
   /** The change feed's per-kind push floor; tests shorten it. */
   changePushIntervalMs?: number
+  /**
+   * OAuth sign-in for the MCP endpoint (`tailnet-oauth.ts`). Absent, the
+   * endpoint takes paired device tokens only, as it always did.
+   */
+  oauth?: { store: TailnetOAuthStore }
+  /**
+   * The origins this Studio answers to, read per request: the tailnet address
+   * and its MagicDNS names, and the HTTPS origin Tailscale Serve publishes.
+   * Absent, the bound tailnet address alone.
+   */
+  publicOrigins?: () => TailnetPublicOrigins
 }
 
 type TailnetGatewayPeer = { peerNode: string | null; peerAddress: string }
@@ -210,6 +246,14 @@ export type TailnetGatewayServer = {
   isRunning(): boolean
   /** The address actually bound, or null while stopped. */
   address(): { address: string; port: number } | null
+  /**
+   * Also listen on 127.0.0.1 (an ephemeral port) for Tailscale Serve to put
+   * HTTPS in front of; answers the port. Only while the tailnet listener runs.
+   */
+  openServeListener(): Promise<number>
+  closeServeListener(): Promise<void>
+  /** The loopback listener Tailscale Serve proxies to, while it is up. */
+  serveAddress(): { address: string; port: number } | null
   notifyToolsListChanged(): void
   /**
    * Tell every device on the change feed that this machine's workspace list
@@ -259,6 +303,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
   const uploadCeiling = options.downscaleUpload ? MAX_DOWNSCALED_UPLOAD_BYTES : MAX_ATTACHMENT_BYTES
   const now = options.now ?? (() => Date.now())
   let server: Server | null = null
+  let serveServer: Server | null = null
   let unsubscribeRevocations: (() => void) | null = null
   const streams = new Set<StreamSession>()
   const conversationStreams = new Set<TailnetConversationStream>()
@@ -271,6 +316,30 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
   const conversationResyncDelay = createResyncBackoff(now)
   const eventStreams = new Set<EventStream>()
   const tickets = new Map<string, { deviceId: string; expiresAtMs: number }>()
+  // Streamable HTTP sessions of the revisions that keep one (2025-03-26 to
+  // 2025-11-25), minted on `initialize`. A session holds one connection
+  // context, so a client's `notifications/cancelled` finds the call it names;
+  // it is a device's and no other's.
+  const mcpSessions = new Map<string, { deviceId: string; context: McpConnectionContext; lastUsedAt: number }>()
+
+  function boundOrigins(): TailnetPublicOrigins {
+    const bound = server?.address()
+    if (!bound || typeof bound !== 'object') return { tailnet: [], serve: null }
+    const host = bound.address.includes(':') ? `[${bound.address}]` : bound.address
+    return { tailnet: [`http://${host}:${bound.port}`], serve: null }
+  }
+
+  const oauthHttp: TailnetOAuthHttp | null = options.oauth
+    ? createTailnetOAuthHttp({
+        store: options.oauth.store,
+        devices: options.devices,
+        origins: options.publicOrigins ?? boundOrigins,
+        onPairRequested: () => options.onPairRequested?.(),
+        onToolCall: options.onToolCall,
+        now,
+        log: options.log,
+      })
+    : null
 
   // ── The change feed ───────────────────────────────────────────────────────
   // A revision per kind, so a watcher that reconnects can see it missed
@@ -385,32 +454,8 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         `Refusing to bind the tailnet gateway to ${options.bindAddress || '(empty)'}: only a Tailscale address (100.64.0.0/10 or fd7a:115c:a1e0::/48) or loopback is allowed.`,
       )
     }
-    const next = createServer((request, response) => {
-      void handleRequest(request, response).catch((error) => {
-        options.log?.(`tailnet gateway request failed: ${message(error)}`)
-        writeJson(response, 500, { error: { code: 'internal_error', message: 'The request could not be completed.' } })
-      })
-    })
-    next.on('upgrade', (request, socket, head) => {
-      void handleUpgrade(request, socket, head).catch((error) => {
-        options.log?.(`tailnet gateway upgrade failed: ${message(error)}`)
-        rejectUpgrade(socket, 500, 'internal_error')
-      })
-    })
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => {
-        next.removeListener('listening', onListening)
-        reject(error)
-      }
-      const onListening = () => {
-        next.removeListener('error', onError)
-        resolve()
-      }
-      next.once('error', onError)
-      next.once('listening', onListening)
-      next.listen(options.port, options.bindAddress)
-    })
-    next.on('error', (error) => options.log?.(`tailnet gateway server error: ${error.message}`))
+    const next = createListener('tailnet')
+    await listen(next, options.port, options.bindAddress)
     // Revocation must reach a device that is already mid-stream, not just its
     // next request: a live WebSocket would otherwise keep serving a device the
     // user just removed.
@@ -437,10 +482,67 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     server = next
   }
 
+  function createListener(via: TailnetListenerKind): Server {
+    const next = createServer((request, response) => {
+      void handleRequest(request, response, via).catch((error) => {
+        options.log?.(`tailnet gateway request failed: ${message(error)}`)
+        writeJson(response, 500, { error: { code: 'internal_error', message: 'The request could not be completed.' } })
+      })
+    })
+    next.on('upgrade', (request, socket, head) => {
+      void handleUpgrade(request, socket, head, via).catch((error) => {
+        options.log?.(`tailnet gateway upgrade failed: ${message(error)}`)
+        rejectUpgrade(socket, 500, 'internal_error')
+      })
+    })
+    return next
+  }
+
+  async function listen(next: Server, port: number, host: string): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        next.removeListener('listening', onListening)
+        reject(error)
+      }
+      const onListening = () => {
+        next.removeListener('error', onError)
+        resolve()
+      }
+      next.once('error', onError)
+      next.once('listening', onListening)
+      next.listen(port, host)
+    })
+    next.on('error', (error) => options.log?.(`tailnet gateway server error: ${error.message}`))
+  }
+
+  async function openServeListener(): Promise<number> {
+    if (!server) throw new Error('The tailnet listener is not running.')
+    const bound = serveServer?.address()
+    if (bound && typeof bound === 'object') return bound.port
+    const behindServe = createListener('serve')
+    await listen(behindServe, 0, '127.0.0.1')
+    serveServer = behindServe
+    const address = behindServe.address()
+    return address && typeof address === 'object' ? address.port : 0
+  }
+
+  async function closeServeListener(): Promise<void> {
+    const current = serveServer
+    serveServer = null
+    if (!current) return
+    await new Promise<void>((resolve) => {
+      current.close(() => resolve())
+      current.closeIdleConnections?.()
+    })
+  }
+
   async function stop(): Promise<void> {
     const current = server
     if (!current) return
     server = null
+    const behindServe = serveServer
+    serveServer = null
+    mcpSessions.clear()
     unsubscribeRevocations?.()
     unsubscribeRevocations = null
     tickets.clear()
@@ -463,7 +565,16 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       stream.socket.destroy()
     }
     eventStreams.clear()
-    await new Promise<void>((resolve) => current.close(() => resolve()))
+    await Promise.all(
+      [current, behindServe].map((listener) =>
+        listener
+          ? new Promise<void>((resolve) => {
+              listener.close(() => resolve())
+              listener.closeIdleConnections?.()
+            })
+          : Promise.resolve(),
+      ),
+    )
     if (conversationUploadDirectory) {
       const directory = await conversationUploadDirectory.catch(() => null)
       conversationUploadDirectory = null
@@ -849,7 +960,11 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     response.end(found.bytes)
   }
 
-  async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function handleRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    via: TailnetListenerKind,
+  ): Promise<void> {
     // Any `Origin` means a browser made this request. No client of this
     // transport is a browser, and a page on a tailnet machine must not be able
     // to drive the gateway through a user's browser (DNS-rebinding class).
@@ -865,6 +980,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
     const path = pathOf(request.url)
     const method = request.method ?? 'GET'
+    const peerAddress = peerAddressOf(request, via)
 
     if (method === 'GET' && path === TAILNET_HEALTH_PATH) {
       // Unauthenticated on purpose: peer discovery probes it to learn
@@ -880,6 +996,19 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       return
     }
 
+    // OAuth's discovery documents, registration, sign-in page and token
+    // endpoint: before the auth gate, since they are how a client without a
+    // credential gets one.
+    if (
+      oauthHttp &&
+      (await oauthHttp.handle(request, response, {
+        via,
+        peerAddress,
+        identify: () => options.peers.identify(peerAddress),
+      }))
+    )
+      return
+
     if (method === 'POST' && path === TAILNET_PAIR_PATH) {
       const body = await readJsonBody(request, response, MAX_CONTROL_BODY_BYTES)
       if (body === undefined) return
@@ -887,7 +1016,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         token: isRecord(body) ? body.pairingToken : undefined,
         deviceName: isRecord(body) ? body.deviceName : undefined,
         // The node redeeming the code is the one the new token is bound to.
-        peer: await options.peers.identify(normalizeAddress(request.socket.remoteAddress)),
+        peer: await options.peers.identify(peerAddress),
       })
       if (!outcome.ok) {
         // 401 for a bad or missing credential, 400 for a malformed request:
@@ -910,34 +1039,49 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
 
     if (path === TAILNET_PAIR_REQUEST_PATH && (method === 'POST' || method === 'GET')) {
-      await handlePairRequest(request, response, method)
+      await handlePairRequest(request, response, method, peerAddress)
       return
     }
     if (path === TAILNET_PAIR_COLLECT_PATH && method === 'POST') {
-      await handlePairCollect(request, response)
+      await handlePairCollect(request, response, peerAddress)
       return
     }
 
-    const device = authenticate(request)
-    if (!device) {
-      writeUnauthorized(response)
+    // The MCP endpoint offers no GET stream and no session teardown, which
+    // Streamable HTTP has a server without them answer with 405. Before the
+    // auth gate: nothing is served by either, so there is nothing to protect.
+    if (path === TAILNET_MCP_PATH && method !== 'POST') {
+      response.setHeader('Allow', 'POST')
+      writeJson(response, 405, {
+        error: {
+          code: 'method_not_allowed',
+          message: 'This MCP endpoint takes one JSON-RPC message per POST and opens no event stream.',
+        },
+      })
       return
     }
-    // Every route below — identity, upload, conversation-image, the composer's
-    // reads, ws-ticket and the MCP endpoint — is behind this one check, so
-    // none can skip it.
-    const admitted = await admitPeer(device, request.socket.remoteAddress, path)
-    if (!admitted.ok) {
-      writePeerRefused(response, admitted)
-      return
-    }
-    const { peerNode, peerAddress } = admitted
-    options.devices.recordSeen(device.id, peerNode)
-    options.onActivity?.({ kind: 'request', device, peerNode, peerAddress })
+
     // Every route a token opens is matched, judged and run from one table:
     // a path that is no route is not found, before any handler, and a route
     // is run only by the handler of the route that was judged.
     const route = tailnetDeviceRouteOf(method, path, request.url)
+    const caller = authenticate(request, route)
+    if (!caller.ok) {
+      writeUnauthorized(response, unauthorizedOrigin(request, via), caller)
+      return
+    }
+    const device = caller.device
+    // Every route below — identity, upload, conversation-image, the composer's
+    // reads, ws-ticket and the MCP endpoint — is behind this one check, so
+    // none can skip it.
+    const admitted = await admitPeer(device, peerAddress, path)
+    if (!admitted.ok) {
+      writePeerRefused(response, unauthorizedOrigin(request, via), admitted)
+      return
+    }
+    const { peerNode } = admitted
+    options.devices.recordSeen(device.id, peerNode)
+    options.onActivity?.({ kind: 'request', device, peerNode, peerAddress })
     if (!route) {
       writeJson(response, 404, {
         error: { code: 'not_found', message: `No tailnet gateway route for ${method} ${path}.` },
@@ -1021,14 +1165,81 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         })
         return
       }
-      const answer = await handleMessage(
-        body,
-        contextFor(device, peerNode),
-        device,
-        headerOf(request, 'mcp-protocol-version'),
-      )
-      // A notification has no answer; 202 says "accepted, nothing to return".
-      if (!answer) writeJson(response, 202, {})
+      if (Array.isArray(body)) {
+        writeJson(
+          response,
+          400,
+          jsonRpcErrorResponse(
+            null,
+            JSONRPC_INVALID_REQUEST,
+            'Batched JSON-RPC is not taken; send one message per POST.',
+          ),
+        )
+        return
+      }
+      // A JSON-RPC response from the client — revisions before 2026-07-28 let a
+      // server send requests, and a client answers them here. This server
+      // sends none, so there is nothing to match it to; it is accepted, as the
+      // transport says a response the server takes is.
+      if (
+        isRecord(body) &&
+        body.jsonrpc === '2.0' &&
+        body.method === undefined &&
+        ('result' in body || 'error' in body)
+      ) {
+        writeAccepted(response)
+        return
+      }
+      // The headers a 2026-07-28 client mirrors from the body, and the version
+      // it declares: an intermediary may have routed on the header, so one that
+      // disagrees with the body is refused rather than one of them believed.
+      const mismatch = headerMismatch(request, body)
+      if (mismatch) {
+        writeJson(response, 400, jsonRpcErrorResponse(jsonRpcIdOf(body), JSONRPC_HEADER_MISMATCH, mismatch))
+        return
+      }
+      const versionHeader = headerOf(request, 'mcp-protocol-version')?.trim() ?? ''
+      const requestedVersion = versionHeader.slice(0, 64)
+      if (versionHeader && !isSupportedMcpProtocolVersion(versionHeader)) {
+        writeJson(response, 400, {
+          jsonrpc: '2.0',
+          id: jsonRpcIdOf(body),
+          error: {
+            code: JSONRPC_INVALID_PARAMS,
+            message: unsupportedProtocolVersionMessage(requestedVersion),
+            data: { supported: [...SUPPORTED_MCP_PROTOCOL_VERSIONS], requested: requestedVersion },
+          },
+        })
+        return
+      }
+      const sessionId = headerOf(request, 'mcp-session-id')?.trim() ?? ''
+      let context: McpConnectionContext
+      if (sessionId) {
+        const session = mcpSessions.get(sessionId)
+        // Unknown, lapsed, or another device's: 404 tells a client of those
+        // revisions to initialize again, which is all it needs to do.
+        if (!session || session.deviceId !== device.id) {
+          writeJson(
+            response,
+            404,
+            jsonRpcErrorResponse(jsonRpcIdOf(body), JSONRPC_SESSION_NOT_FOUND, 'Session not found. Initialize again.'),
+          )
+          return
+        }
+        session.lastUsedAt = now()
+        context = session.context
+      } else {
+        context = contextFor(device, peerNode)
+        if (isRecord(body) && body.method === 'initialize' && 'id' in body) {
+          pruneSessions()
+          const minted = randomBytes(24).toString('base64url')
+          mcpSessions.set(minted, { deviceId: device.id, context, lastUsedAt: now() })
+          response.setHeader('Mcp-Session-Id', minted)
+        }
+      }
+      const answer = await handleMessage(body, context, device, versionHeader || null, jsonRpcIdOf(body))
+      // A notification has no answer; 202 with no body says "accepted".
+      if (!answer) writeAccepted(response)
       else writeJson(response, 200, answer)
     },
   }
@@ -1043,13 +1254,18 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
    * records is the one this transport established — `whois` on the socket's own
    * address — never anything the body claimed.
    */
-  async function handlePairRequest(request: IncomingMessage, response: ServerResponse, method: string): Promise<void> {
+  async function handlePairRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+    method: string,
+    peerAddress: string,
+  ): Promise<void> {
     if (method === 'GET') {
       const query = parseUrl(request.url ?? '').searchParams
       const outcome = options.devices.collectPairRequest(
         query.get('id') ?? '',
         query.get('secret') ?? '',
-        await options.peers.identify(normalizeAddress(request.socket.remoteAddress)),
+        await options.peers.identify(peerAddress),
       )
       // Every outcome is a 200: "your request was declined" and "it lapsed" are
       // answers to a well-formed question, not failures of it. The client
@@ -1060,7 +1276,6 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
 
     const body = await readJsonBody(request, response, MAX_CONTROL_BODY_BYTES)
     if (body === undefined) return
-    const peerAddress = normalizeAddress(request.socket.remoteAddress)
     const peer = await options.peers.identify(peerAddress)
     const outcome = options.devices.requestPairing({
       deviceName: isRecord(body) ? body.deviceName : undefined,
@@ -1118,11 +1333,14 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
    * calling from. Anything else about the grant is refused silently: the
    * pairing the person approved still completes; the extra half does not.
    */
-  async function handlePairCollect(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  async function handlePairCollect(
+    request: IncomingMessage,
+    response: ServerResponse,
+    peerAddress: string,
+  ): Promise<void> {
     const body = await readJsonBody(request, response, MAX_CONTROL_BODY_BYTES)
     if (body === undefined) return
     const record = isRecord(body) ? body : {}
-    const peerAddress = normalizeAddress(request.socket.remoteAddress)
     const outcome = options.devices.collectPairRequest(
       typeof record.id === 'string' ? record.id : '',
       typeof record.secret === 'string' ? record.secret : '',
@@ -1151,6 +1369,8 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     context: McpConnectionContext,
     device: TailnetDevice,
     protocolHeader: string | null,
+    /** The request's id on the HTTP endpoint, so a session's `notifications/cancelled` can find the call. */
+    requestId?: string | number | null,
   ): Promise<Record<string, unknown> | null> {
     if (!isRecord(parsed) || parsed.jsonrpc !== '2.0' || typeof parsed.method !== 'string') {
       return jsonRpcErrorResponse(
@@ -1172,7 +1392,13 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       return jsonRpcErrorResponse(id, JSONRPC_INVALID_PARAMS, detail)
     }
     try {
-      const outcome = await dispatcher.dispatch(parsed.method, params, context, gateFor(device))
+      const outcome = await dispatcher.dispatch(
+        parsed.method,
+        params,
+        context,
+        gateFor(device),
+        requestId === undefined ? undefined : { requestId },
+      )
       if (isNotification) return null
       if (outcome.kind === 'no_response') return { jsonrpc: '2.0', id, result: {} }
       if (outcome.kind === 'error') return jsonRpcErrorResponse(id, outcome.code, outcome.errorMessage)
@@ -1221,10 +1447,66 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     }
   }
 
-  function authenticate(request: IncomingMessage): TailnetDevice | null {
-    const header = headerOf(request, 'authorization') ?? ''
-    const prefix = 'Bearer '
-    return header.startsWith(prefix) ? options.devices.authenticate(header.slice(prefix.length).trim()) : null
+  function pruneSessions(): void {
+    const cutoff = now() - MCP_SESSION_IDLE_MS
+    for (const [id, session] of mcpSessions) if (session.lastUsedAt < cutoff) mcpSessions.delete(id)
+    while (mcpSessions.size >= MAX_MCP_SESSIONS) mcpSessions.delete(mcpSessions.keys().next().value!)
+  }
+
+  /**
+   * Who a request's bearer token belongs to: a paired device by its device
+   * token, or an OAuth client's device by an access token its grant issued.
+   *
+   * An access token is for the MCP endpoint and nothing else — it is issued
+   * for that resource (RFC 8707), and every other route here is the paired
+   * apps' — and only while the resource it names is still one of this
+   * Studio's own. Its device is read live, so a revoked grant stops here.
+   */
+  function authenticate(request: IncomingMessage, route: TailnetHttpRoute | null): Authentication {
+    const token = bearerOf(request)
+    if (!token) return { ok: false, presented: false }
+    if (looksLikePairingSecret(token)) {
+      return { ok: false, presented: true, code: 'pairing_code_not_a_token', message: PAIRING_CODE_AS_BEARER_MESSAGE }
+    }
+    if (token.startsWith(OAUTH_ACCESS_TOKEN_PREFIX)) {
+      const check = options.oauth?.store.authenticateAccessToken(token)
+      if (!check?.ok) {
+        return check?.reason === 'expired'
+          ? {
+              ok: false,
+              presented: true,
+              code: 'token_expired',
+              message: 'The access token has expired. Refresh it, or sign in again.',
+            }
+          : { ok: false, presented: true }
+      }
+      if (route !== 'mcp') {
+        return {
+          ok: false,
+          presented: true,
+          code: 'wrong_resource',
+          message: `An OAuth access token opens the MCP endpoint (POST ${TAILNET_MCP_PATH}) only.`,
+        }
+      }
+      if (!oauthHttp?.resources().has(check.resource)) {
+        return {
+          ok: false,
+          presented: true,
+          code: 'wrong_resource',
+          message: 'That access token was issued for an address this Studio no longer answers to. Sign in again.',
+        }
+      }
+      const device = options.devices.listDevices().find((entry) => entry.id === check.deviceId)
+      return device ? { ok: true, device } : { ok: false, presented: true }
+    }
+    const device = options.devices.authenticate(token)
+    return device ? { ok: true, device } : { ok: false, presented: true }
+  }
+
+  /** The origin a 401 names for discovery: the one the client used when it is ours, else the listener's own. */
+  function unauthorizedOrigin(request: IncomingMessage, via: TailnetListenerKind): string | null {
+    if (!oauthHttp) return null
+    return oauthHttp.originFor(request, via) ?? oauthHttp.primaryOrigin(via)
   }
 
   /**
@@ -1242,10 +1524,9 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
    */
   async function admitPeer(
     device: TailnetDevice,
-    remoteAddress: string | undefined,
+    peerAddress: string,
     route: string,
   ): Promise<({ ok: true } & TailnetGatewayPeer) | Extract<TailnetPeerCheck, { ok: false }>> {
-    const peerAddress = normalizeAddress(remoteAddress)
     const peer = await options.peers.identify(peerAddress)
     // Read after the await: a device revoked while whois ran is refused here.
     const check = options.devices.verifyPeer(device.id, peer)
@@ -1264,7 +1545,12 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     return check
   }
 
-  async function handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+  async function handleUpgrade(
+    request: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    via: TailnetListenerKind,
+  ): Promise<void> {
     if (request.headers.origin) return rejectUpgrade(socket, 403, 'origin_not_allowed')
     const path = pathOf(request.url)
     const route = tailnetUpgradeRouteOf(path)
@@ -1281,7 +1567,11 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     if (!device) return rejectUpgrade(socket, 401, 'unauthorized')
     // The ticket was minted behind `admitPeer`, but it rides in a URL; the
     // socket presenting it is held to the device's node all the same.
-    const admitted = await admitPeer(device, remoteAddressOf(socket), path)
+    const admitted = await admitPeer(
+      device,
+      via === 'serve' ? forwardedPeerAddress(request) : normalizeAddress(remoteAddressOf(socket)),
+      path,
+    )
     if (!admitted.ok) return rejectUpgrade(socket, 401, admitted.code)
     const { peerNode, peerAddress } = admitted
     // What the socket needs, judged as every HTTP route is. The conversation
@@ -1476,6 +1766,7 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
         closeEventStream(stream, WEBSOCKET_CLOSE_REVOKED, 'This device has been revoked.')
     }
     for (const [ticket, entry] of tickets) if (entry.deviceId === deviceId) tickets.delete(ticket)
+    for (const [id, session] of mcpSessions) if (session.deviceId === deviceId) mcpSessions.delete(id)
   }
 
   /**
@@ -1572,6 +1863,12 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
       const bound = server?.address()
       return bound && typeof bound === 'object' ? { address: bound.address, port: bound.port } : null
     },
+    openServeListener,
+    closeServeListener,
+    serveAddress: () => {
+      const bound = serveServer?.address()
+      return bound && typeof bound === 'object' ? { address: bound.address, port: bound.port } : null
+    },
     notifyToolsListChanged: () => {
       for (const stream of streams) sendStream(stream, { jsonrpc: '2.0', method: 'notifications/tools/list_changed' })
     },
@@ -1614,20 +1911,146 @@ function readReverseGrant(value: Record<string, unknown>, peerAddress: string): 
   }
 }
 
-function writeUnauthorized(response: ServerResponse): void {
-  response.setHeader('WWW-Authenticate', 'Bearer realm="sprintengine-studio-tailnet"')
+type Authentication =
+  { ok: true; device: TailnetDevice } | { ok: false; presented: boolean; code?: string; message?: string }
+
+const OAUTH_ACCESS_TOKEN_PREFIX = 'mcat_'
+const MCP_SESSION_IDLE_MS = 60 * 60_000
+const MAX_MCP_SESSIONS = 256
+/** Streamable HTTP's HeaderMismatch (2026-07-28). */
+const JSONRPC_HEADER_MISMATCH = -32020
+/** The SDKs' "session not found" for a session id the server does not hold. */
+const JSONRPC_SESSION_NOT_FOUND = -32001
+
+const UNAUTHORIZED_MESSAGE =
+  'A paired device token or an OAuth access token is required. An MCP client that signs in with OAuth finds how ' +
+  'from resource_metadata in WWW-Authenticate, and the person at this Studio approves it there. Anything else pairs ' +
+  'in Settings → Remote.'
+
+/**
+ * Said to a client that sent a pairing code (or the whole pairing link) where
+ * a token goes: the code is redeemed once for a device token, never presented.
+ */
+const PAIRING_CODE_AS_BEARER_MESSAGE =
+  'That is a pairing code, not a token. Redeem it once: POST /tailnet/v1/pair with {"pairingToken": "<the code>", ' +
+  '"deviceName": "<a name>"} answers with a deviceToken, which is what goes after "Bearer". An MCP client that signs in ' +
+  "with OAuth needs no code at all: give it this endpoint's URL, and approve it in Studio when it asks. Do not paste " +
+  'a pairing code anywhere else; anyone holding it can pair once.'
+
+function looksLikePairingSecret(token: string): boolean {
+  return token.startsWith('mcpair_') || token.startsWith('sprintengine-tailnet:') || token.includes('pairingToken=')
+}
+
+/**
+ * The challenge every 401 here carries: the realm it always had, and the
+ * protected resource metadata an OAuth client discovers sign-in from (RFC
+ * 9728 5.1). `error="invalid_token"` when a token was presented and refused,
+ * so a client with one knows to refresh or sign in again (RFC 6750 3.1).
+ */
+function challengeFor(origin: string | null, refusal?: { presented: boolean; message?: string }): string {
+  const parts = ['Bearer realm="sprintengine-studio-tailnet"']
+  if (origin) parts.push(`resource_metadata="${origin}/.well-known/oauth-protected-resource${TAILNET_MCP_PATH}"`)
+  if (refusal?.presented) {
+    parts.push('error="invalid_token"')
+    // A header value is visible ASCII: the description is the message with
+    // anything else dropped (the body carries it whole).
+    if (refusal.message)
+      parts.push(
+        `error_description="${refusal.message
+          .replace(/["\\]/gu, "'")
+          .replace(/[^\x20-\x7e]+/gu, ' ')
+          .replace(/\s+/gu, ' ')
+          .trim()
+          .slice(0, 200)}"`,
+      )
+  }
+  return parts.join(', ')
+}
+
+function writeUnauthorized(
+  response: ServerResponse,
+  origin: string | null,
+  refusal: { presented: boolean; code?: string; message?: string },
+): void {
+  response.setHeader('WWW-Authenticate', challengeFor(origin, refusal))
   writeJson(response, 401, {
-    error: {
-      code: 'unauthorized',
-      message: 'A paired device token is required. Pair this machine in Settings → Remote.',
-    },
+    error: { code: refusal.code ?? 'unauthorized', message: refusal.message ?? UNAUTHORIZED_MESSAGE },
   })
 }
 
 /** A valid token presented from the wrong node, or from one whois could not name. */
-function writePeerRefused(response: ServerResponse, refusal: { code: string; message: string }): void {
-  response.setHeader('WWW-Authenticate', 'Bearer realm="sprintengine-studio-tailnet"')
+function writePeerRefused(
+  response: ServerResponse,
+  origin: string | null,
+  refusal: { code: string; message: string },
+): void {
+  response.setHeader('WWW-Authenticate', challengeFor(origin, { presented: true, message: refusal.message }))
   writeJson(response, 401, { error: { code: refusal.code, message: refusal.message } })
+}
+
+/** 202 with no body: a notification (or a client's response) accepted. */
+function writeAccepted(response: ServerResponse): void {
+  if (response.headersSent || response.writableEnded) return
+  response.writeHead(202, { 'Content-Length': 0, 'Cache-Control': 'no-store' })
+  response.end()
+}
+
+/** The bearer token on a request; the scheme is case-insensitive (RFC 9110 11.1). */
+function bearerOf(request: IncomingMessage): string | null {
+  const match = /^Bearer[ ]+(\S+)\s*$/iu.exec(headerOf(request, 'authorization') ?? '')
+  return match ? match[1]! : null
+}
+
+/**
+ * The peer of a request: the socket's own address on the tailnet listener;
+ * on the loopback listener Tailscale Serve proxies to, the address Serve says
+ * connected to it (see the note at the top of this file).
+ */
+function peerAddressOf(request: IncomingMessage, via: TailnetListenerKind): string {
+  return via === 'serve' ? forwardedPeerAddress(request) : normalizeAddress(request.socket.remoteAddress)
+}
+
+/** `X-Forwarded-For` as Tailscale Serve sets it: one tailnet address, or nothing usable. */
+function forwardedPeerAddress(request: IncomingMessage): string {
+  const value = headerOf(request, 'x-forwarded-for') ?? ''
+  const address = normalizeAddress(value.split(',').at(-1) ?? '')
+  return address && isTailnetAddress(address) ? address : ''
+}
+
+/**
+ * Why a request's mirrored headers disagree with its body (2026-07-28
+ * Streamable HTTP, "Server Validation"), or null. Only headers that are sent
+ * are compared: a client of an earlier revision sends none of them, and is
+ * served as it always was.
+ */
+function headerMismatch(request: IncomingMessage, body: unknown): string | null {
+  if (!isRecord(body)) return null
+  const params = isRecord(body.params) ? body.params : {}
+  const method = headerOf(request, 'mcp-method')
+  if (method !== null && method !== body.method) return `Header mismatch: Mcp-Method does not match the body's method.`
+  const name = headerOf(request, 'mcp-name')
+  if (name !== null) {
+    const decoded = decodeHeaderValue(name)
+    const expected = typeof params.name === 'string' ? params.name : typeof params.uri === 'string' ? params.uri : null
+    if (decoded === null || decoded !== expected) return `Header mismatch: Mcp-Name does not match the body.`
+  }
+  const version = headerOf(request, 'mcp-protocol-version')?.trim()
+  const meta = isRecord(params._meta) ? params._meta : null
+  const declared = meta?.['io.modelcontextprotocol/protocolVersion']
+  if (version && typeof declared === 'string' && declared !== version)
+    return 'Header mismatch: MCP-Protocol-Version does not match the version the body declares.'
+  return null
+}
+
+/** A header value, decoded from the `=?base64?…?=` sentinel when it is one; null when that does not decode. */
+function decodeHeaderValue(value: string): string | null {
+  const match = /^=\?base64\?([A-Za-z0-9+/=]*)\?=$/u.exec(value)
+  if (!match) return value
+  try {
+    return Buffer.from(match[1]!, 'base64').toString('utf8')
+  } catch {
+    return null
+  }
 }
 
 function writeTooLarge(response: ServerResponse, ceiling: number): void {

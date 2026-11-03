@@ -114,10 +114,14 @@ export function tailnetDevicePrincipal(scopes: readonly unknown[]): StudioPrinci
  * - `reverse`: the other half of a both-ways pairing — THIS machine asked to
  *   drive another, and granted it a device here in the same exchange; `by`
  *   is that machine's name.
+ * - `oauth`: an MCP client that signed in with OAuth (`tailnet-oauth.ts`) and
+ *   that a person here approved; `by` is the name the client registered. It
+ *   holds no device token: it is served by the OAuth access tokens its grant
+ *   issues, on the MCP endpoint alone.
  * - `unknown`: a record from before origins were kept.
  */
 export type TailnetDeviceOrigin = {
-  kind: 'code' | 'approval' | 'agent' | 'reverse' | 'unknown'
+  kind: 'code' | 'approval' | 'agent' | 'reverse' | 'oauth' | 'unknown'
   by: string | null
 }
 
@@ -157,6 +161,37 @@ export type TailnetRemoteStatus = {
   pairing: TailnetPairingState | null
   /** Requests from other machines waiting to be approved or denied here. */
   pairRequests: TailnetPairRequest[]
+  /**
+   * Where an outside MCP client connects, and whether HTTPS is on. Optional
+   * because a status from a main process built before MCP sign-in carried
+   * none; a surface reads its absence as "say nothing about it".
+   */
+  mcp?: TailnetMcpAccess
+}
+
+/**
+ * The MCP endpoint as a person gives it to an outside client (Claude Code,
+ * Codex, any MCP client that signs in with OAuth): the URL, and the HTTPS front
+ * door that Tailscale Serve can put before it.
+ */
+export type TailnetMcpAccess = {
+  /** The URL to give a client, or null while the listener is not running. HTTPS when HTTPS is on. */
+  url: string | null
+  /** The plain-HTTP URL on the tailnet address, kept beside the HTTPS one for clients that take either. */
+  httpUrl: string | null
+  https: TailnetHttpsState
+}
+
+/**
+ * HTTPS through Tailscale Serve. `enabled` is the person's setting; `state`
+ * is what happened when it was applied, `message` why when it did not work.
+ */
+export type TailnetHttpsState = {
+  enabled: boolean
+  state: 'off' | 'starting' | 'on' | 'error'
+  /** `https://<node>.<tailnet>.ts.net` while on. */
+  origin: string | null
+  message: string | null
 }
 
 export const TAILNET_GET_STATUS_CHANNEL = 'tailnet:get-status'
@@ -172,6 +207,12 @@ export const TAILNET_REVOKE_DEVICE_CHANNEL = 'tailnet:revoke-device'
  * revoking the device it came in on meaningless. Only this keyboard may.
  */
 export const TAILNET_UPDATE_DEVICE_SCOPES_CHANNEL = 'tailnet:update-device-scopes'
+/**
+ * Turn HTTPS through Tailscale Serve on or off for the listener. IPC-only like
+ * the rest of this family: it changes what this machine publishes on the
+ * tailnet, which is the person's decision.
+ */
+export const TAILNET_SET_HTTPS_CHANNEL = 'tailnet:set-https'
 
 /** What `offer-pairing` returns: the one-time code, shown once and never re-readable. */
 export type TailnetPairingOfferView = {
@@ -231,6 +272,26 @@ export type TailnetPairRequest = {
    * rather than as an empty grant.
    */
   requestedScopes?: TailnetScope[]
+  /**
+   * Present when the request is an MCP client signing in with OAuth rather
+   * than a Studio or a phone asking to pair. The name is the client's own
+   * claim; `redirectHost` is where the approval is sent, and so who gets the
+   * access. Surfaces show both as untrusted text and never as links.
+   */
+  oauth?: TailnetOAuthRequestView
+}
+
+/** What an approving surface shows of an OAuth sign-in (see `TailnetPairRequest.oauth`). */
+export type TailnetOAuthRequestView = {
+  /** The name the client gave itself. Untrusted display text. */
+  clientName: string
+  /**
+   * Where the approval is sent. A loopback host (`localhost`, `127.0.0.1`)
+   * means a client on the computer whose browser opened the sign-in page; any
+   * other is a web service, and whoever runs it gets the access.
+   */
+  redirectHost: string
+  redirectKind: 'loopback' | 'https'
 }
 
 /** What a requesting client learns when it polls its own request. */
@@ -267,7 +328,13 @@ export const PAIR_REQUEST_CODE_ATTEMPTS = 3
  */
 export type TailnetApprovePairRequestView =
   | { ok: true; device: TailnetDevice; status: TailnetRemoteStatus }
-  | { ok: false; code: 'request_not_found' | 'code_required'; message: string; status: TailnetRemoteStatus }
+  | {
+      ok: false
+      /** `approve_in_window`: an MCP client's sign-in, which only a window here may approve. */
+      code: 'request_not_found' | 'code_required' | 'approve_in_window'
+      message: string
+      status: TailnetRemoteStatus
+    }
   | {
       ok: false
       code: 'code_mismatch'

@@ -19,6 +19,7 @@ import {
   TAILNET_REVOKE_DEVICE_CHANNEL,
   TAILNET_SET_ENABLED_CHANNEL,
   TAILNET_UPDATE_DEVICE_SCOPES_CHANNEL,
+  TAILNET_SET_HTTPS_CHANNEL,
   REMOTE_OPEN_REQUESTED_CHANNEL,
   type TailnetApprovePairRequestView,
   type TailnetLiveState,
@@ -66,6 +67,8 @@ export const automationApi = {
     ipcRenderer.invoke(TAILNET_REVOKE_DEVICE_CHANNEL, deviceId) as Promise<TailnetRemoteStatus>,
   tailnetUpdateDeviceScopes: (deviceId: string, scopes: TailnetScope[]): Promise<TailnetRemoteStatus> =>
     ipcRenderer.invoke(TAILNET_UPDATE_DEVICE_SCOPES_CHANNEL, deviceId, scopes) as Promise<TailnetRemoteStatus>,
+  tailnetSetHttps: (enabled: boolean): Promise<TailnetRemoteStatus> =>
+    ipcRenderer.invoke(TAILNET_SET_HTTPS_CHANNEL, enabled) as Promise<TailnetRemoteStatus>,
   tailnetForgetMachine: (input: { deviceId?: string; connectionId?: string }): Promise<TailnetForgetMachineResult> =>
     ipcRenderer.invoke(TAILNET_FORGET_MACHINE_CHANNEL, input) as Promise<TailnetForgetMachineResult>,
   tailnetApprovePairRequest: (
@@ -116,6 +119,7 @@ export const automationApi = {
   | 'tailnetCancelPairing'
   | 'tailnetRevokeDevice'
   | 'tailnetUpdateDeviceScopes'
+  | 'tailnetSetHttps'
   | 'tailnetForgetMachine'
   | 'tailnetApprovePairRequest'
   | 'tailnetDenyPairRequest'

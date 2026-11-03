@@ -24,7 +24,19 @@ export const DEFAULT_TAILNET_LISTENER_PORT = 8471
  * are rare and each is one a person is waiting on — and absent from an older
  * file reads as on.
  */
-export type TailnetSettings = { enabled: boolean; port: number; notifications: boolean }
+export type TailnetSettings = {
+  enabled: boolean
+  port: number
+  notifications: boolean
+  /**
+   * Whether the listener is also published over HTTPS with Tailscale Serve
+   * (`tailnet-gateway-https.ts`), for MCP clients that sign in with OAuth.
+   * Off unless a person turned it on: it changes this machine's Serve
+   * configuration, which outlives the app. Optional so an older caller's
+   * settings object still type-checks; absent reads as off.
+   */
+  https?: boolean
+}
 
 export type TailnetSettingsReadResult = {
   settings: TailnetSettings
@@ -33,7 +45,12 @@ export type TailnetSettingsReadResult = {
 }
 
 export function readTailnetSettings(userDataDir: string): TailnetSettingsReadResult {
-  const defaults: TailnetSettings = { enabled: false, port: DEFAULT_TAILNET_LISTENER_PORT, notifications: true }
+  const defaults: TailnetSettings = {
+    enabled: false,
+    port: DEFAULT_TAILNET_LISTENER_PORT,
+    notifications: true,
+    https: false,
+  }
   let raw: string
   try {
     raw = readFileSync(join(userDataDir, TAILNET_SETTINGS_FILENAME), 'utf8')
@@ -50,12 +67,13 @@ export function readTailnetSettings(userDataDir: string): TailnetSettingsReadRes
         error: `${TAILNET_SETTINGS_FILENAME} is malformed; tailnet remote control stays off.`,
       }
     }
-    const record = parsed as { enabled?: unknown; port?: unknown; notifications?: unknown }
+    const record = parsed as { enabled?: unknown; port?: unknown; notifications?: unknown; https?: unknown }
     return {
       settings: {
         enabled: record.enabled === true,
         port: isUsablePort(record.port) ? record.port : DEFAULT_TAILNET_LISTENER_PORT,
         notifications: record.notifications !== false,
+        https: record.https === true,
       },
       error: null,
     }
@@ -73,6 +91,7 @@ export function writeTailnetSettings(userDataDir: string, settings: TailnetSetti
       enabled: settings.enabled === true,
       port: isUsablePort(settings.port) ? settings.port : DEFAULT_TAILNET_LISTENER_PORT,
       notifications: settings.notifications !== false,
+      https: settings.https === true,
     },
     null,
     2,

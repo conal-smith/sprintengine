@@ -10,6 +10,7 @@ import {
   TAILNET_LEGACY_REQUEST_SCOPES,
   type TailnetDevice,
   type TailnetDeviceOrigin,
+  type TailnetOAuthRequestView,
   type TailnetPairingState,
   type TailnetPairRequest,
   type TailnetPairRequestOutcome,
@@ -149,7 +150,7 @@ type TailnetPairRequestResult =
 
 type TailnetPairApprovalResult =
   | { ok: true; device: TailnetDevice }
-  | { ok: false; code: 'request_not_found' | 'code_required'; message: string }
+  | { ok: false; code: 'request_not_found' | 'code_required' | 'approve_in_window'; message: string }
   /**
    * The typed code did not match (pair-from-the-scan-and-stay-paired,
    * phase 2). `attemptsLeft` is what the card may still offer; `declined`
@@ -253,6 +254,15 @@ export type TailnetDeviceStore = {
      * is what every path defaulted to before askers could ask.
      */
     requestedScopes?: unknown
+    /**
+     * An MCP client signing in with OAuth (`tailnet-oauth.ts`) rather than a
+     * machine asking to pair. Approving one mints a device that holds no
+     * device token, and it is collected by the gateway's sign-in page alone,
+     * never by the pair-request collect. A newer sign-in from the same peer
+     * replaces its older one still waiting, so a client that is retried does
+     * not find itself refused by its own earlier attempt.
+     */
+    oauth?: TailnetOAuthRequestView
   }): TailnetPairRequestResult
   /** Requests still awaiting an answer here. Never includes answered ones. */
   listPairRequests(): TailnetPairRequest[]
@@ -273,7 +283,17 @@ export type TailnetDeviceStore = {
    * comparison code was always for — now enforced rather than trusted. Three
    * wrong codes decline the request.
    */
-  approvePairRequest(input: { id: string; scopes: TailnetScope[]; code: unknown }): TailnetPairApprovalResult
+  approvePairRequest(input: {
+    id: string
+    scopes: TailnetScope[]
+    code: unknown
+    /**
+     * Who is answering. An OAuth sign-in is approved only from a window here
+     * (`ipc`): an agent on this machine that could approve one could open the
+     * sign-in page itself, read its code, and let itself in.
+     */
+    via?: 'ipc' | 'tool'
+  }): TailnetPairApprovalResult
   denyPairRequest(id: string): boolean
   /**
    * What the requester polls. Yields the device token to exactly one call, and
@@ -281,7 +301,13 @@ export type TailnetDeviceStore = {
    * `peer` is whois on the collecting socket: it binds a device the ask could
    * not, and a collect from a node other than the one bound is not answered.
    */
-  collectPairRequest(id: string, collectSecret: string, peer?: TailnetPeerIdentity | null): TailnetCollectOutcome
+  collectPairRequest(
+    id: string,
+    collectSecret: string,
+    peer?: TailnetPeerIdentity | null,
+    /** Collect an OAuth sign-in (the gateway's sign-in page); a pair request is not answered to it, nor it to one. */
+    options?: { oauth?: boolean },
+  ): TailnetCollectOutcome
 }
 
 type StoredDevice = TailnetDevice & { tokenHash: string; node: TailnetNodeBinding | null }
@@ -378,7 +404,10 @@ export function createTailnetDeviceStore(options: {
     origin: TailnetDeviceOrigin,
     peer: TailnetPeerIdentity | null,
   ): { device: TailnetDevice; deviceToken: string } {
-    const deviceToken = `mctn_${randomBytes(32).toString('base64url')}`
+    // An OAuth client's device holds no device token: its grant's access
+    // tokens are its credential. The empty hash matches nothing `authenticate`
+    // is ever handed, and is skipped there besides.
+    const deviceToken = origin.kind === 'oauth' ? '' : `mctn_${randomBytes(32).toString('base64url')}`
     const stored: StoredDevice = {
       id: `tnd_${randomBytes(9).toString('base64url')}`,
       name,
@@ -387,7 +416,7 @@ export function createTailnetDeviceStore(options: {
       lastSeenAt: null,
       lastPeerNode: null,
       origin: { kind: origin.kind, by: origin.by ? origin.by.slice(0, 120) : null },
-      tokenHash: hashSecret(deviceToken),
+      tokenHash: deviceToken ? hashSecret(deviceToken) : '',
       // Unbound when whois could not name the node; bound on first use then.
       node: bindingFor(peer, now()),
     }
@@ -497,7 +526,7 @@ export function createTailnetDeviceStore(options: {
       if (typeof bearerToken !== 'string' || !bearerToken) return null
       const presented = hashSecret(bearerToken)
       for (const device of devices) {
-        if (secretsMatch(presented, device.tokenHash)) return publicDevice(device)
+        if (device.tokenHash && secretsMatch(presented, device.tokenHash)) return publicDevice(device)
       }
       return null
     },
@@ -629,6 +658,17 @@ export function createTailnetDeviceStore(options: {
           message: 'That request was declined. Wait a minute before asking again.',
         }
       }
+      const oauth = input.oauth ? readOAuthView(input.oauth) : null
+      if (oauth) {
+        // A sign-in retried from the same peer replaces the one it left
+        // waiting: the earlier page is gone with the attempt that opened it,
+        // and refusing the retry as "already waiting" would leave the person
+        // with no way forward but to wait out a prompt nobody can complete.
+        for (const [id, entry] of pairRequests) {
+          if (entry.state.kind === 'pending' && entry.request.oauth && entry.request.peerAddress === input.peerAddress)
+            pairRequests.delete(id)
+        }
+      }
       const pendingHere = [...pairRequests.values()].filter((entry) => entry.state.kind === 'pending')
       const fromThisPeer = pendingHere.filter((entry) => entry.request.peerAddress === input.peerAddress)
       if (fromThisPeer.length >= MAX_PENDING_REQUESTS_PER_PEER || pendingHere.length >= MAX_PENDING_REQUESTS) {
@@ -646,7 +686,10 @@ export function createTailnetDeviceStore(options: {
         comparisonCode: nextComparisonCode(),
         createdAt: new Date(nowMs).toISOString(),
         expiresAt: new Date(nowMs + pairRequestTtlMs).toISOString(),
-        requestedScopes: readRequestedScopes(input.requestedScopes),
+        requestedScopes: oauth
+          ? normalizeTailnetScopes(input.requestedScopes)
+          : readRequestedScopes(input.requestedScopes),
+        ...(oauth ? { oauth } : {}),
       }
       pairRequests.set(request.id, {
         request,
@@ -691,6 +734,14 @@ export function createTailnetDeviceStore(options: {
           message: 'That pairing request is no longer waiting to be answered.',
         }
       }
+      if (entry.request.oauth && input.via === 'tool') {
+        return {
+          ok: false,
+          code: 'approve_in_window',
+          message:
+            'An MCP client signing in is approved in the Studio window, not by a tool: an agent able to approve one could open the sign-in page, read its code and let itself in.',
+        }
+      }
       // The typed code. Digits only, so "481 972" read off a screen with a
       // space in it is the same answer as "481972".
       const typed = typeof input.code === 'string' ? input.code.replace(/\D/gu, '') : ''
@@ -733,15 +784,26 @@ export function createTailnetDeviceStore(options: {
       // asked for: a peer must not be able to influence what approving it
       // grants. An empty tick-list is a real answer — a device with no scopes
       // can authenticate and call nothing.
-      const scopes = normalizeTailnetScopes(input.scopes)
+      const ticked = normalizeTailnetScopes(input.scopes)
+      // An OAuth sign-in is granted at most what the client asked for: the
+      // person narrows a sign-in, and widens one later from Settings if they
+      // mean to. A client that asked for less than it then needs signs in
+      // again for more, which is OAuth's own shape.
+      const asked = entry.request.oauth ? new Set(entry.request.requestedScopes ?? []) : null
+      const scopes = asked ? ticked.filter((scope) => asked.has(scope)) : ticked
       // Bound to the node that ASKED, as whois saw the request arrive: that is
-      // the machine the person here just agreed to let in.
-      const minted = mintDevice(
-        entry.request.deviceName,
-        scopes,
-        { kind: 'approval', by: entry.request.peerNode ?? entry.request.peerAddress ?? null },
-        entry.peer,
-      )
+      // the machine the person here just agreed to let in. An OAuth client is
+      // bound later, to the node that redeems its authorization code: the
+      // browser that showed the sign-in page need not be on the machine the
+      // client runs on (a client over SSH prints the link to open elsewhere).
+      const minted = entry.request.oauth
+        ? mintDevice(entry.request.deviceName, scopes, { kind: 'oauth', by: entry.request.oauth.clientName }, null)
+        : mintDevice(
+            entry.request.deviceName,
+            scopes,
+            { kind: 'approval', by: entry.request.peerNode ?? entry.request.peerAddress ?? null },
+            entry.peer,
+          )
       pairRequests.set(input.id, {
         request: entry.request,
         collectHash: entry.collectHash,
@@ -768,12 +830,16 @@ export function createTailnetDeviceStore(options: {
       return true
     },
 
-    collectPairRequest(id, collectSecret, peer): TailnetCollectOutcome {
+    collectPairRequest(id, collectSecret, peer, collectOptions): TailnetCollectOutcome {
       prunePairRequests()
       const entry = pairRequests.get(id)
       // An unknown id reports expired rather than getting an answer of its own:
       // there is nothing useful to tell a caller about an id it invented.
       if (!entry) return { status: 'expired' }
+      // Each kind is collected through its own door. An OAuth sign-in is not
+      // spent by the pair-request collect (it has no device token to hand
+      // over), and a pair request is not answered to the sign-in page.
+      if (Boolean(entry.request.oauth) !== (collectOptions?.oauth === true)) return { status: 'expired' }
       // A wrong secret answers exactly what an unknown id answers, so a caller
       // holding an id it should not have cannot even learn that it is real.
       // Note this does NOT burn the request — same reasoning as a wrong pairing
@@ -843,6 +909,25 @@ function readRequestedScopes(value: unknown): TailnetScope[] {
   return named.length > 0 ? named : [...TAILNET_LEGACY_REQUEST_SCOPES]
 }
 
+/** An OAuth sign-in's display fields, bounded: every one of them is the client's own claim. */
+function readOAuthView(value: TailnetOAuthRequestView): TailnetOAuthRequestView {
+  return {
+    clientName: displayText(value.clientName, 100) || 'MCP client',
+    redirectHost: displayText(value.redirectHost, 253),
+    redirectKind: value.redirectKind === 'https' ? 'https' : 'loopback',
+  }
+}
+
+/** Untrusted text made fit to show: no control or bidi-override characters, collapsed whitespace, bounded. */
+export function displayText(value: unknown, max: number): string {
+  if (typeof value !== 'string') return ''
+  return value
+    .replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, max)
+}
+
 const PEER_MISMATCH_MESSAGE =
   'This device token was issued to a different machine on the tailnet, so it is not accepted from this one. Pair this machine in Settings → Remote.'
 const PEER_UNVERIFIED_MESSAGE =
@@ -908,7 +993,8 @@ function isStoredDevice(value: unknown): value is StoredDevice {
     value.id.length > 0 &&
     typeof value.name === 'string' &&
     typeof value.tokenHash === 'string' &&
-    value.tokenHash.length > 0 &&
+    // Only an OAuth client's device holds no token (its grant does).
+    (value.tokenHash.length > 0 || (isRecord(value.origin) && value.origin.kind === 'oauth')) &&
     typeof value.createdAt === 'string' &&
     Array.isArray(value.scopes)
   )
@@ -946,7 +1032,7 @@ function readBinding(value: unknown): TailnetNodeBinding | null {
   }
 }
 
-const ORIGIN_KINDS: ReadonlySet<string> = new Set(['code', 'approval', 'agent', 'reverse', 'unknown'])
+const ORIGIN_KINDS: ReadonlySet<string> = new Set(['code', 'approval', 'agent', 'reverse', 'oauth', 'unknown'])
 
 function readOrigin(value: unknown): TailnetDeviceOrigin {
   if (!isRecord(value) || typeof value.kind !== 'string' || !ORIGIN_KINDS.has(value.kind)) {

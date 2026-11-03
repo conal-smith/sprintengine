@@ -7,7 +7,9 @@ import {
   type TailnetApprovePairRequestView,
   type TailnetDevice,
   type TailnetDeviceOrigin,
+  type TailnetHttpsState,
   type TailnetLiveState,
+  type TailnetMcpAccess,
   type TailnetPairRequest,
   type TailnetPairRequestPhase,
   type TailnetPairingOfferView,
@@ -31,6 +33,11 @@ import { readTailnetSettings, writeTailnetSettings, type TailnetSettings } from 
 import type { ConversationGatewayHost } from './tailnet-conversation-host'
 import { createTailnetFileUploads, TAILNET_UPLOADS_DIRNAME } from './tailnet-file-uploads'
 import type { McpToolCallEvent } from '../mcp-dispatch'
+import { createTailnetOAuthStore, type TailnetOAuthStore } from './tailnet-oauth'
+import type { TailnetPublicOrigins } from './tailnet-oauth-http'
+import { publishGatewayOverHttps, withdrawGatewayHttps, type GatewayHttpsResult } from './tailnet-gateway-https'
+import { readSelfDnsName } from './tailscale-serve'
+import { TAILNET_MCP_PATH } from './tailnet-routes'
 
 // Lifecycle for tailnet remote control: settings, paired devices, and the
 // listener itself.
@@ -87,6 +94,12 @@ export type TailnetRemoteService = {
    * that is not here is a bug, not a state to render.
    */
   updateDeviceScopes(deviceId: string, scopes: unknown): TailnetRemoteStatus
+  /**
+   * Publish the listener over HTTPS with Tailscale Serve, or stop. Persisted:
+   * the listener applies it whenever it starts. Resolves once Serve has
+   * answered, with the outcome in `status.mcp.https`.
+   */
+  setHttps(enabled: boolean): Promise<TailnetRemoteStatus>
   /**
    * Answer a pairing request that arrived from another machine, with the
    * scopes chosen HERE.
@@ -178,8 +191,16 @@ export type TailnetRemoteServiceOptions = {
     log?: (message: string) => void
   }) => TailnetDeviceStore
   createPeerResolver?: () => TailnetPeerResolver
+  /** This machine's MagicDNS name. Injected in tests; production asks `tailscale status`. */
+  resolveSelfDnsName?: () => Promise<string | null>
+  /** Tailscale Serve for HTTPS. Injected in tests; production runs the `tailscale` CLI. */
+  publishHttps?: (localPort: number) => Promise<GatewayHttpsResult>
+  withdrawHttps?: (localPort: number) => Promise<void>
   log?: (message: string) => void
 }
+
+/** How often expired OAuth grants and abandoned sign-ins are swept while the listener runs. */
+const OAUTH_SWEEP_MS = 60_000
 
 /**
  * How often to look for a Tailscale interface while the listener is enabled
@@ -219,6 +240,29 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
    * answer" against a machine whose Studio was running the whole time.
    */
   let interfaceWatch: ReturnType<typeof setInterval> | null = null
+  // MCP clients that sign in with OAuth. Their devices are in `devices`; a
+  // revocation the store makes (a replayed refresh token, a grant unused for
+  // a month) is announced as one made here is.
+  const oauth: TailnetOAuthStore = createTailnetOAuthStore({
+    resolveUserDataDir: options.resolveUserDataDir,
+    devices: {
+      listDevices: () => devices.listDevices(),
+      onDeviceRevoked: (listener) => devices.onDeviceRevoked(listener),
+      revokeDevice: (deviceId) => {
+        const revoked = devices.revokeDevice(deviceId)
+        if (revoked) emit({ kind: 'devices-changed' })
+        return revoked
+      },
+    },
+    log: options.log,
+  })
+  let oauthSweep: ReturnType<typeof setInterval> | null = null
+  // This machine's MagicDNS name, read when the listener starts: one of the
+  // names a client may address it by, and the one the MCP URL is given in.
+  let selfDnsName: string | null = null
+  // HTTPS through Tailscale Serve, as last applied.
+  let https: TailnetHttpsState = { enabled: false, state: 'off', origin: null, message: null }
+  let httpsWork: Promise<void> = Promise.resolve()
 
   // ── live-connection accounting (remote-sessions-ux) ────────────────────────
   // A count, not a boolean: one device may hold several streams (two clients
@@ -418,7 +462,103 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
       devices: devices.listDevices(),
       pairing: devices.getPairingState(),
       pairRequests: devices.listPairRequests(),
+      mcp: mcpAccess(),
     }
+  }
+
+  /** The names this Studio answers to, for OAuth discovery and Host checks. */
+  function publicOrigins(): TailnetPublicOrigins {
+    const bound = server?.address() ?? null
+    if (!bound) return { tailnet: [], serve: null }
+    const hosts = [bound.address.includes(':') ? `[${bound.address}]` : bound.address]
+    if (selfDnsName) {
+      hosts.push(selfDnsName)
+      // MagicDNS answers the bare machine name too, through its search domain.
+      const short = selfDnsName.split('.')[0]
+      if (short && short !== selfDnsName) hosts.push(short)
+    }
+    return {
+      tailnet: hosts.map((host) => `http://${host.toLowerCase()}:${bound.port}`),
+      serve: https.state === 'on' ? https.origin : null,
+    }
+  }
+
+  function mcpAccess(): TailnetMcpAccess {
+    const bound = server?.address() ?? null
+    const httpUrl = bound
+      ? `http://${selfDnsName ?? (bound.address.includes(':') ? `[${bound.address}]` : bound.address)}:${bound.port}${TAILNET_MCP_PATH}`
+      : null
+    const httpsUrl = bound && https.state === 'on' && https.origin ? `${https.origin}${TAILNET_MCP_PATH}` : null
+    return { url: httpsUrl ?? httpUrl, httpUrl, https: { ...https, enabled: loadSettings().https === true } }
+  }
+
+  /** Bring Serve in line with the setting while the listener runs; queued, so two toggles cannot interleave. */
+  function applyHttps(): Promise<void> {
+    httpsWork = httpsWork.then(async () => {
+      const wanted = loadSettings().https === true
+      const current = server
+      if (wanted && current?.isRunning()) {
+        if (https.state === 'on') return
+        https = { enabled: true, state: 'starting', origin: null, message: null }
+        emit({ kind: 'listener', running: true })
+        let localPort = 0
+        try {
+          localPort = await current.openServeListener()
+          const published = await (options.publishHttps ?? defaultPublish)(localPort)
+          https = published.ok
+            ? { enabled: true, state: 'on', origin: published.origin, message: null }
+            : { enabled: true, state: 'error', origin: null, message: published.message }
+        } catch (error) {
+          https = { enabled: true, state: 'error', origin: null, message: `HTTPS could not start: ${message(error)}` }
+        }
+        if (https.state !== 'on') await current.closeServeListener().catch(() => {})
+        if (server === current) emit({ kind: 'listener', running: true })
+        return
+      }
+      await takeDownHttps(current)
+      https = { enabled: wanted, state: 'off', origin: null, message: null }
+      if (current?.isRunning()) emit({ kind: 'listener', running: true })
+    })
+    return httpsWork
+  }
+
+  async function takeDownHttps(current: TailnetGatewayServer | null): Promise<void> {
+    const behindServe = current?.serveAddress() ?? null
+    if (behindServe && https.state === 'on') {
+      try {
+        await (options.withdrawHttps ?? defaultWithdraw)(behindServe.port)
+      } catch (error) {
+        options.log?.(`tailnet HTTPS could not be withdrawn: ${message(error)}`)
+      }
+    }
+    await current?.closeServeListener().catch(() => {})
+    https = { ...https, state: 'off', origin: null }
+  }
+
+  /** Learn this machine's MagicDNS name for a listener just started, and say so once known. */
+  async function readSelfName(listener: TailnetGatewayServer): Promise<void> {
+    let name: string | null = null
+    try {
+      name = (await (options.resolveSelfDnsName ?? (() => readSelfDnsName()))())?.toLowerCase() ?? null
+    } catch {
+      name = null
+    }
+    if (server !== listener) return
+    selfDnsName = name
+    if (name) emit({ kind: 'listener', running: true })
+  }
+
+  function stopOAuthSweep(): void {
+    if (oauthSweep) clearInterval(oauthSweep)
+    oauthSweep = null
+  }
+
+  function defaultPublish(localPort: number): Promise<GatewayHttpsResult> {
+    return publishGatewayOverHttps({ localPort, recordDir: options.resolveUserDataDir(), log: options.log })
+  }
+
+  function defaultWithdraw(localPort: number): Promise<void> {
+    return withdrawGatewayHttps({ localPort, recordDir: options.resolveUserDataDir(), log: options.log })
   }
 
   /**
@@ -490,6 +630,8 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
         })
       },
       onActivity: (event) => handleActivity(event),
+      oauth: { store: oauth },
+      publicOrigins,
       log: options.log,
     })
     try {
@@ -497,6 +639,12 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
       server = next
       boundAddress = bindAddress
       lastError = null
+      void readSelfName(next)
+      if (!oauthSweep) {
+        oauthSweep = setInterval(() => oauth.sweep(), OAUTH_SWEEP_MS)
+        oauthSweep.unref?.()
+      }
+      if (loadSettings().https === true) void applyHttps()
       // The beat goes on while the listener holds the address: it is what
       // notices the address leaving.
       watchForInterface()
@@ -561,6 +709,8 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
    */
   async function standDown(): Promise<void> {
     const current = server
+    stopOAuthSweep()
+    await takeDownHttps(current)
     server = null
     boundAddress = null
     if (current) {
@@ -588,7 +738,9 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
   /** Stop the listener. Resolves to whether a listener event was emitted. */
   async function stopServer(): Promise<boolean> {
     stopWatchingForInterface()
+    stopOAuthSweep()
     const current = server
+    await (httpsWork = httpsWork.then(() => takeDownHttps(current)))
     server = null
     boundAddress = null
     if (!current) return false
@@ -690,6 +842,7 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
         id: requestId,
         scopes: normalizeTailnetScopes(input.scopes),
         code: input.code,
+        via: input.via ?? 'ipc',
       })
       if (!outcome.ok) {
         if (outcome.code === 'code_mismatch') {
@@ -737,6 +890,20 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
     revokeDevice(deviceId): TailnetRemoteStatus {
       devices.revokeDevice(deviceId)
       emit({ kind: 'devices-changed' })
+      return getStatus()
+    },
+
+    async setHttps(enabled): Promise<TailnetRemoteStatus> {
+      const current = loadSettings()
+      settings = { ...current, https: enabled === true }
+      try {
+        writeTailnetSettings(options.resolveUserDataDir(), settings)
+      } catch (error) {
+        lastError = `Could not persist the HTTPS setting: ${message(error)}`
+        options.log?.(lastError)
+      }
+      https = { ...https, enabled: settings.https === true }
+      await applyHttps()
       return getStatus()
     },
 
@@ -788,6 +955,7 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
       announcedRequests.clear()
       stopWatchingForInterface()
       await stopServer()
+      oauth.dispose()
     },
   }
 }

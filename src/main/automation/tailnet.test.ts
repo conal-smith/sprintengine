@@ -509,6 +509,7 @@ test('tailnet', async () => {
         enabled: false,
         port: DEFAULT_TAILNET_LISTENER_PORT,
         notifications: true,
+        https: false,
       })
 
       const service = createTailnetRemoteService({
@@ -822,6 +823,7 @@ test('tailnet', async () => {
         'approval-rules',
         'scheduled-agents',
         'scheduled-agents-edit',
+        'mcp-oauth',
       ])
 
       // The pairing code is one-time: replaying it does not mint a second device.
@@ -954,6 +956,7 @@ test('tailnet', async () => {
         'approval-rules',
         'scheduled-agents',
         'scheduled-agents-edit',
+        'mcp-oauth',
       ])
       // Every one the wire defines but shrinking an upload, which only a
       // machine with an image codec advertises; this harness has none.
