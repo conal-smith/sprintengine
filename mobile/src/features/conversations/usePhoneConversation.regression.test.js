@@ -136,6 +136,8 @@ function fixture(options = {}) {
         holdUpdate = null;
         await wait;
       }
+      // A disk that refuses the write, as a phone's sometimes does.
+      if (options.refuseWrite?.()) throw new Error("Cannot use shared object that was already released");
       return store.update(key.agentId, updater);
     },
   };
@@ -147,6 +149,10 @@ function fixture(options = {}) {
       module,
       setTimeout,
       clearTimeout,
+      // The hook's clock, where a test needs to move it.
+      ...(options.clock
+        ? { Date: class extends Date { static now() { return options.clock(); } } }
+        : {}),
       require(name) {
         if (name === "react") return react;
         if (name === "react-native")
@@ -1016,5 +1022,111 @@ test("a list read asked for while one is out is read again after it, so a late e
   answers[1]([{ ...thread(), phase: "completed" }]);
   await settle();
   assert.equal(h.render().inBackground, false);
+  h.unmount();
+});
+
+// A write to the cache that fails is carried by the next one, so the chat
+// says nothing about it unless the writes keep failing.
+test("a cache write that fails now and then is never shown; writes that keep failing are, until one lands", async () => {
+  let now = 1_000_000;
+  let refusing = false;
+  const h = fixture({ clock: () => now, refuseWrite: () => refusing });
+  h.render();
+  await settle();
+  const frames = h.connections[0].handlers;
+  let seq = 0;
+  const step = async (seconds = 1) => {
+    now += seconds * 1000;
+    seq++;
+    frames.onFrame({ type: "event", event: event(seq, "tool_started", { toolCallId: `c${seq}` }) });
+    for (let i = 0; i < 5; i++) await settle();
+    return h.render().notice;
+  };
+  // A burst of failures, then the disk answers again: nothing said.
+  refusing = true;
+  for (let i = 0; i < 4; i++) assert.equal(await step(0), "");
+  refusing = false;
+  assert.equal(await step(), "");
+  // One failing write every few seconds between good ones: nothing said.
+  for (let i = 0; i < 5; i++) {
+    refusing = true;
+    assert.equal(await step(10), "");
+    refusing = false;
+    assert.equal(await step(), "");
+  }
+  // Writes that keep failing, several of them over some seconds: said once.
+  refusing = true;
+  assert.equal(await step(), "");
+  assert.equal(await step(), "");
+  assert.equal(await step(), "");
+  assert.equal(await step(3), "This chat could not be saved on the phone. Opening it again loads it from the desktop.");
+  // Dismissed while they still fail, it does not come back.
+  h.render().setNotice("");
+  assert.equal(await step(), "");
+  // The next write that lands puts the chat right, and the line goes.
+  h.render().setNotice("This chat could not be saved on the phone. Opening it again loads it from the desktop.");
+  refusing = false;
+  assert.equal(await step(), "");
+  // Another notice is never taken away by a write landing.
+  h.render().setNotice("The desktop is busy. Try again in a moment.");
+  assert.equal(await step(), "The desktop is busy. Try again in a moment.");
+  const cached = await h.store.load("a");
+  assert.equal(cached.lastSeq, seq, "the write that landed carried everything the failed ones held");
+  h.unmount();
+});
+
+test("a send the desktop took stays acknowledged when the write carrying it fails", async () => {
+  let refusing = false;
+  const h = fixture({ refuseWrite: () => refusing });
+  h.render();
+  await settle();
+  const id = await h.render().queueSend("first");
+  assert.equal((await h.store.load("a")).pending.length, 1);
+  const frames = h.connections[0].handlers;
+  refusing = true;
+  frames.onFrame({ type: "event", event: event(1, "user_message", { text: "first", commandId: id }) });
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal((await h.store.load("a")).pending.length, 1, "the failed write left the disk as it was");
+  refusing = false;
+  // The next write is an ordinary one, about nothing but the log.
+  frames.onFrame({ type: "event", event: event(2, "turn_started", { turnId: "t" }) });
+  for (let i = 0; i < 5; i++) await settle();
+  assert.deepEqual((await h.store.load("a")).pending, [], "it carried the acknowledgment the failed one lost");
+  h.unmount();
+});
+
+test("an older page from the desktop is held to what a frame's events are before it is drawn or cached", async () => {
+  const h = fixture();
+  h.render();
+  await settle();
+  const frames = h.connections[0].handlers;
+  frames.onFrame({
+    type: "snapshot",
+    reset: true,
+    page: { events: [event(5, "user_message", { text: "later" })], hasMore: true, beforeCursor: 5 },
+  });
+  await settle();
+  const connection = h.connections[0];
+  connection.request = () => "page";
+  const loading = h.render().loadEarlier();
+  await settle();
+  frames.onFrame({
+    type: "result",
+    requestId: "page",
+    ok: true,
+    data: {
+      ok: true,
+      page: {
+        events: [event(1, "user_message", { text: "earlier" }), { ...event(2, "content_delta"), createdAt: 1.5 }, { id: "", type: "x" }],
+        hasMore: false,
+        beforeCursor: null,
+      },
+    },
+  });
+  await loading;
+  for (let i = 0; i < 5; i++) await settle();
+  const cached = await h.store.load("a");
+  assert.deepEqual(cached.events.map((item) => item.id), ["e1", "e5"]);
+  assert.equal(h.render().notice, "");
   h.unmount();
 });
