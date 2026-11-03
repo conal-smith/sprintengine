@@ -1443,3 +1443,59 @@ test('the watch ends when the socket follows another chat, and a host that holds
   assert.equal(answer?.ok, false)
   other.close(1000, '')
 })
+
+test("a paired phone's steer and queued send reach the host whole while its own send still waits on the turn", async () => {
+  // The phone's grant as it pairs. The lane takes the frames one beside
+  // another: a send whose answer waits on the turn it opened holds nothing
+  // up, so a steer can still beat that turn's end and a queued message is
+  // held at once rather than after it.
+  const socket = new Socket()
+  const reached: Array<[string, unknown]> = []
+  let endTurn: () => void = () => {}
+  const turn = new Promise<void>((resolve) => (endTurn = resolve))
+  const gateway = host()
+  gateway.command = async (_key, _device, id, command) => {
+    reached.push([id, command])
+    if (id === 'first') await turn
+    return { ok: true }
+  }
+  const stream = createTailnetConversationStream({
+    socket,
+    deviceId: 'device',
+    deviceName: 'android-phone',
+    scopes: ['workspace:read', 'workspace:operate', 'conversation:read', 'conversation:operate'],
+    host: gateway,
+    onClosed: () => {},
+    audit: () => {},
+  })
+  socket.receive({ type: 'subscribe', key: { workspaceId: 'w', agentId: 'a' } })
+  await tick()
+  socket.receive({ type: 'command', commandId: 'first', command: { kind: 'send', message: 'check the logs' } })
+  socket.receive({
+    type: 'command',
+    commandId: 'steer',
+    command: { kind: 'send', message: 'use the other file', steer: true, composedAt: 1 },
+  })
+  socket.receive({
+    type: 'command',
+    commandId: 'queued',
+    command: { kind: 'send', message: 'then the tests', queue: true, composedAt: 1 },
+  })
+  await waitFor(() => reached.length === 3, 'all three reach the host before the turn ends')
+  assert.deepEqual(reached.slice(1), [
+    ['steer', { kind: 'send', message: 'use the other file', steer: true, composedAt: 1 }],
+    ['queued', { kind: 'send', message: 'then the tests', queue: true, composedAt: 1 }],
+  ])
+  const answered = () =>
+    (socket.output() as Array<Frame & { commandId?: string; ok?: boolean }>)
+      .filter((frame) => frame.type === 'commandResult')
+      .map((frame) => [frame.commandId, frame.ok])
+  await waitFor(() => answered().length === 2, 'the steer and the queued send are answered')
+  assert.deepEqual(answered(), [
+    ['steer', true],
+    ['queued', true],
+  ])
+  endTurn()
+  await waitFor(() => answered().length === 3, 'the first is answered as its turn ends')
+  stream.close(1000, '')
+})

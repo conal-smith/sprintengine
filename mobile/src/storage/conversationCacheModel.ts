@@ -48,6 +48,10 @@ const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 const integer = (value: unknown): value is number =>
   Number.isSafeInteger(value) && Number(value) >= 0;
+// What the wire takes as an event (`conversationWire.ts`), and no more: an
+// event the screen holds is one the cache can keep. Asking more of it here
+// (it once wanted the session, workspace and agent ids to be strings, which
+// the wire never checked) failed every write of a chat whose log held one.
 function validEvent(value: unknown): value is ConversationEvent {
   return (
     object(value) &&
@@ -55,9 +59,6 @@ function validEvent(value: unknown): value is ConversationEvent {
     value.id.length > 0 &&
     typeof value.type === "string" &&
     integer(value.createdAt) &&
-    typeof value.sessionId === "string" &&
-    typeof value.workspaceId === "string" &&
-    typeof value.agentId === "string" &&
     (value.seq === undefined || integer(value.seq)) &&
     (value.payload === undefined || object(value.payload))
   );
@@ -71,7 +72,6 @@ function validCache(value: unknown): value is CachedConversation {
         value.generation.length === 0 ||
         value.generation.length > 200)) ||
     !Array.isArray(value.events) ||
-    !value.events.every(validEvent) ||
     !Array.isArray(value.pending) ||
     value.pending.length > MAX_PENDING_SENDS
   )
@@ -112,6 +112,11 @@ export function boundedConversationCache(
     throw new Error(
       "Pending messages exceed local storage. Reconnect before sending more.",
     );
+  // The transcript is a copy the desktop can send again; the queue is not.
+  // An event the cache cannot keep leaves a hole in what it holds, so the
+  // transcript goes with it and the cursor too, as when nothing fits below:
+  // the next subscription asks for a fresh snapshot, and the queue is kept.
+  if (!value.events.every(validEvent)) return { lastSeq: 0, events: [], pending };
   const events: ConversationEvent[] = [];
   for (const event of value.events) {
     const previous = events.at(-1);
@@ -196,11 +201,20 @@ export function createConversationCacheStore(
       return null;
     }
   };
-  const read = async (stem: string) =>
-    (await Promise.all([readCopy(stem, 0), readCopy(stem, 1)]))
-      .filter((copy): copy is Copy => copy !== null)
-      .sort((a, b) => b.revision - a.revision || b.savedAt - a.savedAt)[0] ??
-    null;
+  const read = async (stem: string) => {
+    // Both copies are waited for even when one fails, so that no read of this
+    // chat is still under way when the transaction that asked for it ends and
+    // the next one writes the same file.
+    const copies = await Promise.allSettled([readCopy(stem, 0), readCopy(stem, 1)]);
+    const failed = copies.find((copy) => copy.status === "rejected");
+    if (failed) throw failed.reason;
+    return (
+      copies
+        .map((copy) => (copy.status === "fulfilled" ? copy.value : null))
+        .filter((copy): copy is Copy => copy !== null)
+        .sort((a, b) => b.revision - a.revision || b.savedAt - a.savedAt)[0] ?? null
+    );
+  };
   const write = async (
     stem: string,
     updater: (current: CachedConversation) => CachedConversation,
