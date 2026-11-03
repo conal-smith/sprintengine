@@ -11,7 +11,7 @@ import {
   dictationSourceLabel,
   dictationTail,
   freshTranscript,
-  isDictationSilence,
+  readDictationError,
   runWithSettled,
   settledTranscript,
   shouldKeepDictating,
@@ -192,15 +192,18 @@ export function useDictation(onText: (text: string) => void) {
   useSpeechRecognitionEvent("error", (event) => {
     if (!mine() || (!session.current && pending.current)) return;
     if (finishing.current) {
-      // A silence or the abort is the stop's to report; "end" follows. A
-      // failure ends the wait with the words already heard.
-      if (event.error !== "aborted" && !isDictationSilence(event.error)) finishSend("ended");
+      // The send stopped the recogniser, so what the stop provokes is the
+      // stop's to report; "end" follows. A failure ends the wait with the
+      // words already heard.
+      if (readDictationError(event.error, true) === "failure") finishSend("ended");
       return;
     }
     // A pause the recogniser gave up on ends this run; "end" follows and the
-    // next run starts. The person stopping it is not worth a word either.
-    if (isDictationSilence(event.error) && session.current && !session.current.stopping) return;
-    if (event.error === "aborted" || (isDictationSilence(event.error) && session.current?.stopping)) return;
+    // next run starts. The recogniser answering the person's stop is not
+    // worth a word either: "end" follows and keeps the words heard.
+    const reading = readDictationError(event.error, session.current?.stopping ?? false);
+    if (reading === "pause" && session.current) return;
+    if (reading === "stopped") return;
     setErrorTone(dictationErrorTone(event.error));
     setError(dictationErrorMessage(event.error, Platform.OS));
     finish();
