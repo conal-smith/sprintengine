@@ -139,6 +139,22 @@ export function createTailnetOAuthHttp(options: {
       })
       return true
     }
+    // The sign-in pages are opened by the client (a terminal opening the
+    // browser, or a link pasted into one), never by another site: a page
+    // elsewhere that navigates here could raise sign-in prompts on this
+    // machine at will. `Sec-Fetch-Site` is sent by every current browser on a
+    // navigation, and `cross-site` is a navigation started by some other site.
+    if (route.kind === 'page' && headerValue(request, 'sec-fetch-site') === 'cross-site') {
+      writePage(
+        response,
+        403,
+        errorPage(
+          'Open this sign-in from your MCP client.',
+          'Studio does not start a sign-in from a link on another website. Start it again from your MCP client.',
+        ),
+      )
+      return true
+    }
     const origin = originFor(request, context.via)
     if (!origin) {
       // The names it does answer to are not listed: a page that rebound its
@@ -243,12 +259,18 @@ export function createTailnetOAuthHttp(options: {
         ),
       )
     const redirectKind = checkRedirectUri(redirectUri)!
-    // From here the return address is known good, so errors go back to the
-    // client as RFC 6749 4.1.2.1 has them, where it can say what went wrong.
+    // From here the return address is one the client registered, so errors go
+    // back to it as RFC 6749 4.1.2.1 has them, where it can say what went
+    // wrong — when it is a loopback address on the browser's own machine. An
+    // https one is anywhere on the web, and registering is open to anyone, so
+    // until a person has approved the sign-in an error is shown here instead:
+    // otherwise any link to this page would be a redirect to any site.
     const rawState = query.get('state')
     const state = rawState !== null && rawState.length <= MAX_STATE_LENGTH ? rawState : null
     const refuse = (error: string, description: string): void =>
-      redirect(response, redirectUri, { error, error_description: description, state, iss: origin })
+      redirectKind.kind === 'loopback'
+        ? redirect(response, redirectUri, { error, error_description: description, state, iss: origin })
+        : writePage(response, 400, errorPage('This sign-in cannot continue.', `${description} (${error})`))
     if (repeated) return refuse('invalid_request', `${repeated} is given more than once.`)
     if (rawState !== null && state === null) return refuse('invalid_request', 'state is too long.')
     if (query.get('response_type') !== 'code')
@@ -290,6 +312,9 @@ export function createTailnetOAuthHttp(options: {
       if (raised.code === 'denied_recently') return refuse('access_denied', raised.message)
       return refuse('temporarily_unavailable', raised.message)
     }
+    // The sign-ins this one replaced will never be answered: their pages are
+    // forgotten with them, so one peer retrying cannot crowd out another's.
+    for (const id of raised.replaced) options.store.endAuthorization(id)
     const pending: OAuthPendingAuthorization = {
       requestId: raised.request.id,
       keyHash: hashSecret(key),
@@ -347,6 +372,14 @@ export function createTailnetOAuthHttp(options: {
       options.store.endAuthorization(id)
       redirect(response, pending.redirectUri, { ...params, state: pending.state, iss: pending.issuer })
     }
+    // A refusal goes back to a client on this browser's machine; to a web
+    // service it is shown here, for the reason the authorize step gives.
+    const refuseBack = (description: string): void => {
+      if (checkRedirectUri(pending.redirectUri)?.kind === 'loopback')
+        return back({ error: 'access_denied', error_description: description })
+      options.store.endAuthorization(id)
+      writePage(response, 200, errorPage('This sign-in was not allowed.', description))
+    }
     switch (outcome.status) {
       case 'pending':
         return writePage(
@@ -360,9 +393,9 @@ export function createTailnetOAuthHttp(options: {
         return back({ code })
       }
       case 'denied':
-        return back({ error: 'access_denied', error_description: 'The person at Studio declined this sign-in.' })
+        return refuseBack('The person at Studio declined this sign-in.')
       case 'expired':
-        return back({ error: 'access_denied', error_description: 'Nobody answered the sign-in in Studio in time.' })
+        return refuseBack('Nobody answered the sign-in in Studio in time.')
     }
   }
 
@@ -399,7 +432,11 @@ export function createTailnetOAuthHttp(options: {
       if (!outcome.ok) return tokenError(response, outcome.error, outcome.description)
       // The grant is held to the node that redeemed the code: that is the
       // machine the client runs on, which is what every later call comes from.
-      const bound = options.devices.verifyPeer(outcome.deviceId, peer)
+      // A sign-in whose node cannot be named is not completed at all: unbound,
+      // its tokens would be good from any machine on the tailnet.
+      const bound: { ok: true } | { ok: false; message: string } = peer?.stableNodeId
+        ? options.devices.verifyPeer(outcome.deviceId, peer)
+        : { ok: false, message: UNNAMED_PEER }
       if (!bound.ok) {
         options.devices.revokeDevice(outcome.deviceId)
         return tokenError(response, 'invalid_grant', bound.message)
@@ -409,12 +446,15 @@ export function createTailnetOAuthHttp(options: {
     }
     if (grantType === 'refresh_token') {
       const refreshToken = form.get('refresh_token') ?? ''
-      if (!refreshToken) return tokenError(response, 'invalid_request', 'refresh_token is required.')
+      // A public client names itself on a refresh (OAuth 2.1 4.3.1).
+      if (!refreshToken || !clientId)
+        return tokenError(response, 'invalid_request', 'refresh_token and client_id are required.')
       const outcome = options.store.refresh({
         refreshToken,
         clientId,
         resource,
         admit: (deviceId) => {
+          if (!peer?.stableNodeId) return { ok: false, error: 'invalid_grant', description: UNNAMED_PEER }
           const check = options.devices.verifyPeer(deviceId, peer)
           return check.ok ? null : { ok: false, error: 'invalid_grant', description: check.message }
         },
@@ -453,6 +493,14 @@ export function createTailnetOAuthHttp(options: {
     primaryOrigin: (via) => originsFor(via)[0] ?? null,
     resources,
   }
+}
+
+const UNNAMED_PEER =
+  'Studio could not confirm through Tailscale which machine is signing in, so the sign-in is not completed. Check that Tailscale is running on both machines and sign in again.'
+
+function headerValue(request: IncomingMessage, name: string): string | null {
+  const value = request.headers[name]
+  return typeof value === 'string' ? value.trim().toLowerCase() : null
 }
 
 type RouteKind = 'resource-metadata' | 'server-metadata' | 'register' | 'page' | 'token' | 'revoke'

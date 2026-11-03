@@ -219,6 +219,12 @@ export const TAILNET_UPDATE_DEVICE_SCOPES_CHANNEL = 'tailnet:update-device-scope
  * tailnet, which is the person's decision.
  */
 export const TAILNET_SET_HTTPS_CHANNEL = 'tailnet:set-https'
+/**
+ * Forget every MCP client registration, so each client registers afresh
+ * before it next signs in (a new signing key for client ids). Signed-in
+ * clients are untouched; each is revoked on its own row. IPC-only.
+ */
+export const TAILNET_RESET_MCP_REGISTRATIONS_CHANNEL = 'tailnet:reset-mcp-registrations'
 
 /** What `offer-pairing` returns: the one-time code, shown once and never re-readable. */
 export type TailnetPairingOfferView = {

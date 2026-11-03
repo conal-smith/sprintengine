@@ -257,6 +257,15 @@ export function RemoteTailnetSettingsTab() {
       setStatus(await window.api.tailnetSetHttps(next))
     })
 
+  const resetRegistrations = (): Promise<void> =>
+    run('Resetting MCP client registrations.', async () => {
+      setStatus(await window.api.tailnetResetMcpRegistrations())
+      setAction({
+        tone: 'idle',
+        message: 'MCP client registrations reset. Each client registers again before it next signs in.',
+      })
+    })
+
   const revokeClient = (device: TailnetDevice): Promise<void> =>
     run(`Revoking ${device.name}.`, async () => {
       setStatus(await window.api.tailnetRevokeDevice(device.id))
@@ -439,6 +448,7 @@ export function RemoteTailnetSettingsTab() {
         now={now}
         busy={busy}
         onSetHttps={(next) => void setHttps(next)}
+        onResetRegistrations={() => void resetRegistrations()}
         onRevoke={(device) => void revokeClient(device)}
         onUpdateScopes={(device, scopes) => void updateClientScopes(device, scopes)}
       />

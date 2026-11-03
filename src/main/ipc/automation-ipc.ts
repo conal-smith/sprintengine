@@ -12,6 +12,7 @@ import {
   TAILNET_SET_ENABLED_CHANNEL,
   TAILNET_UPDATE_DEVICE_SCOPES_CHANNEL,
   TAILNET_SET_HTTPS_CHANNEL,
+  TAILNET_RESET_MCP_REGISTRATIONS_CHANNEL,
 } from '../../shared/tailnet'
 import { TAILNET_FORGET_MACHINE_CHANNEL } from '../../shared/tailnet-mesh'
 import { TAILNET_LIST_PEERS_CHANNEL } from '../../shared/tailnet-peers'
@@ -57,7 +58,9 @@ export function registerAutomationIpc(ipcMain: IpcMain, service: AutomationServi
   // The code is the six digits on the ASKER's screen, typed here: main
   // compares, so a window cannot approve what its person did not read.
   ipcMain.handle(TAILNET_APPROVE_PAIR_REQUEST_CHANNEL, (_event, id: unknown, scopes: unknown, code: unknown) =>
-    service.approveTailnetPairRequest({ id: typeof id === 'string' ? id : '', scopes, code }),
+    // `via: 'ipc'` is what lets a window, and only a window, approve an MCP
+    // client's sign-in; anything that leaves it out is refused one.
+    service.approveTailnetPairRequest({ id: typeof id === 'string' ? id : '', scopes, code, via: 'ipc' }),
   )
   ipcMain.handle(TAILNET_DENY_PAIR_REQUEST_CHANNEL, (_event, id: unknown) =>
     service.denyTailnetPairRequest(typeof id === 'string' ? id : ''),
@@ -76,6 +79,7 @@ export function registerAutomationIpc(ipcMain: IpcMain, service: AutomationServi
   // Serve configuration, which outlives the app: the person's decision, on
   // this door alone.
   ipcMain.handle(TAILNET_SET_HTTPS_CHANNEL, (_event, enabled: unknown) => service.setTailnetHttps(enabled === true))
+  ipcMain.handle(TAILNET_RESET_MCP_REGISTRATIONS_CHANNEL, () => service.resetTailnetMcpRegistrations())
   // Both halves of one pairing, ended together: the device that machine holds
   // here, and the credential this machine holds there. Either may be absent.
   ipcMain.handle(TAILNET_FORGET_MACHINE_CHANNEL, (_event, input: unknown) => {

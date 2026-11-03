@@ -2,7 +2,7 @@ import React from 'react'
 
 import type { TailnetDevice, TailnetRemoteStatus, TailnetScope } from '../../../../shared/tailnet'
 import { relativeSeen } from '../../../../shared/tailnet-machines'
-import { CopyGlyphButton, GhostButton, LinkButton, Popover, PrimaryButton } from '../ui'
+import { CopyGlyphButton, GhostButton, LinkButton, OutlineButton, Popover, PrimaryButton } from '../ui'
 import { MachineList } from '../remote/MachineRow'
 import { ScopePicker } from '../remote/ScopePicker'
 import { SettingCard, SettingsRow, SettingsSectionTitle, SettingToggle } from './SettingsAtoms'
@@ -25,6 +25,7 @@ export function RemoteMcpSection({
   now,
   busy,
   onSetHttps,
+  onResetRegistrations,
   onRevoke,
   onUpdateScopes,
 }: {
@@ -32,6 +33,7 @@ export function RemoteMcpSection({
   now: number
   busy: boolean
   onSetHttps: (enabled: boolean) => void
+  onResetRegistrations: () => void
   onRevoke: (device: TailnetDevice) => void
   onUpdateScopes: (device: TailnetDevice, scopes: TailnetScope[]) => void
 }) {
@@ -62,6 +64,17 @@ export function RemoteMcpSection({
           disabled={busy || !status?.running || https?.state === 'starting'}
           requirement={status?.running ? undefined : 'Needs remote control on'}
         />
+        {/* A registration is a signed client id, held by the client and not
+            here, so the only way to take them back is to stop honouring all
+            of them. Signed-in clients are revoked on their own rows. */}
+        <SettingsRow
+          label="Client registrations"
+          help="Every client that registered can ask to sign in. Reset makes each one register again first; signed-in clients keep working."
+        >
+          <OutlineButton size="sm" disabled={busy || !status?.running} onClick={onResetRegistrations}>
+            Reset
+          </OutlineButton>
+        </SettingsRow>
       </SettingCard>
       {clients.length > 0 ? (
         <MachineList ariaLabel="MCP clients">

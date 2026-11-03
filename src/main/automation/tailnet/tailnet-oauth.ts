@@ -164,7 +164,7 @@ export type TailnetOAuthStore = {
   /** A refresh: the presented token is spent and a new pair issued. A spent one revokes the grant. */
   refresh(input: {
     refreshToken: string
-    clientId: string | null
+    clientId: string
     resource: string | null
     /**
      * Whether the grant may be refreshed from the node asking, judged before
@@ -177,6 +177,13 @@ export type TailnetOAuthStore = {
   authenticateAccessToken(token: string): OAuthAccessCheck
   /** RFC 7009: a refresh token ends its grant; an access token ends itself. Unknown tokens are no error. */
   revokeToken(token: string): void
+  /**
+   * Forget every registration: a new signing key, so no client id issued so
+   * far is accepted again and each client registers afresh before its next
+   * sign-in. Clients already signed in keep their grants; revoke them one by
+   * one.
+   */
+  resetRegistrations(): void
   /** When a device's sign-in ends, for an OAuth client's device with a grant. */
   grantExpiry(deviceId: string): number | null
   /** Drop expired grants and sign-ins never completed; called on a timer and before reads. */
@@ -426,8 +433,7 @@ export function createTailnetOAuthStore(options: {
         }
         return invalidGrant('That refresh token is not valid, or the sign-in has ended. Sign in again.')
       }
-      if (input.clientId !== null && input.clientId !== grant.clientId)
-        return invalidGrant('That refresh token was issued to a different client.')
+      if (input.clientId !== grant.clientId) return invalidGrant('That refresh token was issued to a different client.')
       if (input.resource !== null && input.resource !== grant.resource)
         return { ok: false, error: 'invalid_target', description: 'resource does not match the one signed in for.' }
       const refused = input.admit?.(grant.deviceId)
@@ -471,6 +477,11 @@ export function createTailnetOAuthStore(options: {
           return
         }
       }
+    },
+
+    resetRegistrations() {
+      signingKey = randomBytes(32)
+      persist()
     },
 
     grantExpiry: (deviceId) => grants.find((grant) => grant.deviceId === deviceId)?.expiresAtMs ?? null,

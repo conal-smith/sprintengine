@@ -121,3 +121,21 @@ export async function withdrawGatewayHttps(input: {
   if (result.ok) forgetRecord(input.recordDir)
   else input.log?.(`tailnet HTTPS: the serve mapping on port ${servePort} was not turned off: ${result.message}`)
 }
+
+/**
+ * Take down a mapping an earlier run recorded and did not get to remove (it
+ * crashed, or was killed), while HTTPS is not wanted now. Left up, Serve would
+ * keep forwarding tailnet callers, tokens and all, to a loopback port nothing
+ * of Studio's listens on any more, which any process here could take. Asks
+ * Tailscale nothing when there is no record.
+ */
+export async function withdrawRecordedGatewayHttps(input: {
+  recordDir: string
+  deps?: TailscaleServeDeps
+  log?: (message: string) => void
+}): Promise<void> {
+  const recorded = readRecord(input.recordDir)
+  if (!recorded) return
+  input.log?.(`tailnet HTTPS: removing the serve mapping an earlier run left on port ${recorded.servePort}`)
+  await withdrawGatewayHttps({ ...input, localPort: recorded.localPort, servePort: recorded.servePort })
+}

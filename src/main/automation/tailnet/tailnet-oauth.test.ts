@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomBytes } from 'node:crypto'
 import { request as httpRequest } from 'node:http'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'vitest'
@@ -21,6 +21,7 @@ import {
   type TailnetOAuthStore,
 } from './tailnet-oauth'
 import { canonicalResource } from './tailnet-oauth-http'
+import { withdrawRecordedGatewayHttps } from './tailnet-gateway-https'
 import type { TailnetPeerIdentity } from './tailnet-peer-identity'
 import { createTailnetRemoteService } from './tailnet-service'
 import { writeTailnetSettings } from './tailnet-settings'
@@ -720,6 +721,7 @@ test('refresh tokens rotate, and a replayed one revokes the grant', async () => 
     // The old one, presented again: two parties hold this grant.
     const replay = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
       grant_type: 'refresh_token',
+      client_id: signIn.clientId,
       refresh_token: refresh,
     })
     assert.equal(replay.json.error, 'invalid_grant')
@@ -729,6 +731,7 @@ test('refresh tokens rotate, and a replayed one revokes the grant', async () => 
     assert.match(String(revoked.headers['www-authenticate']), /error="invalid_token"/u)
     const newer = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
       grant_type: 'refresh_token',
+      client_id: signIn.clientId,
       refresh_token: first.json.refresh_token,
     })
     assert.equal(newer.json.error, 'invalid_grant')
@@ -737,7 +740,7 @@ test('refresh tokens rotate, and a replayed one revokes the grant', async () => 
 
 test('an access token expires after an hour, and the sign-in after 30 days however it is used', async () => {
   await withGateway(async (gateway) => {
-    const { access, refresh } = await signedIn(gateway)
+    const { signIn, access, refresh } = await signedIn(gateway)
     gateway.advance(OAUTH_ACCESS_TOKEN_TTL_MS + 1000)
     const expired = await mcp(gateway.port, access, initialize)
     assert.equal(expired.status, 401)
@@ -745,6 +748,7 @@ test('an access token expires after an hour, and the sign-in after 30 days howev
     assert.match(String(expired.headers['www-authenticate']), /error="invalid_token"/u)
     const refreshed = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
       grant_type: 'refresh_token',
+      client_id: signIn.clientId,
       refresh_token: refresh,
     })
     assert.equal(refreshed.status, 200)
@@ -754,6 +758,7 @@ test('an access token expires after an hour, and the sign-in after 30 days howev
       gateway.advance(24 * 60 * 60 * 1000)
       const next = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
         grant_type: 'refresh_token',
+        client_id: signIn.clientId,
         refresh_token: current,
       })
       if (next.status !== 200) break
@@ -763,6 +768,7 @@ test('an access token expires after an hour, and the sign-in after 30 days howev
     gateway.advance(OAUTH_GRANT_TTL_MS)
     const ended = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
       grant_type: 'refresh_token',
+      client_id: signIn.clientId,
       refresh_token: current,
     })
     assert.equal(ended.json.error, 'invalid_grant')
@@ -772,13 +778,14 @@ test('an access token expires after an hour, and the sign-in after 30 days howev
 
 test('a grant is held to the node that redeemed its code', async () => {
   await withGateway(async (gateway) => {
-    const { access, refresh } = await signedIn(gateway)
+    const { signIn, access, refresh } = await signedIn(gateway)
     gateway.callFrom(BUILD_BOX)
     const elsewhere = await mcp(gateway.port, access, initialize)
     assert.equal(elsewhere.status, 401)
     assert.equal(elsewhere.json.error.code, 'peer_mismatch')
     const refreshElsewhere = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
       grant_type: 'refresh_token',
+      client_id: signIn.clientId,
       refresh_token: refresh,
     })
     assert.equal(refreshElsewhere.json.error, 'invalid_grant')
@@ -786,6 +793,7 @@ test('a grant is held to the node that redeemed its code', async () => {
     gateway.callFrom(MAC_MINI)
     const home = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
       grant_type: 'refresh_token',
+      client_id: signIn.clientId,
       refresh_token: refresh,
     })
     assert.equal(home.status, 200)
@@ -794,12 +802,13 @@ test('a grant is held to the node that redeemed its code', async () => {
 
 test('revoking the device in Settings stops its tokens at once', async () => {
   await withGateway(async (gateway) => {
-    const { access, refresh } = await signedIn(gateway)
+    const { signIn, access, refresh } = await signedIn(gateway)
     const device = gateway.devices.listDevices()[0]!
     gateway.devices.revokeDevice(device.id)
     assert.equal((await mcp(gateway.port, access, initialize)).status, 401)
     const refreshed = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
       grant_type: 'refresh_token',
+      client_id: signIn.clientId,
       refresh_token: refresh,
     })
     assert.equal(refreshed.json.error, 'invalid_grant')
@@ -986,16 +995,19 @@ test('behind Tailscale Serve, X-Forwarded-For is the peer there and only there, 
     assert.equal(server.serveAddress()?.port, servePort)
     const metadata = await http(servePort, 'GET', '/.well-known/oauth-authorization-server', {
       host: 'mac-mini.example.ts.net',
+      headers: { 'X-Forwarded-For': '100.64.0.9' },
     })
     assert.equal(metadata.status, 200)
     assert.equal(metadata.json.issuer, 'https://mac-mini.example.ts.net')
     assert.equal(metadata.json.token_endpoint, `https://mac-mini.example.ts.net${TAILNET_OAUTH_TOKEN_PATH}`)
-    const wrongHost = await http(servePort, 'GET', '/.well-known/oauth-authorization-server')
+    const wrongHost = await http(servePort, 'GET', '/.well-known/oauth-authorization-server', {
+      headers: { 'X-Forwarded-For': '100.64.0.9' },
+    })
     assert.equal(wrongHost.status, 421, 'the loopback listener answers to the HTTPS name only')
     const unauthorized = await http(servePort, 'POST', TAILNET_MCP_PATH, {
       host: 'mac-mini.example.ts.net',
       body: JSON.stringify(initialize),
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '100.64.0.9' },
     })
     assert.match(
       String(unauthorized.headers['www-authenticate']),
@@ -1022,7 +1034,7 @@ test('behind Tailscale Serve, X-Forwarded-For is the peer there and only there, 
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'X-Forwarded-For': '8.8.8.8' },
     })
-    assert.deepEqual(asked, [''], 'an address off the tailnet is no peer at all')
+    assert.deepEqual(asked, [], 'an address off the tailnet is not served at all')
     asked.length = 0
     await mcp(port, token, { jsonrpc: '2.0', id: 1, method: 'ping' }, { 'X-Forwarded-For': '100.64.0.9' })
     assert.deepEqual(asked, ['127.0.0.1'], 'on the tailnet listener the header is ignored')
@@ -1098,3 +1110,221 @@ async function freePort(): Promise<number> {
   await new Promise<void>((resolve) => probe.close(() => resolve()))
   return port
 }
+
+// ── Hardening ─────────────────────────────────────────────────────────────
+
+test('a sign-in whose node Tailscale cannot name is not completed, and an unnamed refresh is refused', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    approve(gateway, signIn)
+    const code = await codeFor(gateway, signIn)
+    gateway.callFrom(null)
+    const refused = await exchange(gateway, signIn, code)
+    assert.equal(refused.json.error, 'invalid_grant')
+    assert.match(refused.json.error_description, /could not confirm through Tailscale/u)
+    assert.equal(gateway.devices.listDevices().length, 0, 'no unbound grant is left behind')
+    gateway.callFrom(MAC_MINI)
+    const { signIn: second, refresh } = await signedIn(gateway)
+    gateway.callFrom(null)
+    const unnamed = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      refresh_token: refresh,
+      client_id: second.clientId,
+    })
+    assert.equal(unnamed.json.error, 'invalid_grant')
+  })
+})
+
+test('a refresh names its client', async () => {
+  await withGateway(async (gateway) => {
+    const { refresh } = await signedIn(gateway)
+    const answer = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      refresh_token: refresh,
+    })
+    assert.equal(answer.json.error, 'invalid_request')
+  })
+})
+
+test('a sign-in another one replaced is forgotten with it', async () => {
+  await withGateway(async (gateway) => {
+    const first = await startSignIn(gateway)
+    await startSignIn(gateway)
+    const stale = await http(gateway.port, 'GET', first.waitPath)
+    assert.equal(stale.status, 404)
+    assert.equal(gateway.oauth.pendingAuthorization(first.requestId), null)
+  })
+})
+
+test('a client returning to a web host is shown its errors, not redirected, until a person approves it', async () => {
+  await withGateway(async (gateway) => {
+    const web = 'https://agent.example.com/callback'
+    const clientId = await register(gateway, [web])
+    const { challenge } = pkce()
+    const bad = await http(
+      gateway.port,
+      'GET',
+      authorizePath({
+        response_type: 'token',
+        client_id: clientId,
+        redirect_uri: web,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }),
+    )
+    assert.equal(bad.status, 400)
+    assert.equal(bad.headers.location, undefined, 'no redirect to the web host before approval')
+    assert.match(bad.text, /unsupported_response_type/u)
+    const opened = await http(
+      gateway.port,
+      'GET',
+      authorizePath({
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: web,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }),
+    )
+    assert.equal(opened.status, 303)
+    const requestId = gateway.devices.listPairRequests()[0]!.id
+    gateway.devices.denyPairRequest(requestId)
+    const declined = await http(gateway.port, 'GET', String(opened.headers.location))
+    assert.equal(declined.status, 200)
+    assert.equal(declined.headers.location, undefined)
+    assert.match(declined.text, /declined/u)
+  })
+})
+
+test('a sign-in started by another website is refused, and one opened directly is not', async () => {
+  await withGateway(async (gateway) => {
+    const clientId = await register(gateway)
+    const { challenge } = pkce()
+    const path = authorizePath({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    })
+    const crossSite = await http(gateway.port, 'GET', path, { headers: { 'Sec-Fetch-Site': 'cross-site' } })
+    assert.equal(crossSite.status, 403)
+    assert.equal(gateway.devices.listPairRequests().length, 0)
+    const direct = await http(gateway.port, 'GET', path, { headers: { 'Sec-Fetch-Site': 'none' } })
+    assert.equal(direct.status, 303)
+  })
+})
+
+test('resetting registrations stops every client id issued so far, and leaves signed-in clients alone', async () => {
+  await withGateway(async (gateway) => {
+    const { signIn, access } = await signedIn(gateway)
+    gateway.oauth.resetRegistrations()
+    assert.equal(gateway.oauth.clientFor(signIn.clientId), null)
+    assert.equal((await mcp(gateway.port, access, initialize)).status, 200)
+  })
+})
+
+test('a sign-in is approved only with an explicit window answer', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    const unsaid = gateway.devices.approvePairRequest({
+      id: signIn.requestId,
+      scopes: [...TAILNET_SCOPES],
+      code: signIn.code,
+    })
+    assert.equal(!unsaid.ok && unsaid.code, 'approve_in_window')
+  })
+})
+
+test('behind Tailscale Serve, a caller with no tailnet address, or one that came through Funnel, is refused', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-funnel-'))
+  const devices = createTailnetDeviceStore({ resolveUserDataDir: () => dir })
+  const oauth = createTailnetOAuthStore({ resolveUserDataDir: () => dir, devices })
+  const server = createTailnetGatewayServer({
+    bindAddress: '127.0.0.1',
+    port: 0,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: () => false,
+    devices,
+    peers: { identify: async () => MAC_MINI, resolve: async () => MAC_MINI.name },
+    oauth: { store: oauth },
+    publicOrigins: () => ({ tailnet: [], serve: 'https://mac-mini.example.ts.net' }),
+  })
+  await server.start()
+  try {
+    const servePort = await server.openServeListener()
+    const ask = (headers: Record<string, string>) =>
+      http(servePort, 'GET', '/.well-known/oauth-authorization-server', { host: 'mac-mini.example.ts.net', headers })
+    assert.equal((await ask({})).status, 403, 'no forwarded address: a process on this machine')
+    assert.equal((await ask({ 'X-Forwarded-For': '203.0.113.9' })).json.error.code, 'tailnet_peer_required')
+    const funnel = await ask({ 'X-Forwarded-For': '100.64.0.9', 'Tailscale-Funnel-Request': '?1' })
+    assert.equal(funnel.status, 403)
+    assert.equal(funnel.json.error.code, 'funnel_not_allowed')
+    assert.equal((await ask({ 'X-Forwarded-For': '100.64.0.9' })).status, 200)
+  } finally {
+    oauth.dispose()
+    await server.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a serve mapping an earlier run left behind is withdrawn at startup while HTTPS is off', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-stale-'))
+  const ran: string[][] = []
+  writeFileSync(join(dir, 'tailnet-https-serve.json'), JSON.stringify({ servePort: 443, localPort: 51234 }))
+  const status = JSON.stringify({
+    TCP: { '443': { HTTPS: true } },
+    Web: { 'mac-mini.example.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:51234' } } } },
+  })
+  try {
+    await withdrawRecordedGatewayHttps({
+      recordDir: dir,
+      deps: {
+        read: async () => status,
+        run: async (args) => {
+          ran.push([...args])
+          return { ok: true, stdout: '', stderr: '' }
+        },
+      },
+    })
+    assert.deepEqual(ran, [['serve', '--https=443', 'off']])
+    assert.equal(existsSync(join(dir, 'tailnet-https-serve.json')), false)
+    // Not ours any more (pointed elsewhere since): left alone.
+    ran.length = 0
+    writeFileSync(join(dir, 'tailnet-https-serve.json'), JSON.stringify({ servePort: 443, localPort: 40000 }))
+    await withdrawRecordedGatewayHttps({
+      recordDir: dir,
+      deps: {
+        read: async () => status,
+        run: async (args) => (ran.push([...args]), { ok: true, stdout: '', stderr: '' }),
+      },
+    })
+    assert.deepEqual(ran, [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  let withdrawn = 0
+  const serviceDir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-stale-service-'))
+  writeTailnetSettings(serviceDir, { enabled: false, port: 1, notifications: false })
+  const service = createTailnetRemoteService({
+    resolveUserDataDir: () => serviceDir,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: () => false,
+    resolveBindAddress: () => '127.0.0.1',
+    withdrawStaleHttps: async () => {
+      withdrawn += 1
+    },
+  })
+  try {
+    await service.initialize()
+    assert.equal(withdrawn, 1)
+  } finally {
+    await service.shutdown()
+    rmSync(serviceDir, { recursive: true, force: true })
+  }
+})

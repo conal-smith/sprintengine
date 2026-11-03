@@ -105,13 +105,19 @@ function buttonNamed(host: HTMLElement, name: RegExp): HTMLButtonElement | null 
 }
 
 test('the section shows the URL to give a client and lists the clients let in, and only those', async () => {
-  const calls = { https: [] as boolean[], revoked: [] as string[], scopes: [] as Array<[string, TailnetScope[]]> }
+  const calls = {
+    reset: [] as boolean[],
+    https: [] as boolean[],
+    revoked: [] as string[],
+    scopes: [] as Array<[string, TailnetScope[]]>,
+  }
   const { host, unmount } = await mount(
     <RemoteMcpSection
       status={STATUS}
       now={NOW}
       busy={false}
       onSetHttps={(next) => calls.https.push(next)}
+      onResetRegistrations={() => calls.reset.push(true)}
       onRevoke={(device) => calls.revoked.push(device.id)}
       onUpdateScopes={(device, scopes) => calls.scopes.push([device.id, scopes])}
     />,
@@ -134,6 +140,8 @@ test('the section shows the URL to give a client and lists the clients let in, a
     assert.equal(httpsSwitch.getAttribute('aria-checked'), 'true')
     await act(async () => httpsSwitch.click())
     assert.deepEqual(calls.https, [false])
+    await act(async () => buttonNamed(host, /^Reset$/u)!.click())
+    assert.deepEqual(calls.reset, [true])
   } finally {
     unmount()
   }

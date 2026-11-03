@@ -433,6 +433,7 @@ export function createAutomationService(options: AutomationServiceOptions) {
     updateTailnetDeviceScopes: (deviceId: string, scopes: unknown): TailnetRemoteStatus =>
       tailnetService().updateDeviceScopes(deviceId, scopes),
     setTailnetHttps: (enabled: boolean): Promise<TailnetRemoteStatus> => tailnetService().setHttps(enabled),
+    resetTailnetMcpRegistrations: (): TailnetRemoteStatus => tailnetService().resetMcpRegistrations(),
     /**
      * End a pairing in both directions at once (remote-settings-rebuild).
      *

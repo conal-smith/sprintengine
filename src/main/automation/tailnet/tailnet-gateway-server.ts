@@ -969,6 +969,15 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     // transport is a browser, and a page on a tailnet machine must not be able
     // to drive the gateway through a user's browser (DNS-rebinding class).
     // Refusing outright is the honest rule; there is no origin to allow.
+    // Behind Tailscale Serve, only a node on this tailnet is served. Serve
+    // marks a request that came in through Funnel (from the internet), and
+    // one with no tailnet address behind it came from this machine or from
+    // nowhere Serve knows: neither is a caller this listener is for.
+    const behindServe = via === 'serve' ? serveRefusal(request) : null
+    if (behindServe) {
+      writeJson(response, 403, { error: behindServe })
+      return
+    }
     if (request.headers.origin) {
       writeJson(response, 403, {
         error: {
@@ -1552,6 +1561,10 @@ export function createTailnetGatewayServer(options: TailnetGatewayServerOptions)
     via: TailnetListenerKind,
   ): Promise<void> {
     if (request.headers.origin) return rejectUpgrade(socket, 403, 'origin_not_allowed')
+    if (via === 'serve') {
+      const refused = serveRefusal(request)
+      if (refused) return rejectUpgrade(socket, 403, refused.code)
+    }
     const path = pathOf(request.url)
     const route = tailnetUpgradeRouteOf(path)
     if (!route) return rejectUpgrade(socket, 404, 'not_found')
@@ -2008,6 +2021,27 @@ function bearerOf(request: IncomingMessage): string | null {
  */
 function peerAddressOf(request: IncomingMessage, via: TailnetListenerKind): string {
   return via === 'serve' ? forwardedPeerAddress(request) : normalizeAddress(request.socket.remoteAddress)
+}
+
+/**
+ * Why a request on the listener behind Tailscale Serve is not served, or
+ * null. Serve sets `Tailscale-Funnel-Request` on a request that reached it
+ * through Funnel and strips any copy a client sent, so its presence means the
+ * internet; Funnel is refused when HTTPS is turned on, and this holds the line
+ * if someone turns it on afterwards.
+ */
+function serveRefusal(request: IncomingMessage): { code: string; message: string } | null {
+  if (headerOf(request, 'tailscale-funnel-request') !== null)
+    return {
+      code: 'funnel_not_allowed',
+      message: 'This Studio is not served over Tailscale Funnel. Reach it from your tailnet.',
+    }
+  if (!forwardedPeerAddress(request))
+    return {
+      code: 'tailnet_peer_required',
+      message: 'Only a machine on this tailnet is served here.',
+    }
+  return null
 }
 
 /** `X-Forwarded-For` as Tailscale Serve sets it: one tailnet address, or nothing usable. */

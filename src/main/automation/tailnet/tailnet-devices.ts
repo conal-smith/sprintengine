@@ -141,7 +141,8 @@ type TailnetPairingResult =
 export type TailnetPairRequestWithCode = TailnetPairRequest & { comparisonCode: string }
 
 type TailnetPairRequestResult =
-  | { ok: true; request: TailnetPairRequestWithCode }
+  /** `replaced`: the ids of this peer's earlier sign-ins this one replaced (always empty for a pair request). */
+  | { ok: true; request: TailnetPairRequestWithCode; replaced: string[] }
   | {
       ok: false
       code: 'invalid_device_name' | 'invalid_collect_hash' | 'too_many_requests' | 'denied_recently'
@@ -659,14 +660,21 @@ export function createTailnetDeviceStore(options: {
         }
       }
       const oauth = input.oauth ? readOAuthView(input.oauth) : null
+      const replaced: string[] = []
       if (oauth) {
         // A sign-in retried from the same peer replaces the one it left
         // waiting: the earlier page is gone with the attempt that opened it,
         // and refusing the retry as "already waiting" would leave the person
         // with no way forward but to wait out a prompt nobody can complete.
         for (const [id, entry] of pairRequests) {
-          if (entry.state.kind === 'pending' && entry.request.oauth && entry.request.peerAddress === input.peerAddress)
+          if (
+            entry.state.kind === 'pending' &&
+            entry.request.oauth &&
+            entry.request.peerAddress === input.peerAddress
+          ) {
             pairRequests.delete(id)
+            replaced.push(id)
+          }
         }
       }
       const pendingHere = [...pairRequests.values()].filter((entry) => entry.state.kind === 'pending')
@@ -698,7 +706,7 @@ export function createTailnetDeviceStore(options: {
         codeAttempts: 0,
         peer: input.peer ?? null,
       })
-      return { ok: true, request }
+      return { ok: true, request, replaced }
     },
 
     listPairRequests(): TailnetPairRequest[] {

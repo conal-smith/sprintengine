@@ -35,7 +35,12 @@ import { createTailnetFileUploads, TAILNET_UPLOADS_DIRNAME } from './tailnet-fil
 import type { McpToolCallEvent } from '../mcp-dispatch'
 import { createTailnetOAuthStore, type TailnetOAuthStore } from './tailnet-oauth'
 import type { TailnetPublicOrigins } from './tailnet-oauth-http'
-import { publishGatewayOverHttps, withdrawGatewayHttps, type GatewayHttpsResult } from './tailnet-gateway-https'
+import {
+  publishGatewayOverHttps,
+  withdrawGatewayHttps,
+  withdrawRecordedGatewayHttps,
+  type GatewayHttpsResult,
+} from './tailnet-gateway-https'
 import { readSelfDnsName } from './tailscale-serve'
 import { TAILNET_MCP_PATH } from './tailnet-routes'
 
@@ -100,6 +105,8 @@ export type TailnetRemoteService = {
    * answered, with the outcome in `status.mcp.https`.
    */
   setHttps(enabled: boolean): Promise<TailnetRemoteStatus>
+  /** Forget every MCP client registration (`TailnetOAuthStore.resetRegistrations`). */
+  resetMcpRegistrations(): TailnetRemoteStatus
   /**
    * Answer a pairing request that arrived from another machine, with the
    * scopes chosen HERE.
@@ -196,6 +203,8 @@ export type TailnetRemoteServiceOptions = {
   /** Tailscale Serve for HTTPS. Injected in tests; production runs the `tailscale` CLI. */
   publishHttps?: (localPort: number) => Promise<GatewayHttpsResult>
   withdrawHttps?: (localPort: number) => Promise<void>
+  /** Remove a mapping an earlier run left behind. Injected in tests. */
+  withdrawStaleHttps?: () => Promise<void>
   log?: (message: string) => void
 }
 
@@ -778,6 +787,15 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
 
   return {
     async initialize(): Promise<TailnetRemoteStatus> {
+      // A mapping a crashed run left is withdrawn unless this run is about to
+      // put up its own (which replaces it).
+      const current = loadSettings()
+      if (!current.enabled || current.https !== true) {
+        await (
+          options.withdrawStaleHttps ??
+          (() => withdrawRecordedGatewayHttps({ recordDir: options.resolveUserDataDir(), log: options.log }))
+        )().catch((error: unknown) => options.log?.(`tailnet HTTPS cleanup failed: ${message(error)}`))
+      }
       await startServer()
       return getStatus()
     },
@@ -861,7 +879,8 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
         id: requestId,
         scopes: normalizeTailnetScopes(input.scopes),
         code: input.code,
-        via: input.via ?? 'ipc',
+        // Passed as given: only an explicit 'ipc' may approve a sign-in.
+        via: input.via,
       })
       if (!outcome.ok) {
         if (outcome.code === 'code_mismatch') {
@@ -909,6 +928,11 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
     revokeDevice(deviceId): TailnetRemoteStatus {
       devices.revokeDevice(deviceId)
       emit({ kind: 'devices-changed' })
+      return getStatus()
+    },
+
+    resetMcpRegistrations(): TailnetRemoteStatus {
+      oauth.resetRegistrations()
       return getStatus()
     },
 
