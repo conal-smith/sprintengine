@@ -2,8 +2,13 @@ import { randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 
-import { STUDIO_PROTOCOL_MIN_SUPPORTED, STUDIO_PROTOCOL_VERSION } from '../../../packages/studio-protocol/src/public'
+import {
+  STUDIO_PROTOCOL_MIN_SUPPORTED,
+  STUDIO_PROTOCOL_VERSION,
+  authorizeStudioAccess,
+} from '../../../packages/studio-protocol/src/public'
 import { secretsMatch } from '../../main/automation/tailnet/secret-hash'
+import { WEB_HTTP_ACCESS, webTunnelPrincipal } from '../../shared/web-tunnel-access'
 import type { TunnelClient, TunnelPort } from '../ipc/ipc-tunnel'
 import { gateWebRequest, normalizeOrigin, requestOrigin, type WebOriginPolicy } from './web-origins'
 import {
@@ -322,7 +327,7 @@ export function createWebListener(options: WebListenerOptions): WebListener {
 
     if (url.pathname === '/api/upload' && method === 'POST' && options.uploads) {
       const session = sessionOf(request)
-      if (!session?.owner) {
+      if (!session || !authorizeStudioAccess(webTunnelPrincipal(session), WEB_HTTP_ACCESS.upload).ok) {
         sendJson(response, session ? 403 : 401, { ok: false, message: 'Only a paired owner browser can upload.' })
         return
       }

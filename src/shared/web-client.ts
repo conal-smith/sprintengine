@@ -50,7 +50,7 @@ export type WebPairRequest = {
 export type WebDevicesStatus = { devices: WebDevice[]; requests: WebPairRequest[]; origins: string[] }
 
 /** The channels the web front door adds to a tab's tunnel, beside the server's own (SERVER_IPC_CHANNELS). */
-export const WEB_TUNNEL_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
+const WEB_TUNNEL_CHANNEL_TABLE = {
   [WEB_BROWSE_FOLDERS_CHANNEL]: { retry: 'once' },
   [WEB_PREVIEWS_LIST_CHANNEL]: { retry: 'once' },
   [WEB_PREVIEWS_OPEN_CHANNEL]: {},
@@ -64,7 +64,12 @@ export const WEB_TUNNEL_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = {
   [WEB_DEVICES_LINK_CHANNEL]: {},
   [WEB_DEVICES_APPROVE_CHANNEL]: {},
   [WEB_DEVICES_DECLINE_CHANNEL]: {},
-}
+} as const satisfies Readonly<Record<string, ServerIpcChannel>>
+
+/** The front door's own tunnel channels, by name. */
+export type WebTunnelChannelName = keyof typeof WEB_TUNNEL_CHANNEL_TABLE
+
+export const WEB_TUNNEL_CHANNELS: Readonly<Record<string, ServerIpcChannel>> = WEB_TUNNEL_CHANNEL_TABLE
 
 /** A port an agent of the server listens on, offered for a preview. */
 export type PreviewPort = { port: number; pid: number; command: string }
@@ -87,57 +92,6 @@ export type FolderBrowserListing =
       truncated: boolean
     }
   | { ok: false; message: string }
-
-// What an owner's web tab may reach over its tunnel (phase 9 spec, 14.8): the
-// domains the web client draws, and not the ones that act beyond this server
-// or hand out credentials. Pairing local apps and other machines, the tailnet
-// lane's administration, and setting or clearing provider keys and the GitHub
-// token stay with the desktop app; their reads that the web client shows
-// (whether a key is set) do not. The renderer routes only these channels to
-// the tunnel, and the server refuses any other there, so the list is held on
-// both sides.
-const WEB_TUNNEL_DOMAINS = new Set([
-  'automation',
-  'backlog',
-  'cli-models',
-  'conversation-commands',
-  'hosts',
-  'launch-settings',
-  'workspace-backup',
-  'workspace-registry',
-  'workspace-sync',
-])
-const WEB_TUNNEL_EXCLUDED = new Set([
-  // A provider's key, set or cleared, and the CLI's own sign-in, which opens a terminal.
-  'conversation:secrets:set',
-  'conversation:secrets:clear',
-  'conversation:providers:sign-in',
-  // A chat handed to a terminal: there are none on the web (ruling a).
-  'conversation:sessions:terminal-handoff',
-  // What main's rest sweep reads that only a desktop window can say: its
-  // Settled chats settings and its modules' run states. A tab's would be
-  // defaults and blanks (it loads no third-party module).
-  'workspace-sync:set-settled-chats-settings',
-  'workspace-sync:set-module-run-states',
-])
-const WEB_TUNNEL_SINGLE = new Set([
-  'credential:secrets:status',
-  'github:token-status',
-  'github:list-repos',
-  'scheduled-agents:list',
-  'scheduled-agents:mark-seen',
-  'scheduled-agents:pause-state',
-])
-
-/** Whether an owner's web tab may use a server-owned tunnel channel. */
-export function webTunnelAllows(channel: string): boolean {
-  if (Object.hasOwn(WEB_TUNNEL_CHANNELS, channel)) return true
-  if (WEB_TUNNEL_SINGLE.has(channel)) return true
-  if (WEB_TUNNEL_EXCLUDED.has(channel)) return false
-  const domain = channel.split(':')[0]
-  if (domain === 'conversation') return true
-  return WEB_TUNNEL_DOMAINS.has(domain)
-}
 
 /** The answer a web tab gets for a tunnel channel it may not use. */
 export const WEB_TUNNEL_REFUSED = 'DesktopOnly'

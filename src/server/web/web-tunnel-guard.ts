@@ -1,13 +1,16 @@
 import { SERVER_IPC_CHANNELS } from '../../shared/ipc-channel-owners'
-import { WEB_TUNNEL_REFUSED, webTunnelAllows } from '../../shared/web-client'
+import type { StudioPrincipal } from '../../../packages/studio-protocol/src/permissions'
+import { WEB_TUNNEL_REFUSED } from '../../shared/web-client'
+import { webTunnelAuthorizes } from '../../shared/web-tunnel-access'
 import type { TunnelPort } from '../ipc/ipc-tunnel'
 
 // A web tab's IPC tunnel, as the server holds it (phase 9 spec, 14.8):
 //
-// - only the channels a web tab may reach (`webTunnelAllows`) are carried; any
-//   other is answered `DesktopOnly` and never reaches a handler, so a tab
-//   cannot pair an app or a machine, administer the tailnet, or set a key,
-//   whatever its page sends;
+// - only the channels the tab's browser may reach are carried, each judged by
+//   what `WEB_TUNNEL_ACCESS` declares for it against that browser's
+//   principal; any other is answered `DesktopOnly` and never reaches a
+//   handler, so a tab cannot pair an app or a machine, administer the
+//   tailnet, or set a key, whatever its page sends;
 // - every call that changes something is audited, as a paired app's protocol
 //   requests are, under the browser's name: a browser is a client of this
 //   server, not its window.
@@ -36,6 +39,8 @@ function createdWorkspaceFolder(channel: string, args: unknown): string | null {
 export function guardWebTunnelPort(
   port: TunnelPort,
   options: {
+    /** The browser the tab is, as the tunnel judges it (`webTunnelPrincipal`). */
+    principal: StudioPrincipal
     audit: WebTunnelAudit
     log?: (message: string) => void
     /**
@@ -70,7 +75,10 @@ export function guardWebTunnelPort(
       port.on('message', (incoming) => {
         const frame = incoming.data as { t?: unknown; id?: unknown; channel?: unknown; args?: unknown } | null
         const channel = typeof frame?.channel === 'string' ? frame.channel : ''
-        if ((frame?.t === 'ipc.invoke' || frame?.t === 'ipc.send') && !webTunnelAllows(channel)) {
+        if (
+          (frame?.t === 'ipc.invoke' || frame?.t === 'ipc.send') &&
+          !webTunnelAuthorizes(options.principal, channel)
+        ) {
           options.log?.(`a web tab asked for ${channel || 'an unnamed channel'}, which the desktop app alone offers`)
           if (frame.t === 'ipc.invoke')
             port.postMessage({
