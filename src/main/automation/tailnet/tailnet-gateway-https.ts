@@ -1,4 +1,4 @@
-import { execFileSync } from 'child_process'
+import { execFile } from 'child_process'
 import { readFileSync, unlinkSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
@@ -54,7 +54,7 @@ export type GatewayHttpsResult = ({ ok: true } & GatewayHttps) | { ok: false; me
 export type GatewayHttpsDeps = TailscaleServeDeps & {
   spawn?: typeof spawnTailscaleUntilStopped
   /** Whether a pid is a `tailscale serve` this Studio started (POSIX: asks `ps`). */
-  isOurServe?: (pid: number) => boolean
+  isOurServe?: (pid: number) => boolean | Promise<boolean>
   kill?: (pid: number) => void
 }
 
@@ -193,7 +193,7 @@ export async function withdrawRecordedGatewayHttps(input: {
   if (!recorded) return
   const deps = input.deps ?? {}
   if (recorded.pid !== undefined) {
-    if ((deps.isOurServe ?? isOurServe)(recorded.pid)) {
+    if (await (deps.isOurServe ?? isOurServe)(recorded.pid)) {
       input.log?.(`tailnet HTTPS: ending the serve an earlier run left on port ${recorded.servePort}`)
       try {
         ;(deps.kill ?? killGroup)(recorded.pid)
@@ -228,12 +228,11 @@ function killGroup(pid: number): void {
 }
 
 /** On POSIX, whether `pid` is still a `tailscale … serve` process (pids are reused). Elsewhere, never assumed. */
-function isOurServe(pid: number): boolean {
-  if (process.platform === 'win32') return false
-  try {
-    const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 2000 })
-    return /tailscale/iu.test(command) && /\bserve\b/u.test(command)
-  } catch {
-    return false
-  }
+function isOurServe(pid: number): Promise<boolean> {
+  if (process.platform === 'win32') return Promise.resolve(false)
+  return new Promise((resolve) => {
+    execFile('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 2000 }, (error, command) => {
+      resolve(!error && /tailscale/iu.test(command) && /\bserve\b/u.test(command))
+    })
+  })
 }
