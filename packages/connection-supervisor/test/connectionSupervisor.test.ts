@@ -208,7 +208,8 @@ test('time asleep is not time spent trying', async () => {
   last().resolve()
   await time.advance()
   last().attempt.lost(new Error('dropped'))
-  expect(supervisor.state().retryingForMs).toBe(1_000)
+  // A wait counts once it has been waited, not when it is set.
+  expect(supervisor.state().retryingForMs).toBe(0)
   // The lid closes for three hours; the timer fires late, after it opens.
   time.sleep(3 * 60 * 60_000)
   await time.advance()
@@ -216,8 +217,8 @@ test('time asleep is not time spent trying', async () => {
   await time.advance(200)
   last().reject(new Error('no network yet'))
   await time.advance()
-  // The attempt's own 200 ms and the next wait count, and nothing else.
-  expect(supervisor.state().retryingForMs).toBe(1_000 + 200 + 2_000)
+  // The wait as scheduled and the attempt's own 200 ms count, and nothing else.
+  expect(supervisor.state().retryingForMs).toBe(1_000 + 200)
   // A wake starts the count over.
   supervisor.wake()
   expect(supervisor.state()).toMatchObject({ phase: 'connecting', retryingForMs: 0, failures: 0 })
@@ -232,8 +233,8 @@ test('an attempt the computer slept through counts only its time awake after the
   supervisor.wake()
   await time.advance(300)
   await fail()
-  // 300 ms of trying since the wake, then the wait it schedules.
-  expect(supervisor.state()).toMatchObject({ phase: 'backoff', failures: 1, retryingForMs: 300 + 1_000 })
+  // 300 ms of trying since the wake.
+  expect(supervisor.state()).toMatchObject({ phase: 'backoff', failures: 1, retryingForMs: 300 })
 })
 
 test('an attempt that takes too long fails, and the connection it brings later is closed', async () => {
@@ -260,12 +261,13 @@ test('an attempt that takes too long fails, and the connection it brings later i
 test('a loss reported before the attempt settled waits for how it settles', async () => {
   const { supervisor, time, last, attempts } = harness({ stableAfterMs: 0 })
   supervisor.start()
-  // Handed over and dropped in the same breath: up, then lost.
+  // Handed over and dropped in the same breath: up, then lost, and nobody
+  // waiting is handed the connection that is already gone.
   const joined = supervisor.next()
   last().attempt.lost(new Error('dropped at once'))
   expect(supervisor.state().phase).toBe('connecting')
-  const connection = last().resolve()
-  await expect(joined).resolves.toBe(connection)
+  last().resolve()
+  await expect(joined).rejects.toThrow(/dropped at once/u)
   await time.advance()
   expect(supervisor.state()).toMatchObject({ phase: 'backoff', generation: 1, failures: 1, reconnecting: true })
   expect(supervisor.current()).toBeNull()
@@ -373,8 +375,7 @@ test('a credential refused waits for the person, not for a wake', async () => {
   expect(supervisor.state()).toMatchObject({ phase: 'needs-sign-in', reconnecting: false, lastError: signIn })
   expect(time.timers()).toBe(0)
   supervisor.wake()
-  supervisor.setOnline(false)
-  supervisor.setOnline(true)
+  supervisor.wake({ replace: true })
   await time.advance(600_000)
   expect(attempts).toHaveLength(2)
   await expect(supervisor.next()).rejects.toBe(signIn)
@@ -427,13 +428,45 @@ test('a delay the far end asked for is honoured, and a wake does not cut it shor
   expect(attempts).toHaveLength(1)
   await time.advance(1)
   expect(attempts).toHaveLength(2)
-  // A shorter delay than the backoff's own is no hold.
-  last().reject(Object.assign(new Error('busy'), { retryAfterMs: 10 }))
-  await time.advance()
-  expect(supervisor.state()).toMatchObject({ heldByPeer: false, retryAt: time.now() + 2_000 })
   // The person's own retry goes at once, held or not.
+  last().reject(Object.assign(new Error('busy'), { retryAfterMs: 60_000 }))
+  await time.advance()
   supervisor.retryNow()
   expect(attempts).toHaveLength(3)
+})
+
+test('a wake cuts a backoff down to the delay the far end asked for, never below it', async () => {
+  const { supervisor, time, attempts, fail, untilRetry } = harness({
+    backoff: { baseMs: 1_000, maxMs: 60_000 },
+    classify: (error): ConnectionFailureVerdict => ({
+      kind: 'transient',
+      retryAfterMs: (error as { retryAfterMs?: number }).retryAfterMs,
+    }),
+  })
+  supervisor.start()
+  for (let i = 0; i < 3; i++) {
+    await fail()
+    await untilRetry()
+  }
+  // Four failures in a row: the backoff's own wait is eight seconds, and the
+  // far end asked for three.
+  await fail(Object.assign(new Error('busy'), { retryAfterMs: 3_000 }))
+  const failedAt = time.now()
+  expect(supervisor.state()).toMatchObject({ phase: 'backoff', heldByPeer: true, retryAt: failedAt + 8_000 })
+  await time.advance(1_000)
+  // The app comes to the front: not at once, and not after eight seconds.
+  supervisor.wake()
+  expect(attempts).toHaveLength(4)
+  expect(supervisor.state()).toMatchObject({ phase: 'backoff', heldByPeer: true, retryAt: failedAt + 3_000 })
+  await time.advance(1_999)
+  expect(attempts).toHaveLength(4)
+  await time.advance(1)
+  expect(attempts).toHaveLength(5)
+  // Past the far end's delay, a wake goes at once.
+  await fail(Object.assign(new Error('busy'), { retryAfterMs: 100 }))
+  await time.advance(100)
+  supervisor.wake()
+  expect(attempts).toHaveLength(6)
 })
 
 test('after enough failures in a row it waits for a wake instead of a timer', async () => {
@@ -447,7 +480,7 @@ test('after enough failures in a row it waits for a wake instead of a timer', as
   await fail(new Error('away'))
   await untilRetry()
   await fail(new Error('away'))
-  expect(supervisor.state()).toMatchObject({ phase: 'waiting-for-wake', waitingFor: 'wake', failures: 3 })
+  expect(supervisor.state()).toMatchObject({ phase: 'waiting-for-wake', failures: 3 })
   expect(time.timers()).toBe(0)
   await expect(supervisor.next()).rejects.toThrow(/away/u)
   await time.advance(3_600_000)
@@ -457,37 +490,94 @@ test('after enough failures in a row it waits for a wake instead of a timer', as
   expect(supervisor.state()).toMatchObject({ phase: 'connecting', failures: 0 })
 })
 
-test('offline, it waits for the network rather than spending attempts', async () => {
-  const { supervisor, time, attempts, last } = harness({ backoff: { baseMs: 1_000, maxMs: 30_000 } })
+test('a connection that opens and drops is not an absence: it backs off but never parks', async () => {
+  const { supervisor, time, attempts, last, untilRetry } = harness({ parkAfterFailures: 3, stableAfterMs: 30_000 })
+  supervisor.start()
+  for (let i = 0; i < 6; i++) {
+    last().resolve()
+    await time.advance()
+    last().attempt.lost(new Error('dropped'))
+    expect(supervisor.state().phase).toBe('backoff')
+    await untilRetry()
+  }
+  expect(attempts).toHaveLength(7)
+  expect(supervisor.state().failures).toBe(6)
+})
+
+test('an attempt hears that it was given up on, to stop its own work, and only then', async () => {
+  const { supervisor, time, last } = harness({ connectTimeoutMs: 15_000 })
+  const heard: string[] = []
+  supervisor.start()
+  last().attempt.onAbandoned((reason) => heard.push(`timed out: ${reason}`))
+  await time.advance(15_000)
+  expect(heard).toEqual([expect.stringMatching(/^timed out: The connection did not open/u)])
+  // Asked after the fact, it hears at once.
+  last().attempt.onAbandoned(() => heard.push('late listener'))
+  expect(heard).toHaveLength(2)
+  await time.advance(supervisor.state().retryAt! - time.now())
+  last().attempt.onAbandoned(() => heard.push('replaced'))
+  supervisor.retryNow()
+  expect(heard.at(-1)).toBe('replaced')
+  last().attempt.onAbandoned(() => heard.push('stopped'))
+  supervisor.stop('Quit.')
+  expect(heard.at(-1)).toBe('stopped')
+  // One that connects, or fails by itself, hears nothing.
+  supervisor.start()
+  last().attempt.onAbandoned(() => heard.push('never'))
+  last().resolve()
+  await time.advance()
+  supervisor.start()
+  expect(heard).not.toContain('never')
+})
+
+test('a listener that calls back into the supervisor never runs inside a transition', async () => {
+  const { supervisor, time, attempts, last } = harness()
+  const second: string[] = []
+  let stopped = false
+  supervisor.subscribe((state) => {
+    if (state.phase === 'connecting' && !stopped) {
+      stopped = true
+      supervisor.stop('Not now.')
+    }
+  })
+  supervisor.subscribe((state) => second.push(state.phase))
+  const abandoned: string[] = []
+  supervisor.start()
+  last().attempt.onAbandoned((reason) => abandoned.push(reason))
+  // The attempt was made and then let go, whole: one attempt, one stop, and
+  // the second listener never hears a 'connecting' that was already over.
+  expect(attempts).toHaveLength(1)
+  expect(abandoned).toEqual(['Not now.'])
+  expect(supervisor.state().phase).toBe('stopped')
+  expect(second.at(-1)).toBe('stopped')
+  expect(second).not.toContain('connecting')
+  last().resolve()
+  await time.advance()
+  expect(supervisor.state().phase).toBe('stopped')
+})
+
+test('a wake pings the connection that is up now, not one an earlier wake pinged', async () => {
+  const pinged: number[] = []
+  const { supervisor, time, closed, last } = harness({
+    pingTimeoutMs: 10_000,
+    ping: async (connection) => {
+      pinged.push(connection.id)
+      if (connection.id === 1) await new Promise(() => undefined)
+    },
+  })
   supervisor.start()
   last().resolve()
   await time.advance()
-  last().attempt.lost(new Error('dropped'))
-  supervisor.setOnline(false)
-  expect(supervisor.state()).toMatchObject({ phase: 'waiting-for-wake', waitingFor: 'network', online: false })
-  await time.advance(600_000)
-  expect(attempts).toHaveLength(1)
-  supervisor.setOnline(true)
-  expect(attempts).toHaveLength(2)
-  // A failure while offline waits too.
-  supervisor.setOnline(false)
-  last().reject(new Error('no route'))
-  await time.advance()
-  expect(supervisor.state()).toMatchObject({ phase: 'waiting-for-wake', waitingFor: 'network' })
-  // A wake tries anyway: an offline report can be wrong.
   supervisor.wake()
-  expect(attempts).toHaveLength(3)
-})
-
-test('an offline report checks a live connection rather than dropping it', async () => {
-  const { supervisor, time, closed, last } = harness({ pingTimeoutMs: 3_000 })
-  supervisor.start()
-  const connection = last().resolve()
+  // The person retries before that ping is answered; a new connection comes up.
+  supervisor.retryNow()
+  last().resolve()
   await time.advance()
-  supervisor.setOnline(false)
-  await time.advance(3_000)
-  expect(closed).toEqual([])
-  expect(supervisor.current()).toBe(connection)
+  supervisor.wake()
+  await time.advance(10_000)
+  expect(pinged).toEqual([1, 2])
+  expect(closed.map((entry) => entry.id)).toEqual([1])
+  expect(supervisor.current()?.id).toBe(2)
 })
 
 test('a replacing wake redials at once, whatever the connection is doing', async () => {

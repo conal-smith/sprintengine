@@ -199,6 +199,28 @@ test('a parked watch dials again when a followed conversation reaches its machin
   assert.equal(wire.openRemoteEventsSocket.mock.calls.length, dials + 1, 'and the watch dials with it')
 })
 
+test('a feed that opens and drops again and again is not a machine away: it keeps dialling and never parks', async () => {
+  wire.readRemoteIdentity.mockResolvedValue(identity)
+  const sockets: Array<ReturnType<typeof watchSocket>> = []
+  wire.openRemoteEventsSocket.mockImplementation(async (input: { handlers: RemoteJsonSocketHandlers }) => {
+    const socket = watchSocket(input.handlers)
+    sockets.push(socket)
+    return { ok: true, value: socket.socket }
+  })
+  const h = startMesh()
+  h.mesh.start()
+  await vi.advanceTimersByTimeAsync(0)
+  for (let i = 0; i < 8; i++) {
+    // The machine answers each dial, and the feed drops straight after.
+    sockets.at(-1)!.handlers.onClosed({ code: null, reason: 'The connection to that machine ended.' })
+    await vi.advanceTimersByTimeAsync(60_000)
+  }
+  assert.equal(sockets.length, 9, 'every drop is dialled again, on its backoff')
+  const checks = wire.readRemoteIdentity.mock.calls.length
+  await vi.advanceTimersByTimeAsync(15_000)
+  assert.equal(wire.readRemoteIdentity.mock.calls.length, checks, 'nobody re-checks a machine that answers')
+})
+
 test('on battery the re-checks of an absent machine stretch', async () => {
   wire.readRemoteIdentity.mockResolvedValue(unreachable)
   wire.openRemoteEventsSocket.mockResolvedValue(unreachable)

@@ -12,7 +12,8 @@ stream. It is private to this repository and not published.
   forgotten only after a connection stays up, and counted in time spent
   trying, so a computer asleep for a day wakes up still trying.
 - **Wake without teardown**: a wake pings a live connection and keeps it when it
-  answers, replaces it at once when it does not, and cuts a backoff short.
+  answers, replaces it at once when it does not, and cuts a backoff short, but
+  never below a delay the far end asked for.
 - **What needs a person waits for one**: a refused credential or a failure
   retrying cannot fix stops retrying until `retryNow()`.
 
@@ -24,5 +25,5 @@ how the tests drive it.
 `src/connectionSupervisor.ts` is one file with no imports, so the desktop's main
 process, the renderer and the phone app all run the same source. The phone app
 cannot import this package and keeps a byte-for-byte copy in
-`mobile/src/shared/connection-supervisor/`; a digest pinned on both sides fails
-the build when the two differ. Change both together.
+`mobile/src/shared/connection-supervisor/`; `test/mirror.test.ts` compares the
+two and fails while they differ. Change both together.

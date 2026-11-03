@@ -1130,9 +1130,13 @@ export function createTailnetConversationsApi(input: {
             // still young and its turn did not end meanwhile: the redial's
             // replay says which.
             for (const commandId of [...outbox.keys(), ...held.keys()]) away.add(commandId);
-            // A wait the desktop asked for is not cut short.
+            // A wait the desktop asked for is not cut short: the wake shortens
+            // it to the desktop's delay, never below it.
             const { phase, heldByPeer } = supervisor.state();
-            if (phase === "backoff" && heldByPeer) return;
+            if (phase === "backoff" && heldByPeer) {
+              supervisor.wake();
+              return;
+            }
             // Back in front is a fresh start: a dial that fails now retries
             // in a second, not after the half-minute that failures while the
             // phone was away built up. Those failures said the phone had no
