@@ -427,6 +427,16 @@ export function createTailnetConversationsApi(input: {
       const away = new Set<string>();
       // Sends already offered again to be held after a busy refusal: once.
       const reheld = new Set<string>();
+      // Steers (`conversation-steer-sends`): offered the moment they are
+      // made, beside the running turn, never behind it, and again under the
+      // same id on a new socket until the desktop answers. The outbox waits
+      // for the turn to end, which is the very thing a steer is sent to beat:
+      // a steer put there reached the desktop only once the turn was over, as
+      // an ordinary next message. `socket` is the dial it was last offered on.
+      const steering = new Map<
+        string,
+        { command: Extract<ConversationCommand, { kind: "send" }>; socket: number }
+      >();
       const take = (
         commandId: string,
         command: Extract<ConversationCommand, { kind: "send" }>,
@@ -437,6 +447,8 @@ export function createTailnetConversationsApi(input: {
         written.set(commandId, queuedAt);
         if (command.queue && holdable(command))
           held.set(commandId, { command, sentAfter, socket: -1 });
+        // Into the running turn now, never behind it in the outbox.
+        else if (command.steer === true) steering.set(commandId, { command, socket: -1 });
         else {
           const { queue: _queue, ...plain } = command;
           outbox.set(commandId, plain);
@@ -481,10 +493,11 @@ export function createTailnetConversationsApi(input: {
       const park = (commandId: string): boolean => {
         const plain = outbox.get(commandId);
         const handed = held.get(commandId);
-        const command = plain ?? handed?.command;
+        const command = plain ?? handed?.command ?? steering.get(commandId)?.command;
         if (!command) return false;
         outbox.delete(commandId);
         held.delete(commandId);
+        steering.delete(commandId);
         away.delete(commandId);
         parked.set(commandId, { command, sentAfter: handed?.sentAfter ?? null });
         if (activeSendId === commandId) activeSendId = null;
@@ -496,7 +509,8 @@ export function createTailnetConversationsApi(input: {
       // the desktop's clock) its turn ended while the phone was not there.
       const staleAfterAbsence = (commandId: string, endedAt?: number) => {
         if (!away.has(commandId)) return false;
-        const command = outbox.get(commandId) ?? held.get(commandId)?.command;
+        const command =
+          outbox.get(commandId) ?? held.get(commandId)?.command ?? steering.get(commandId)?.command;
         if (!command || command.confirmedStale === true) return false;
         const queuedAt = written.get(commandId);
         return (
@@ -588,6 +602,51 @@ export function createTailnetConversationsApi(input: {
           entry.sentAfter ??= afterSeq;
           entry.socket = dialGeneration;
         }
+      };
+      // Offers every steer this socket has not offered yet, turn or no turn:
+      // the desktop puts one into the running turn, holds one the turn cannot
+      // take for its end, and sends one with no turn left as the next turn.
+      const flushSteer = () => {
+        if (!synchronized || socket?.readyState !== WebSocket.OPEN) return;
+        for (const [commandId, entry] of steering) {
+          if (entry.socket === dialGeneration) continue;
+          if (!send({ type: "command", commandId, command: entry.command })) return;
+          entry.socket = dialGeneration;
+          handlers.onSendStarted?.(commandId);
+        }
+      };
+      // Hands a line of sends waiting here to a desktop that holds messages
+      // (`conversation-queued-sends`), in the order they were written, to
+      // send when the chat's turn ends whether or not this phone is still
+      // there. All of them or none: where one cannot be held (pictures for a
+      // desktop that holds only words), every one waits here, so a held one
+      // cannot overtake one the phone still has. Each is offered again under
+      // its own id, once.
+      const handOver = (line: [string, Extract<ConversationCommand, { kind: "send" }>][]): boolean => {
+        if (
+          !line.length ||
+          !line.every(([commandId, command]) => !command.steer && holdable(command) && !reheld.has(commandId))
+        )
+          return false;
+        for (const [commandId, command] of line) {
+          reheld.add(commandId);
+          outbox.delete(commandId);
+          const { uploadIds, ...words } = command;
+          const heldCommand = { ...words, ...(uploadIds?.length ? { uploadIds } : {}), queue: true as const };
+          held.set(commandId, { command: heldCommand, sentAfter: null, socket: -1 });
+          handlers.onSendHeld?.(commandId, heldCommand, afterSeq);
+        }
+        if (activeSendId && !outbox.has(activeSendId)) activeSendId = null;
+        flushHeld();
+        return true;
+      };
+      // The sends waiting here behind the chat being busy: a turn running, or
+      // this phone's own send in the chat and its turn not over. None while
+      // that send is still on its way: turned away busy, it is handed over
+      // itself, and the ones behind it must follow it there, not go ahead.
+      const waitingBehind = () => {
+        if (activeSendId !== null && outbox.has(activeSendId)) return [];
+        return busy || activeSendId !== null ? [...outbox] : [];
       };
       // A held send whose answer was lost, found already in the chat: it is
       // settled as accepted and never offered again. Only the first person's
@@ -806,6 +865,7 @@ export function createTailnetConversationsApi(input: {
                 if (typeof commandId === "string") {
                   outbox.delete(commandId);
                   parked.delete(commandId);
+                  steering.delete(commandId);
                 }
               }
               if (activeSendId && !outbox.has(activeSendId) && !busy)
@@ -820,7 +880,11 @@ export function createTailnetConversationsApi(input: {
                 if (typeof commandId === "string") {
                   outbox.delete(commandId);
                   parked.delete(commandId);
+                  steering.delete(commandId);
                 }
+                // The chat has a turn now: what waits here behind it is the
+                // desktop's to send when it ends.
+                if (synchronized) handOver(waitingBehind());
               }
               if (frame.event.type === "turn_started") busy = true;
               if (
@@ -855,8 +919,13 @@ export function createTailnetConversationsApi(input: {
               resolve(next);
               watchIdle();
               handlers.onState("live");
+              // What waited here behind a turn that is still running goes to
+              // a desktop that holds messages now, rather than waiting on this
+              // phone to be here when the turn ends.
+              handOver(waitingBehind());
               flushSend();
               flushHeld();
+              flushSteer();
               // A watch lasts as long as the subscription it was asked on, so
               // it is asked again after every fence, a redial's included: the
               // desktop answers with what it holds now, whatever changed while
@@ -870,13 +939,41 @@ export function createTailnetConversationsApi(input: {
               frame.type === "commandResult" &&
               !frame.ok &&
               frame.code === "stale" &&
-              (outbox.has(frame.commandId) || held.has(frame.commandId))
+              (outbox.has(frame.commandId) || held.has(frame.commandId) || steering.has(frame.commandId))
             ) {
               // The desktop's own limit (its clock, or a send this phone kept
               // too long): handed to the person, as one parked here is.
               park(frame.commandId);
               flushSend();
               return;
+            }
+            if (frame.type === "commandResult" && steering.has(frame.commandId)) {
+              const entry = steering.get(frame.commandId)!;
+              if (!frame.ok && frame.code === "busy") {
+                // Neither taken into the turn nor held there (a send still
+                // being prepared ahead of it, or the desktop's own crowding):
+                // handed over to be held for the turn's end where the desktop
+                // holds messages, and otherwise kept here, to go as the next
+                // turn once this one ends, as a steer with no turn left does.
+                steering.delete(frame.commandId);
+                const { steer: _steer, ...plain } = entry.command;
+                if (handOver([[frame.commandId, plain]])) return;
+                outbox.set(frame.commandId, entry.command);
+                handlers.onSendWaiting?.(frame.commandId);
+                flushSend();
+                return;
+              }
+              if (conversationSessionWasLost(frame) && !resentAfterLostSession.has(frame.commandId)) {
+                // As a send is: the server running the chat restarted, and
+                // the desktop resumes the chat for the same id offered once
+                // more. With the session gone no turn runs, so it goes as the
+                // next turn.
+                resentAfterLostSession.add(frame.commandId);
+                entry.socket = -1;
+                flushSteer();
+                return;
+              }
+              steering.delete(frame.commandId);
             }
             if (frame.type === "commandResult" && held.has(frame.commandId)) {
               if (!frame.ok && frame.code === "busy") {
@@ -910,22 +1007,7 @@ export function createTailnetConversationsApi(input: {
               // send in it can be held: otherwise they all wait here, so a held
               // one cannot overtake one the phone still has.
               const line = [...outbox];
-              if (
-                line[0]?.[0] === frame.commandId &&
-                line.every(([commandId, command]) => !command.steer && holdable(command) && !reheld.has(commandId))
-              ) {
-                for (const [commandId, command] of line) {
-                  reheld.add(commandId);
-                  outbox.delete(commandId);
-                  const { uploadIds, ...words } = command;
-                  const heldCommand = { ...words, ...(uploadIds?.length ? { uploadIds } : {}), queue: true as const };
-                  held.set(commandId, { command: heldCommand, sentAfter: null, socket: -1 });
-                  handlers.onSendHeld?.(commandId, heldCommand, afterSeq);
-                }
-                if (activeSendId && !outbox.has(activeSendId)) activeSendId = null;
-                flushHeld();
-                return;
-              }
+              if (line[0]?.[0] === frame.commandId && handOver(line)) return;
               handlers.onSendWaiting?.(frame.commandId);
               // The desktop has too many commands in flight from this socket,
               // or a turn running. The send stays queued under the same id and
@@ -958,7 +1040,7 @@ export function createTailnetConversationsApi(input: {
               if (activeSendId === frame.commandId && (!frame.ok || !busy)) {
                 activeSendId = null;
                 flushSend();
-              }
+              } else if (synchronized) handOver(waitingBehind());
             }
             // The probe's own answer is the stream's business, and has
             // already done its work by arriving.
@@ -1093,8 +1175,13 @@ export function createTailnetConversationsApi(input: {
             const problem = conversationSendProblem(commandId, command);
             if (problem) throw new Error(problem);
             take(commandId, command);
+            // Made while the chat is busy here: handed to a desktop that holds
+            // messages at once, so it goes when the turn ends whether or not
+            // this phone is awake then, and shows in that chat's queue there.
+            if (outbox.has(commandId)) handOver(waitingBehind());
             flushSend();
             flushHeld();
+            flushSteer();
           } else {
             if (!synchronized || !send({ type: "command", commandId, command }))
               throw new Error("Reconnect before using this action.");
@@ -1107,6 +1194,9 @@ export function createTailnetConversationsApi(input: {
           if (activeSendId !== commandId) outbox.delete(commandId);
           // One already offered is the desktop's to give back (`cancelQueued`).
           if (held.get(commandId)?.sentAfter === null) held.delete(commandId);
+          // A steer is offered the moment it is made; one not yet offered (no
+          // socket then) can still be let go of here.
+          if (steering.get(commandId)?.socket === -1) steering.delete(commandId);
         },
         request(frame) {
           const requestId = identifier();
@@ -1129,7 +1219,7 @@ export function createTailnetConversationsApi(input: {
             // What waited while the app was away is offered only if it is
             // still young and its turn did not end meanwhile: the redial's
             // replay says which.
-            for (const commandId of [...outbox.keys(), ...held.keys()]) away.add(commandId);
+            for (const commandId of [...outbox.keys(), ...held.keys(), ...steering.keys()]) away.add(commandId);
             // A wait the desktop asked for is not cut short: the wake shortens
             // it to the desktop's delay, never below it.
             const { phase, heldByPeer } = supervisor.state();
