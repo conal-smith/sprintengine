@@ -75,8 +75,26 @@ type OverflowMenuProps = {
   trigger?: (open: () => void, opened: boolean) => React.ReactNode
   /** Hover/focus tooltip for the default kebab trigger (e.g. "More actions"). */
   triggerTooltip?: string
+  /**
+   * The trigger as a kit control of the caller's own — a pill, an icon button
+   * at a size of its own — instead of content inside the menu's 24px kebab
+   * button. `trigger` draws INSIDE that button, so anything that is itself a
+   * button nested one in the other and inherited the kebab's box. Spread
+   * `props` onto the control: they carry the ref, the click and the menu's
+   * ARIA wiring.
+   */
+  renderTriggerControl?: (props: OverflowMenuTriggerProps, opened: boolean) => React.ReactNode
   /** Horizontal alignment for the menu surface. */
   align?: 'start' | 'end'
+}
+
+type OverflowMenuTriggerProps = {
+  ref: React.Ref<HTMLButtonElement>
+  onClick: () => void
+  'aria-haspopup': 'menu'
+  'aria-expanded': boolean | undefined
+  'aria-controls': string | undefined
+  'aria-label': string
 }
 
 // The shared mark, at a step on the icon ramp. This used to be a private
@@ -84,7 +102,14 @@ type OverflowMenuProps = {
 // the same three dots at two pitches, one of them off the ramp.
 const KEBAB = <KebabGlyph />
 
-export function OverflowMenu({ ariaLabel, items, trigger, triggerTooltip, align = 'end' }: OverflowMenuProps) {
+export function OverflowMenu({
+  ariaLabel,
+  items,
+  trigger,
+  triggerTooltip,
+  renderTriggerControl,
+  align = 'end',
+}: OverflowMenuProps) {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLElement | null>(null)
 
@@ -143,6 +168,19 @@ export function OverflowMenu({ ariaLabel, items, trigger, triggerTooltip, align 
       surfaceClassName={`min-w-[200px] ${MENU_LIST_CLASS}`}
       onOpenAutoFocus={focusFirstItem}
       renderTrigger={({ ref, openPopover, open: opened, togglePopover, triggerProps }) => {
+        if (renderTriggerControl) {
+          return renderTriggerControl(
+            {
+              ref: ref as React.Ref<HTMLButtonElement>,
+              onClick: togglePopover,
+              'aria-haspopup': 'menu',
+              'aria-expanded': triggerProps['aria-expanded'] as boolean | undefined,
+              'aria-controls': triggerProps['aria-controls'] as string | undefined,
+              'aria-label': ariaLabel,
+            },
+            opened,
+          )
+        }
         const button = (
           <button
             ref={ref}

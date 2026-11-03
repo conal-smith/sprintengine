@@ -1,4 +1,8 @@
-// The Extensions door: two catalogues behind one surface id.
+// The Extensions modal: two catalogues behind one surface id.
+//
+// A modal since 2026-11-03 (owner ruling): `openGlobalSurface` opens this id
+// over whatever holds the card region, and a switch in the dialog's title bar
+// moves between the two views the drawer's rows also open.
 //
 // Source-tabs ruling (2026-09-05). The door used to be a rail of seven rows —
 // Featured, Plugins, MCP servers, Skills, Automations, Modules, Agent CLIs —
@@ -35,6 +39,7 @@ import { AddSkillSourceModal } from './skills/AddSkillSourceModal'
 import { SkillsCatalogue } from './skills/SkillsCatalogue'
 import { useSkillSources } from './skills/useSkillSources'
 import { landingFromTarget, targetNamesPlace, targetTabId, type CatalogueLanding } from './catalogue/catalogueLanding'
+import { CatalogueViewSwitchContext } from './catalogue/catalogueViewSwitch'
 import {
   consumePendingExtensionsSurfaceTarget,
   peekPendingExtensionsSurfaceTarget,
@@ -260,8 +265,21 @@ export default function ExtensionsGlobalSurface(): JSX.Element {
     setTabId(next)
   }, [])
 
+  // The modal's Plugins / Skills switch (owner ruling 2026-11-03). A bare
+  // view change, as a drawer row is: the source and the query survive it.
+  const viewSwitch = useMemo(
+    () => ({
+      view,
+      onChange: (next: ExtensionsDrawerView) => {
+        setView(next)
+        setLanding(null)
+      },
+    }),
+    [view],
+  )
+
   return (
-    <>
+    <CatalogueViewSwitchContext.Provider value={viewSwitch}>
       {view === EXTENSIONS_DRAWER_VIEWS.skills ? (
         <SkillsCatalogue
           sources={sources}
@@ -322,6 +340,6 @@ export default function ExtensionsGlobalSurface(): JSX.Element {
           setAddRepo(url)
         }}
       />
-    </>
+    </CatalogueViewSwitchContext.Provider>
   )
 }

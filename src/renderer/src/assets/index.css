@@ -2917,6 +2917,23 @@ samp,
  * a square until it is pointed at or focused, when its name slides out of it
  * over the column beside the rail. The width is what moves, through
  * `max-width`, because the label's own width is not known to CSS. */
+/* It wears the kit's icon button, and lets it grow: the square's width and
+ * centring give way to the pill's, the glyph held where the square put it. */
+.rail-extensions-pill {
+  width: auto;
+  min-width: var(--sem-size-control-lg);
+  justify-content: flex-start;
+  padding-inline: var(--sem-space-sm);
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+.rail-extensions-pill:hover,
+.rail-extensions-pill:focus-visible {
+  background-color: var(--bg-surface-raised);
+  border-color: var(--border-subtle);
+  box-shadow: var(--shadow-popover);
+  color: var(--text-strong);
+}
 .rail-extensions-pill-label {
   max-width: 0;
   opacity: 0;
@@ -3586,6 +3603,7 @@ samp,
     .lifecycle-spin,
     .working-edge,
     .chat-shimmer__band,
+    .terminal-launch-caret,
     .animate-pulse,
     .animate-ping
   ),

@@ -2191,7 +2191,7 @@ export default function NewAgentPanel({
   // instead of a field (see the box below).
   const isTerminalLaunch = selection.kind === 'terminal'
   const terminalPromptRef = React.useRef<HTMLButtonElement>(null)
-  // Picking Terminal hands focus to the prompt line, so the next Enter opens
+  // Picking Terminal hands focus to Open terminal, so the next Enter opens
   // the shell. The field it replaces held focus before; without this the key
   // landed on nothing and only the pointer could open one.
   React.useEffect(() => {
@@ -2615,80 +2615,71 @@ export default function NewAgentPanel({
 
           {isTerminalLaunch ? (
             // A plain shell takes no prompt, so the box is not a text field
-            // turned off (owner ruling 2026-11-03): it is the prompt the shell
-            // will open on — the folder, the mark, a caret — and the whole line
-            // is the way in. It takes focus when Terminal is picked, so Enter
-            // opens the shell from the keyboard as the send does from the
-            // pointer.
-            <div className="px-5 pb-1 pt-4">
-              <button
-                ref={terminalPromptRef}
-                type="button"
-                onClick={() => launch(prompt)}
-                disabled={!canLaunch}
-                aria-label={projectLabel ? `Open a terminal in ${projectLabel}` : 'Open a terminal'}
-                aria-keyshortcuts="Enter"
-                className="flex w-full min-w-0 items-center gap-2 rounded-sm py-1 text-left font-mono text-body focus-visible:focus-ring disabled:cursor-not-allowed"
-              >
-                {projectLabel ? (
-                  <span className="min-w-0 truncate text-[color:var(--text-muted)]">{projectLabel}</span>
-                ) : null}
-                <span aria-hidden="true" className="shrink-0 text-[color:var(--accent-primary)]">
-                  ❯
-                </span>
-                <span aria-hidden="true" className="terminal-launch-caret shrink-0" />
-              </button>
+            // turned off (owner ruling 2026-11-03): it draws the prompt the
+            // shell will open on — the project, the mark, a caret. The send
+            // beside it takes focus when Terminal is picked, so Enter opens
+            // the shell from the keyboard as a click does from the pointer.
+            <div
+              aria-hidden="true"
+              data-terminal-launch-prompt=""
+              className="flex min-w-0 items-center gap-2 px-5 pb-2 pt-5 font-mono text-body"
+            >
+              {projectLabel ? (
+                <span className="min-w-0 truncate text-[color:var(--text-muted)]">{projectLabel}</span>
+              ) : null}
+              <span className="shrink-0 text-[color:var(--accent-primary)]">$</span>
+              <span className="terminal-launch-caret shrink-0" />
             </div>
           ) : (
-          <div className="px-5 pb-1 pt-4">
-            {/* Grows with its content from the three-row floor to a ceiling,
+            <div className="px-5 pb-1 pt-4">
+              {/* Grows with its content from the three-row floor to a ceiling,
                 then scrolls — a box that showed two lines of a six-line prompt
                 was hiding what the person was about to send. The chat
                 composer's field, drawing the prompt's markdown in place, with
                 no box of its own: `COMPOSER_SURFACE_CLASS` around it draws the
                 border, the ground and the ring. */}
-            <ComposerField
-              ref={promptRef}
-              value={prompt}
-              leavesDrop={dataTransferHasDroppableFiles}
-              onPaste={(event, field) => {
-                // A pasted screenshot only exists as a clipboard item; a text
-                // paste reports no image and falls through to the default —
-                // unless the text is only paths to images outside the project,
-                // which attach instead. A chat starting on another machine
-                // cannot open this one's project, so there every path attaches.
-                // A file copied in Finder or Explorer pastes as the file, and
-                // is taken as a drop of it would be. A paste of nothing that
-                // attaches is left to the default, as it always was; once one
-                // is taken, everything that came with it is taken as a drop's
-                // is — a path typed, a file with no path uploaded or said.
-                const pasted = sortFiles(filesFromDataTransfer(event.clipboardData), fileSorting)
-                if (pasted.images.length > 0 || pasted.files.length > 0) {
+              <ComposerField
+                ref={promptRef}
+                value={prompt}
+                leavesDrop={dataTransferHasDroppableFiles}
+                onPaste={(event, field) => {
+                  // A pasted screenshot only exists as a clipboard item; a text
+                  // paste reports no image and falls through to the default —
+                  // unless the text is only paths to images outside the project,
+                  // which attach instead. A chat starting on another machine
+                  // cannot open this one's project, so there every path attaches.
+                  // A file copied in Finder or Explorer pastes as the file, and
+                  // is taken as a drop of it would be. A paste of nothing that
+                  // attaches is left to the default, as it always was; once one
+                  // is taken, everything that came with it is taken as a drop's
+                  // is — a path typed, a file with no path uploaded or said.
+                  const pasted = sortFiles(filesFromDataTransfer(event.clipboardData), fileSorting)
+                  if (pasted.images.length > 0 || pasted.files.length > 0) {
+                    event.preventDefault()
+                    takeFiles(pasted)
+                    return
+                  }
+                  const text = event.clipboardData?.getData('text/plain') ?? ''
+                  const paths = pastedImagePaths(text, !remoteTarget && workspaceRoot ? [workspaceRoot] : [])
+                  if (!paths) return
                   event.preventDefault()
-                  takeFiles(pasted)
-                  return
-                }
-                const text = event.clipboardData?.getData('text/plain') ?? ''
-                const paths = pastedImagePaths(text, !remoteTarget && workspaceRoot ? [workspaceRoot] : [])
-                if (!paths) return
-                event.preventDefault()
-                void attachPastedPaths(paths, text, field.selectionStart, field.selectionEnd)
-              }}
-              onChange={(value, caret) => {
-                setPrompt(value)
-                setPromptCaretAt({ value, caret })
-                setMentionEmpty(false)
-              }}
-              // The field's own text, not this render's `prompt`: a caret
-              // moved straight after an edit arrives before the re-render.
-              onSelectionChange={(caret) => setPromptCaretAt({ value: promptRef.current?.value ?? prompt, caret })}
-              onKeyDown={onPromptKeyDown}
-              placeholder={placeholder}
-              adoptInput={bootComposer ? adoptBootInput : undefined}
-              contentAttributes={{ 'aria-label': 'What this agent should do', ...stashPicker.comboboxProps }}
-              className="max-h-[280px] min-h-[66px] w-full font-mono text-body"
-            />
-          </div>
+                  void attachPastedPaths(paths, text, field.selectionStart, field.selectionEnd)
+                }}
+                onChange={(value, caret) => {
+                  setPrompt(value)
+                  setPromptCaretAt({ value, caret })
+                  setMentionEmpty(false)
+                }}
+                // The field's own text, not this render's `prompt`: a caret
+                // moved straight after an edit arrives before the re-render.
+                onSelectionChange={(caret) => setPromptCaretAt({ value: promptRef.current?.value ?? prompt, caret })}
+                onKeyDown={onPromptKeyDown}
+                placeholder={placeholder}
+                adoptInput={bootComposer ? adoptBootInput : undefined}
+                contentAttributes={{ 'aria-label': 'What this agent should do', ...stashPicker.comboboxProps }}
+                className="max-h-[280px] min-h-[66px] w-full font-mono text-body"
+              />
+            </div>
           )}
 
           {/* The controls, on the box's own ground with no rule above them:
@@ -2883,6 +2874,7 @@ export default function NewAgentPanel({
                 // Said in words: an arrow reads as "send this message", and a
                 // shell has no message to send.
                 <SendButton
+                  ref={terminalPromptRef}
                   size="sm"
                   onClick={() => launch(prompt)}
                   disabled={!canLaunch}

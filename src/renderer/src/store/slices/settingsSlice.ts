@@ -32,7 +32,7 @@ import {
   EXTENSIONS_DRAWER_VIEWS,
   type ExtensionsDrawerView,
 } from '../../components/workspace/globalSurface/extensions/extensionsSurfaceTarget'
-import { isExtensionsDrawerSurface } from '../../components/workspace/extensionsDrawer'
+import { EXTENSIONS_CATALOGUE_SURFACE_ID, isExtensionsDrawerSurface } from '../../components/workspace/extensionsDrawer'
 import type {
   AgentCli,
   AgentCliModelSelection,
@@ -1195,6 +1195,17 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
   // it kept the unconditional section flip the drawer ruling removed from here.
   const openGlobalSurface = (surfaceId: string) =>
     set((state) => {
+      // The Plugins and Skills catalogue opens as a modal over the card region
+      // rather than as a door in it (owner ruling 2026-11-03). Routed here, the
+      // one place every opener passes — the drawer rows, a deep link, the
+      // command palette, a notification's Open — so none of them can still
+      // land it in the card region. The door under it, and the sidebar
+      // section, stay as they were.
+      if (surfaceId === EXTENSIONS_CATALOGUE_SURFACE_ID) {
+        state.activeModalSurface = surfaceId
+        state.activeModalSurfaceWorkspaceId = null
+        return
+      }
       state.activeGlobalSurface = surfaceId
       // A door open closes any modal (doors→modals, 2026-09-01): the door
       // routes the card region, and leaving it under the modal's scrim made
@@ -1350,11 +1361,11 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         view: opts?.view ?? EXTENSIONS_DRAWER_VIEWS.plugins,
         installed: opts?.installed,
       })
-      // Through `openGlobalSurface`, which owns "a door closes the modal over
-      // it" and "a drawer door moves the section". Restating those here is how
-      // the same door came to leave the sidebar in one state from a command and
-      // another from an id.
-      openGlobalSurface('extensions')
+      // Through `openGlobalSurface`, which owns where this surface opens (a
+      // modal, over whatever the card region holds). Restating that here is
+      // how the same surface came to open one way from a command and another
+      // from an id.
+      openGlobalSurface(EXTENSIONS_CATALOGUE_SURFACE_ID)
       // Callers sit inside the Settings modal (Settings → Modules "Browse
       // marketplace"), and the settings request it was carrying goes with it
       // rather than surviving to re-open a category later.

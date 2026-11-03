@@ -48,10 +48,12 @@
 //                          affordable because the palette holds the terminal
 //                          repaint pause for its lifetime, so the backdrop is
 //                          blurred once and sits still; the SCRIM behind it
-//                          stays a plain tone). One scrim blurs, through the
+//                          stays a plain tone). Two scrims blur, through the
 //                          `scrim-glass` utility: the palette's own, while it
 //                          covers a conversation and no terminal (owner ruling
-//                          2026-10-21). Any other blur, and any other consumer
+//                          2026-10-21), and the Modal primitive's opt-in
+//                          `backdrop="glass"`, whenever no terminal is in view (owner ruling
+//                          2026-11-03, the workbench modals). Any other blur, and any other consumer
 //                          of either utility — a product file included — is
 //                          flagged: a surface that wants glass asks the shell
 //                          for it.
@@ -727,7 +729,12 @@ const GLASS_CONSUMER_FILES = new Set([
 // and keeps the plain tone whenever a terminal is in view.
 const SCRIM_GLASS_UTILITY = 'scrim-glass'
 const SCRIM_GLASS_UTILITY_PATTERN = /(?<![\w-])scrim-glass(?![\w-])/g
-const SCRIM_GLASS_CONSUMER_FILES = new Set(['src/renderer/src/components/ui/CommandPalette.tsx'])
+// The Modal primitive's opt-in `backdrop="glass"` asks whether a terminal is in view
+// (owner ruling 2026-11-03), for the workbench modals — Settings, Extensions.
+const SCRIM_GLASS_CONSUMER_FILES = new Set([
+  'src/renderer/src/components/ui/CommandPalette.tsx',
+  'src/renderer/src/components/ui/Modal.tsx',
+])
 
 const TAILWIND_SHADOW = /(?<![\w-])shadow-(?:sm|md|lg|xl|2xl)(?![\w-])/g
 

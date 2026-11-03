@@ -21,7 +21,8 @@
 // painted UNDER its own scrim. Modal beats the page and the drawer; the
 // transient family beats modal; toast beats everything. Consuming the token
 // removes the second ladder this file used to carry.
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { backdropHasNoTerminal } from '../palette/paletteBackdrop'
 import { acquireTerminalRepaintPause } from '../../utils/terminalRepaintPause'
 import { CloseIconButton, DangerButton, GhostButton, PrimaryButton } from './Buttons'
 import { FocusTrap } from './FocusTrap'
@@ -52,6 +53,14 @@ type ModalProps = {
   layout?: 'scroll' | 'panel'
   children: React.ReactNode
   contained?: boolean
+  /**
+   * `plain` (default) is the flat darkening scrim. `glass` also blurs what is
+   * behind it (owner ruling 2026-11-03) — the workbench modals, Settings and
+   * Extensions, so the page recedes behind the dialog — whenever no terminal
+   * is drawn under it (`backdropHasNoTerminal`, the ~10fps measurement was a
+   * blur over a streaming terminal). Over a terminal it stays the plain tone.
+   */
+  backdrop?: 'plain' | 'glass'
 }
 
 /**
@@ -77,8 +86,12 @@ export function Modal({
   layout = 'scroll',
   children,
   contained = false,
+  backdrop = 'plain',
 }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null)
+  // Read once, as the dialog opens: nothing under a modal changes while it is
+  // up, and the terminal repaint pause below holds it still.
+  const [blurBackdrop] = useState(() => backdrop === 'glass' && !contained && backdropHasNoTerminal())
 
   useEffect(() => {
     if (!open) return
@@ -160,7 +173,7 @@ export function Modal({
       // those panels bring with them. The `contained` variant is excluded for
       // the same reason in miniature — its scrim is only as big as the panel it
       // sits in, which a 92vh dialog can legitimately exceed.
-      className={`overlay-scrim ${contained ? 'absolute' : 'fixed [contain:paint]'} inset-0 z-[var(--z-modal)] flex items-center justify-center p-6`}
+      className={`overlay-scrim overlay-scrim-enter ${blurBackdrop ? 'scrim-glass ' : ''}${contained ? 'absolute' : 'fixed [contain:paint]'} inset-0 z-[var(--z-modal)] flex items-center justify-center p-6`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
@@ -186,7 +199,7 @@ export function Modal({
           // does because the indicator sits at the edge of the surface. The
           // `outline-none` this replaced left a keyboard user with no sign of
           // where focus was until the first Tab.
-          className={`${OVERLAY_SHELL_CLASS} ${layout === 'panel' ? PANEL_LAYOUT_CLASS : SCROLL_LAYOUT_CLASS} ${FOCUS_RING_INSET_CLASS}`}
+          className={`overlay-shell-enter ${OVERLAY_SHELL_CLASS} ${layout === 'panel' ? PANEL_LAYOUT_CLASS : SCROLL_LAYOUT_CLASS} ${FOCUS_RING_INSET_CLASS}`}
         >
           {children}
         </div>

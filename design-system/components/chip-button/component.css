@@ -116,6 +116,27 @@
   color: var(--sem-color-text-primary);
 }
 
+/* pill — the FILTER pill (owner ruling 2026-11-03): a line of sources or
+ * categories over a gallery, the Extensions catalogue's. A control-ramp height
+ * like raised, because it stands in a row of its own; a full radius, because a
+ * line of choices reads as a set of tokens rather than a row of buttons; and it
+ * rests on the well, so the set is visible before any is chosen. Not
+ * content-height either. */
+.ds-chip-button--pill {
+  height: var(--sem-size-control-sm);
+  padding: 0 var(--sem-space-lg);
+  gap: var(--sem-space-xs);
+  border-radius: 999px;
+  background: var(--sem-color-bg-well);
+  color: var(--sem-color-text-muted);
+  font-size: var(--sem-font-size-meta);
+  white-space: nowrap;
+}
+
+.ds-chip-button--pill:hover:not(:disabled):not([aria-pressed='true']):not([aria-current='true']) {
+  color: var(--sem-color-text-primary);
+}
+
 /* The two tone tints. A STANDING warning the chip itself carries — scripts are
  * running in this preview, permissions are bypassed on this preset — never a
  * second way of saying what a status mark already says.

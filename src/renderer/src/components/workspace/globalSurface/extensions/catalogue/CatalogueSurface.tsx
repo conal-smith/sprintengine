@@ -14,29 +14,50 @@
 // sit in. The rows were a gap grid before, and a page of them read as a
 // different product from the Settings page one door over.
 //
+// Gallery ruling (owner, 2026-11-03). The catalogue opens as a modal over the
+// page, and its frame is a gallery rather than a page of tabs and cards:
+//
+//   - the title bar holds the dialog's name and the Plugins / Skills switch;
+//   - one search field across the dialog, and under it Installed and the
+//     sources as pills on one line — the strip of tabs that had to be
+//     scrolled sideways to find a source is gone, and the pills that do not
+//     fit fold into More. Installed wears the marks of what it holds;
+//   - inside a source, each group shows its first few rows and a View all
+//     that opens the whole group as a page of its own, with a back chevron;
+//   - a row is the mark, the name and the action — no summary on its face
+//     (`ConnectorRowGalleryContext`), and no card around the group: the
+//     space between groups is what separates them;
+//   - a query turns the body into one list of results, grouped, in a single
+//     panel under the field.
+//
 // This file owns that frame. What goes IN a tab is each catalogue's own
 // business — a registry category, a repository's folders — and
 // arrives as sections of items plus a way to draw one and a way to key it.
 
-import React, { useMemo, useState, type JSX } from 'react'
+import React, { useContext, useMemo, useState, type JSX } from 'react'
 
 import {
+  ChipButton,
   IconButton,
   InboxSearchInput,
+  LinkButton,
   OverflowMenu,
   Pager,
-  SettingCard,
-  Tabs,
+  SegmentedControl,
   TabPanel,
   Tooltip,
-  type TabItem,
+  Badge,
 } from '../../../../ui'
-import { ConnectorSectionHeading } from '../../../../panels/ConnectorsPanel/ConnectorRow'
+import { ConnectorRowGalleryContext, ConnectorSectionHeading } from '../../../../panels/ConnectorsPanel/ConnectorRow'
 import { GlobalSurfaceShell } from '../../GlobalSurfaceShell'
 import { useSurfaceBackNav } from '../../surfaceBackNav'
 import { ADD_LOCAL_SKILL_SOURCE_LABEL } from '../../../../../../../shared/skills'
+import { EXTENSIONS_DRAWER_VIEWS, type ExtensionsDrawerView } from '../extensionsSurfaceTarget'
 import { CATALOGUE_PAGE_SIZE, deriveCataloguePage, stepCataloguePage, type CatalogueGroup } from './cataloguePaging'
-import { type CatalogueTab } from './catalogueTabs'
+import { INSTALLED_TAB_ID, catalogueMonogram, type CatalogueTab } from './catalogueTabs'
+import { CatalogueViewSwitchContext } from './catalogueViewSwitch'
+import { InstalledStack } from './InstalledStack'
+import { SourceAvatar } from './SourceAvatar'
 
 const TABS_PREFIX = 'extensions-catalogue'
 
@@ -101,19 +122,19 @@ export function CatalogueSurface<T>({
   }
   /** Null hides the plus — a kind no source can carry (see catalogueTabs). */
   add: CatalogueAddMenu | null
-  /** The head line under the tab row: what this tab is, and its actions. */
+  /** The head line under the pills: what this tab is, and its actions. */
   head?: React.ReactNode
   notices?: React.ReactNode
   /**
-   * Rendered INSTEAD of the paged sections, for a state that is not a list:
+   * Rendered INSTEAD of the sections, for a state that is not a list:
    * loading, unreadable, nothing here yet.
    */
   body?: React.ReactNode
   sections?: readonly CatalogueSection<T>[]
   /**
    * Draws one item, already in its `<li>`: the surface owns the list item, so
-   * a row component need not know it is in a list, and the card's hairline
-   * math counts one child per item. `rowKey` names the item for React.
+   * a row component need not know it is in a list. `rowKey` names the item
+   * for React.
    */
   renderRow?: (item: T, index: number) => React.ReactNode
   rowKey?: (item: T) => string
@@ -127,22 +148,40 @@ export function CatalogueSurface<T>({
   detail?: React.ReactNode
 }): JSX.Element {
   const back = useSurfaceBackNav()
-  // The page a person is standing on, and what it is a page OF. Changing tab
-  // or typing in the search box lands on page 1 — the alternative is page 9 of
-  // a two-page result, which the model then clamps, so the person's click on
-  // "9" silently becomes something else.
-  const positionKey = `${activeTabId} ${search.query.trim()}`
+  const viewSwitch = useContext(CatalogueViewSwitchContext)
+  const query = search.query.trim()
+  const searching = query !== ''
+  // The group a View all opened, as a page of its own. It belongs to the tab
+  // and the query it was opened under: a different tab, or a query typed,
+  // is somewhere else, and lands back on the gallery.
+  const placeKey = `${activeTabId} ${query}`
+  const [opened, setOpened] = useState<{ place: string; key: string } | null>(null)
+  const openedKey = opened && opened.place === placeKey ? opened.key : null
+  const openedSection = openedKey ? sections?.find((section) => section.key === openedKey) : undefined
+  // The page a person is standing on, and what it is a page OF. Changing tab,
+  // opening a group or typing in the search box lands on page 1 — the
+  // alternative is page 9 of a two-page result, which the model then clamps,
+  // so the person's click on "9" silently becomes something else.
+  const positionKey = `${placeKey} ${openedKey ?? ''}`
   const [position, setPosition] = useState({ key: positionKey, page: 1 })
   const current = stepCataloguePage(position, positionKey)
 
+  // What is paged: every group while searching, the one group a View all
+  // opened, or a tab that holds a single group anyway. The gallery itself —
+  // several groups, each showing its first rows — is not paged at all.
+  const paged = Boolean(openedSection) || searching || (sections ?? []).length <= 1
+  const pagedSections = useMemo<readonly CatalogueSection<T>[]>(() => {
+    if (openedSection) return [openedSection]
+    return paged ? (sections ?? []) : []
+  }, [openedSection, paged, sections])
   const groups = useMemo<CatalogueGroup[]>(
     () =>
-      (sections ?? []).map((section) => ({
+      pagedSections.map((section) => ({
         key: section.key,
         label: section.label,
         count: section.items.length,
       })),
-    [sections],
+    [pagedSections],
   )
   const view = deriveCataloguePage({
     groups,
@@ -153,52 +192,27 @@ export function CatalogueSurface<T>({
   })
   const sectionByKey = useMemo(() => new Map((sections ?? []).map((section) => [section.key, section])), [sections])
 
-  const items: TabItem[] = tabs.map((tab) => ({
-    id: tab.id,
-    label: tab.label,
-    // A count that is not known is absent, never zero: a scan still reading,
-    // or one that failed, must not render as an empty source.
-    count: tab.count ?? undefined,
-    // How many things in this tab are waiting to be updated, as the corner
-    // pip (owner, 2026-09-10) — the number you can read without opening the
-    // tab, matched by a pip on each row's own mark inside it saying which.
-    badgeCount: tab.updateCount,
-    badgeLabel:
-      tab.updateCount > 0
-        ? `${tab.label}: ${tab.updateCount} ${tab.updateCount === 1 ? 'update' : 'updates'} available`
-        : undefined,
-    // The hourly check saw this source's repository move past the commit its
-    // scan was taken at. The mark rides the tab so it is visible without
-    // opening the source, and the glyph is decorative — the tab's name carries
-    // the words, and Sync on the head line is where it is acted on.
-    //
-    // One mark, not two: where the tab can say HOW MANY, the count says it and
-    // this glyph stands down. The glyph is what is left for a source that has
-    // moved on with nothing countable behind it yet — the scan has not been
-    // taken, so there is no per-item answer to give.
-    icon: tab.updateAvailable && tab.updateCount === 0 ? <UpdateMark /> : undefined,
-    ariaLabel: tab.updateAvailable && tab.updateCount === 0 ? `${tab.label} — update available` : undefined,
-  }))
-
   const acrossSources = search.scope === 'sources'
+  const selectTab = (id: string) => {
+    onSelectTab(id)
+    setOpened(null)
+  }
+
   const bar = {
     title,
     actions: (
-      <div className="w-[260px]">
-        <InboxSearchInput
-          value={search.query}
-          onChange={(value) => {
-            search.onQueryChange(value)
-            setPosition({ key: `${activeTabId} ${value.trim()}`, page: 1 })
-          }}
-          ariaLabel={
-            acrossSources
-              ? `Search ${title.toLowerCase()} across all sources`
-              : `Search ${title.toLowerCase()} in the open tab`
-          }
-          placeholder={search.placeholder}
-          controlsId={`${TABS_PREFIX}-panel-${activeTabId}`}
-        />
+      <div className="flex items-center gap-3">
+        {viewSwitch ? (
+          <SegmentedControl<ExtensionsDrawerView>
+            ariaLabel="Extensions to show"
+            items={[
+              { value: EXTENSIONS_DRAWER_VIEWS.plugins, label: 'Plugins' },
+              { value: EXTENSIONS_DRAWER_VIEWS.skills, label: 'Skills' },
+            ]}
+            value={viewSwitch.view}
+            onChange={viewSwitch.onChange}
+          />
+        ) : null}
       </div>
     ),
   }
@@ -207,7 +221,100 @@ export function CatalogueSurface<T>({
   // What the pager is a pager OF: the tab, or — with a query on a search that
   // reads every source — the whole door.
   const pagedLabel =
-    acrossSources && search.query.trim() !== '' ? `${title} across all sources` : `${title} in ${activeTabLabel}`
+    acrossSources && searching
+      ? `${title} across all sources`
+      : openedSection
+        ? `${openedSection.label} in ${activeTabLabel}`
+        : `${title} in ${activeTabLabel}`
+
+  const renderRows = (section: CatalogueSection<T>, start: number, end: number, columns: 1 | 2) =>
+    renderRow && rowKey ? (
+      <ul
+        aria-label={section.label}
+        className={`grid gap-x-8 gap-y-1 ${columns === 2 ? 'grid-cols-1 @2xl:grid-cols-2' : 'grid-cols-1'}`}
+      >
+        {section.items.slice(start, end).map((item, index) => (
+          <li key={rowKey(item)} className="min-w-0">
+            {renderRow(item, start + index)}
+          </li>
+        ))}
+      </ul>
+    ) : null
+
+  const heading = (section: CatalogueSection<T>, label: string, count: number, action?: React.ReactNode) => (
+    <div className="flex items-center gap-2.5">
+      {section.leading}
+      <div className="min-w-0 flex-1">
+        <ConnectorSectionHeading label={label} count={count} />
+      </div>
+      {action}
+    </div>
+  )
+
+  const pagedBody = (
+    <>
+      <div className={searching ? 'space-y-5' : 'space-y-8'}>
+        {view.groups.map((group) => {
+          const section = sectionByKey.get(group.key)
+          if (!section) return null
+          return (
+            <section key={group.key} className="space-y-2">
+              {/* A group opened as a page is named by the page's own title
+                  above, so it does not name itself a second time. */}
+              {openedSection
+                ? null
+                : heading(
+                    section,
+                    // A group that started on an earlier page says so, rather
+                    // than repeating its heading as if the rows above it were
+                    // something else.
+                    group.continued ? `${group.label} (continued)` : group.label,
+                    group.total,
+                  )}
+              {renderRows(section, group.start, group.end, searching ? 1 : 2)}
+            </section>
+          )
+        })}
+      </div>
+      <Pager
+        page={view.page}
+        pageCount={view.pageCount}
+        rangeLabel={view.rangeLabel}
+        onPageChange={(page) => setPosition({ key: positionKey, page })}
+        ariaLabel={pagedLabel}
+      />
+    </>
+  )
+
+  const galleryBody = (
+    <div className="space-y-8">
+      {(sections ?? []).map((section) => {
+        const more = section.items.length > GALLERY_PREVIEW_ROWS
+        return (
+          <section key={section.key} className="space-y-2">
+            {heading(
+              section,
+              section.label,
+              section.items.length,
+              more ? (
+                <LinkButton
+                  onClick={() => setOpened({ place: placeKey, key: section.key })}
+                  aria-label={`View all ${section.items.length} in ${section.label}`}
+                >
+                  View all
+                </LinkButton>
+              ) : undefined,
+            )}
+            {renderRows(section, 0, GALLERY_PREVIEW_ROWS, 2)}
+          </section>
+        )
+      })}
+    </div>
+  )
+
+  // The pager also says when there is nothing to show — "Nothing matches"
+  // for a query — so a paged state with no rows still takes the paged body.
+  const content = body ?? (paged ? pagedBody : galleryBody)
 
   return (
     <GlobalSurfaceShell
@@ -217,94 +324,220 @@ export function CatalogueSurface<T>({
       canGoBack={back.canGoBack}
       controlTabContext="extensions"
     >
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 items-end gap-1 border-b border-[color:var(--border-default)] px-5">
-          <Tabs
-            ariaLabel={`${title} sources`}
-            idPrefix={TABS_PREFIX}
-            items={items}
-            value={activeTabId}
-            onChange={(id) => {
-              onSelectTab(id)
-              setPosition({ key: `${id} ${search.query.trim()}`, page: 1 })
-            }}
-            borderless
-            // Not `flex-1`: the plus belongs directly after the last tab (the
-            // ruling), and a strip that grows to fill the band would park it at
-            // the far edge with a gulf of nothing between. It still shrinks and
-            // scrolls when the sources outgrow the row.
-            className="min-w-0 overflow-x-auto"
-          />
-          {add ? <AddSourceMenu add={add} /> : null}
-        </div>
-
-        <div className="flex min-h-0 flex-1">
-          <TabPanel
-            idPrefix={TABS_PREFIX}
-            tabId={activeTabId}
-            active
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4"
-          >
-            {head ? <div className="mb-6">{head}</div> : null}
-            {notices ? <div className="mb-4 space-y-2">{notices}</div> : null}
-            {body ?? (
-              <>
-                <div className="space-y-8">
-                  {view.groups.map((group) => {
-                    const section = sectionByKey.get(group.key)
-                    if (!section || !renderRow || !rowKey) return null
-                    const heading = (
-                      <ConnectorSectionHeading
-                        // A group that started on an earlier page says so,
-                        // rather than repeating its heading as if the rows
-                        // above it were something else.
-                        label={group.continued ? `${group.label} (continued)` : group.label}
-                        count={group.total}
-                      />
-                    )
-                    return (
-                      <section key={group.key} className="space-y-3">
-                        {section.leading ? (
-                          // The source's mark leads its heading, and the
-                          // heading keeps its own count: the kit section
-                          // head, not a second heading idiom.
-                          <div className="flex items-center gap-2.5">
-                            {section.leading}
-                            <div className="min-w-0 flex-1">{heading}</div>
-                          </div>
-                        ) : (
-                          heading
-                        )}
-                        {/* One card per group, two columns inside it. The
-                            card's hairlines do the separating the old grid's
-                            gaps did, and its edge is the group's — the
-                            heading names it, the card bounds it. The rows
-                            keep the wide inset, so two rows' names and
-                            Install buttons still do not read as one line
-                            (extensions review, 2026-09-08). */}
-                        <SettingCard as="ul" ariaLabel={group.label} columns={2}>
-                          {section.items.slice(group.start, group.end).map((item, index) => (
-                            <li key={rowKey(item)}>{renderRow(item, group.start + index)}</li>
-                          ))}
-                        </SettingCard>
-                      </section>
-                    )
-                  })}
-                </div>
-                <Pager
-                  page={view.page}
-                  pageCount={view.pageCount}
-                  rangeLabel={view.rangeLabel}
-                  onPageChange={(page) => setPosition({ key: positionKey, page })}
-                  ariaLabel={pagedLabel}
+      <ConnectorRowGalleryContext.Provider value={true}>
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="shrink-0 space-y-3 px-6 pb-3 pt-5">
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <InboxSearchInput
+                  value={search.query}
+                  onChange={(value) => {
+                    search.onQueryChange(value)
+                    setPosition({ key: `${activeTabId} ${value.trim()} `, page: 1 })
+                  }}
+                  ariaLabel={
+                    acrossSources
+                      ? `Search ${title.toLowerCase()} across all sources`
+                      : `Search ${title.toLowerCase()} in the open tab`
+                  }
+                  placeholder={search.placeholder}
+                  controlsId={`${TABS_PREFIX}-panel-${activeTabId}`}
                 />
-              </>
-            )}
-          </TabPanel>
-          {detail}
+              </div>
+              {add ? <AddSourceMenu add={add} /> : null}
+            </div>
+            {openedSection ? (
+              // A group opened as a page: the way back is glued to its name,
+              // where the eye already is — the dialog's X is the way out.
+              <div className="flex items-center gap-2">
+                <Tooltip content="Back" placement="bottom">
+                  <IconButton size="sm" aria-label={`Back to ${activeTabLabel}`} onClick={() => setOpened(null)}>
+                    <svg viewBox="0 0 16 16" fill="none" className="icon-sm" aria-hidden="true">
+                      <path
+                        d="M10 3.5 5.5 8l4.5 4.5"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </IconButton>
+                </Tooltip>
+                <h3 className="truncate text-title font-semibold tracking-tight text-[color:var(--text-strong)]">
+                  {openedSection.label}
+                </h3>
+              </div>
+            ) : tabs.length > 0 ? (
+              <SourcePills
+                title={title}
+                tabs={tabs}
+                activeTabId={activeTabId}
+                onSelect={(id) => {
+                  selectTab(id)
+                  setPosition({ key: `${id} ${query} `, page: 1 })
+                }}
+              />
+            ) : null}
+          </div>
+
+          <div className="flex min-h-0 flex-1">
+            <TabPanel
+              idPrefix={TABS_PREFIX}
+              tabId={activeTabId}
+              active
+              className="@container min-h-0 min-w-0 flex-1 overflow-y-auto px-6 pb-6 pt-2"
+            >
+              {head && !openedSection ? <div className="mb-6">{head}</div> : null}
+              {notices ? <div className="mb-4 space-y-2">{notices}</div> : null}
+              {content}
+            </TabPanel>
+            {detail}
+          </div>
         </div>
-      </div>
+      </ConnectorRowGalleryContext.Provider>
     </GlobalSurfaceShell>
+  )
+}
+
+/** Rows a group shows in the gallery before its View all: three to a column. */
+const GALLERY_PREVIEW_ROWS = 6
+
+/** Pills a line holds before the rest fold into More. */
+const VISIBLE_SOURCE_PILLS = 5
+
+/**
+ * The sources, as pills on one line (owner ruling 2026-11-03). A tablist —
+ * the pills ARE the tabs, and the panel below is theirs — whose arrow keys
+ * walk the pills the line shows. The ones that do not fit fold into More,
+ * and a source picked from there takes the last visible place, so the open
+ * source is always a pill a person can see is open.
+ */
+function SourcePills({
+  title,
+  tabs,
+  activeTabId,
+  onSelect,
+}: {
+  title: string
+  tabs: readonly CatalogueTab[]
+  activeTabId: string
+  onSelect: (id: string) => void
+}): JSX.Element {
+  const activeIndex = tabs.findIndex((tab) => tab.id === activeTabId)
+  const visible =
+    tabs.length <= VISIBLE_SOURCE_PILLS + 1
+      ? tabs
+      : activeIndex >= VISIBLE_SOURCE_PILLS
+        ? [...tabs.slice(0, VISIBLE_SOURCE_PILLS - 1), tabs[activeIndex]]
+        : tabs.slice(0, VISIBLE_SOURCE_PILLS)
+  const folded = tabs.filter((tab) => !visible.includes(tab))
+  const focusPill = (id: string) => {
+    window.requestAnimationFrame(() => document.getElementById(`${TABS_PREFIX}-tab-${id}`)?.focus())
+  }
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    const index = visible.findIndex((tab) => tab.id === activeTabId)
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    const target =
+      event.key === 'Home'
+        ? visible[0]
+        : event.key === 'End'
+          ? visible[visible.length - 1]
+          : step !== 0
+            ? visible[(Math.max(index, 0) + step + visible.length) % visible.length]
+            : null
+    if (!target) return
+    event.preventDefault()
+    onSelect(target.id)
+    focusPill(target.id)
+  }
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <div role="tablist" aria-label={`${title} sources`} className="contents" onKeyDown={onKeyDown}>
+        {visible.map((tab) => (
+          <SourcePill key={tab.id} tab={tab} selected={tab.id === activeTabId} onSelect={() => onSelect(tab.id)} />
+        ))}
+      </div>
+      {folded.length > 0 ? (
+        <OverflowMenu
+          ariaLabel="More sources"
+          align="start"
+          items={folded.map((tab) => ({
+            id: tab.id,
+            label: tab.count === null ? tab.label : `${tab.label} · ${tab.count}`,
+            onSelect: () => onSelect(tab.id),
+          }))}
+          renderTriggerControl={(props) => (
+            <ChipButton variant="pill" {...props}>
+              More
+              <svg viewBox="0 0 16 16" fill="none" className="icon-xs" aria-hidden="true">
+                <path
+                  d="m4 6 4 4 4-4"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </ChipButton>
+          )}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function SourcePill({
+  tab,
+  selected,
+  onSelect,
+}: {
+  tab: CatalogueTab
+  selected: boolean
+  onSelect: () => void
+}): JSX.Element {
+  const updates = tab.updateCount > 0
+  const moved = tab.updateAvailable && !updates
+  return (
+    <ChipButton
+      variant="pill"
+      selected={selected}
+      // A tab says it is the chosen one through `aria-selected`; the chip's
+      // own `aria-current` is for a step in a trail.
+      aria-current={undefined}
+      role="tab"
+      id={`${TABS_PREFIX}-tab-${tab.id}`}
+      data-tab-id={tab.id}
+      aria-selected={selected}
+      aria-controls={`${TABS_PREFIX}-panel-${tab.id}`}
+      tabIndex={selected ? 0 : -1}
+      // The pip and the moved mark say things the label does not, so the pill
+      // names itself the way the tab strip it replaces did.
+      aria-label={
+        updates
+          ? `${tab.label}: ${tab.updateCount} ${tab.updateCount === 1 ? 'update' : 'updates'} available`
+          : moved
+            ? `${tab.label} — update available`
+            : undefined
+      }
+      onClick={onSelect}
+    >
+      {/* Installed wears the marks of a few of the things it holds — what this
+          machine has, recognised before it is counted; a source wears its
+          own mark. */}
+      {tab.id === INSTALLED_TAB_ID ? (
+        <InstalledStack size={16} />
+      ) : tab.source ? (
+        <SourceAvatar source={tab.source} monogram={catalogueMonogram(tab.source)} size={16} />
+      ) : null}
+      <span className="max-w-[14rem] truncate">{tab.label}</span>
+      {/* A count that is not known is absent, never zero: a scan still
+          reading, or one that failed, must not render as an empty source. */}
+      {tab.count !== null ? (
+        <span className="tabular-nums font-mono text-micro text-[color:var(--text-subtle)]">{tab.count}</span>
+      ) : null}
+      {updates ? <Badge tone="accent" count={tab.updateCount} max={99} decorative /> : null}
+      {moved ? <UpdateMark /> : null}
+    </ChipButton>
   )
 }
 
@@ -325,7 +558,7 @@ function UpdateMark(): JSX.Element {
 }
 
 /**
- * The plus after the last tab: a folder on this machine or a repository of
+ * The plus beside the search field: a folder on this machine or a repository of
  * skills on GitHub, and — a different act, so it says so in its own words —
  * an extension installed from its repository. The two GitHub items name what
  * each repository is, because the same pasted URL means different things to
@@ -351,23 +584,12 @@ function AddSourceMenu({ add }: { add: CatalogueAddMenu }): JSX.Element {
             ]
           : []),
       ]}
-      trigger={(open, opened) => (
+      renderTriggerControl={(props, opened) => (
         <Tooltip content="Add source" placement="bottom">
-          {/* The kit's icon button at `2xs` — `icon.size.lg`, the 22px step the
-              kit ships FOR a glyph inside a tab strip, with the neutral ghost
-              tone that is already this trigger's ink pair. It brings the chip
-              radius the sub-ramp steps take and a transparent hit pad out to
-              `size.hit-target-min`, so the drawn square stays 22px while the
-              thing a pointer has to find is 24px. `mb-1` is all that is left:
-              where the plus sits against the tabs is this row's business. */}
-          <IconButton
-            size="2xs"
-            aria-label="Add source"
-            aria-expanded={opened}
-            aria-haspopup="menu"
-            onClick={open}
-            className="mb-1 shrink-0"
-          >
+          {/* Beside the search field, at the field's own height: adding a
+              source is the other way to find more, so it stands where the
+              looking is done. */}
+          <IconButton size="md" {...props} pressed={opened ? true : undefined} className="shrink-0">
             <svg viewBox="0 0 16 16" fill="none" className="icon-sm" aria-hidden="true">
               <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>

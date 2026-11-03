@@ -648,9 +648,7 @@ test('NewAgentPanel', async () => {
       const { SUGGESTION_BANK } = await import('./suggestionBank')
       assert.ok(!SUGGESTION_BANK.some((entry) => text.includes(entry.title)), 'no suggestion cards for a plain shell')
       assert.equal(view.container.querySelector('.cm-content'), null, 'and no prompt to type into')
-      const promptLine = [...view.container.querySelectorAll('button')].find((button) =>
-        (button.getAttribute('aria-label') ?? '').startsWith('Open a terminal'),
-      )
+      const promptLine = view.container.querySelector('[data-terminal-launch-prompt]')
       assert.ok(promptLine?.querySelector('.terminal-launch-caret'), 'the box draws a shell prompt with its caret')
       assert.equal(start?.textContent?.trim(), 'Open terminal', 'and the send says what it does in words')
 

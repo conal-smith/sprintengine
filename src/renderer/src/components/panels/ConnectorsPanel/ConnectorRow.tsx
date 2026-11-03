@@ -67,6 +67,17 @@ function ConnectorMark({ icon, badge }: { icon: React.ReactNode; badge?: MarkBad
   )
 }
 
+/**
+ * Set by a surface that lays its rows out as a gallery — the Extensions
+ * catalogue (owner ruling 2026-11-03): the mark, the name, its chips and the
+ * action, and no summary or status line under them. A catalogue of hundreds
+ * is scanned for a name the person already knows, and a sentence under every
+ * one of them was a page of text to read past; the detail a row opens still
+ * carries all of it. The chips stay: a state such as "Could not be read" is
+ * one, and a row that hid it would look installable.
+ */
+export const ConnectorRowGalleryContext = React.createContext(false)
+
 export function ConnectorRow({
   icon,
   badge,
@@ -119,7 +130,10 @@ export function ConnectorRow({
    */
   surface?: 'page' | 'card'
 }) {
-  const inCard = surface === 'card'
+  const gallery = React.useContext(ConnectorRowGalleryContext)
+  const inCard = surface === 'card' && !gallery
+  const shownSummary = gallery ? undefined : summary
+  const shownStatus = gallery ? undefined : status
   // list-row, not a card of its own: no border box — the standard fills carry
   // hover (--bg-hover) and selection (--bg-selected). Loose, the grid's gaps
   // separate rows; in a card, the card's hairlines do.
@@ -131,7 +145,7 @@ export function ConnectorRow({
   // element are resolved by stylesheet order, not by the order they are
   // written). The wrapper is what carries the fill, so the fill still runs
   // edge to edge.
-  const wrapperClass = inCard ? 'pl-2 py-1.5 pr-4' : 'rounded-md pr-2.5'
+  const wrapperClass = inCard ? 'pl-2 py-1.5 pr-4' : gallery ? 'rounded-md py-1 pr-2' : 'rounded-md pr-2.5'
   const content = (
     <>
       <ConnectorMark icon={icon} badge={badge} />
@@ -158,21 +172,21 @@ export function ConnectorRow({
             <ConnectorChip key={label} label={label} />
           ))}
         </span>
-        {summary ? (
+        {shownSummary ? (
           <TruncatedText
             as="span"
-            text={summary}
+            text={shownSummary}
             multiline={summaryLines === 2}
             className={`mt-0.5 block text-body leading-4 text-[color:var(--text-subtle)]${summaryLines === 2 ? ' line-clamp-2' : ''}`}
           />
         ) : null}
-        {status ? (
+        {shownStatus ? (
           // Clipped, not wrapped — the same contract the name row keeps above.
           // A state line long enough to wrap ("Active · No longer in source")
           // would grow this row taller than its neighbours and step the whole
           // list out of rhythm; the detail surfaces carry the full sentence.
           <span className="mt-0.5 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-meta leading-4 text-[color:var(--text-subtle)]">
-            {status}
+            {shownStatus}
           </span>
         ) : null}
       </span>

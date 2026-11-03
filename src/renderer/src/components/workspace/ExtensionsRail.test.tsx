@@ -209,8 +209,12 @@ test('ExtensionsRail', async () => {
   act(() => {
     row('Skills')?.click()
   })
-  assert.equal(useWorkspaceStore.getState().activeGlobalSurface, 'extensions', 'a view row opens the DOOR that owns it')
-  assert.equal(useWorkspaceStore.getState().activeModalSurface, null, 'and nothing floats over it')
+  assert.equal(
+    useWorkspaceStore.getState().activeModalSurface,
+    'extensions',
+    'a view row opens the Extensions modal that owns it (owner ruling 2026-11-03)',
+  )
+  assert.equal(useWorkspaceStore.getState().activeGlobalSurface, null, 'and routes no door into the card region')
   assert.deepEqual(
     consumePendingExtensionsSurfaceTarget(),
     { view: 'skills' },
