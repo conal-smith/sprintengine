@@ -384,6 +384,48 @@ no summary, the count is taken from those: each step once, however often it
 is reported, and never from a partial output. A turn whose only steps made
 pictures has no fold, as on the desktop.
 
+### Visuals in a reply
+
+An agent's reply draws its `visual` fences (and `studio-visual`) as the
+desktop's chat does: a chart, a table or an annotated drawing written as HTML
+with inline SVG and CSS, and sometimes a `<script>` of its own (a table that
+sorts, a toggle between two views). `html` and `svg` fences stay code, since
+they are as often markup being shown. The rules are the desktop's, from its
+own builders, mirrored into `src/shared/visual/` and held byte for byte to
+`src/shared/` by `visualFrame.regression.test.js`:
+
+- While a reply streams, a visual is its source until its fence is complete,
+  as a diagram is. A source over 256 KB, or one with nothing to draw, stays
+  source with a note saying why; so does one that has not said how tall it is
+  within ten seconds ("the visual did not draw").
+- A drawn visual sits in the same well as a diagram, with Source to read and
+  copy what it was drawn from and Visual to go back. It takes its height from
+  what it holds, up to 900 points, past which it scrolls inside the reply.
+- It is coloured from the phone's tokens through the names the agents are told
+  to use (`--fg`, `--accent`, `--chart-1` to `--chart-8` and the rest of the
+  desktop's `VISUAL_VARIABLES`), so one source reads in light and dark. The
+  chart colours are the desktop's, per mode. A switch of light and dark is
+  handed to the running visual, so one with a script keeps its state.
+- A link in a visual with a script asks before it opens, naming the site, and
+  opens only a web address; a static visual's links are text, as the
+  desktop's are.
+
+Each visual is a WebView of its own (`VisualBlock.tsx`), separate from the
+diagram renderer and the artifact preview. The page it loads is the app's
+(`visualFrame.ts`), and the visual runs in a frame inside it, sandboxed to
+scripts alone: an opaque origin with no storage, cookies, popups, forms or way
+to move the page, and no camera or microphone (Android's WebView would
+otherwise hand a page any capture permission the app already holds). Page and
+frame carry the desktop's sealed policy, `default-src 'none'`, so nothing is
+fetched and the frame cannot be navigated anywhere, not even to `data:`. A
+visual with no script of its own runs only the desktop's small reporter,
+admitted by hash, so an `onload` or a `javascript:` link in it is inert. The
+elements that only load, frame or refresh a document are taken out before the
+frame is built. The WebView refuses every navigation but its own first load and
+the frame's `srcdoc`, opens no window and stores nothing. What the page sends
+the app (a height, a link, "nothing to draw") is read as untrusted: its shape
+is checked, the height capped, and a link offered at most once a second.
+
 ### A step's output
 
 Tapping a step opens what it produced, read the way its kind reads, as the

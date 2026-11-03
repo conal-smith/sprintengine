@@ -40,6 +40,7 @@
     "src/components/document/rich/svgSanitizer.ts",
     "src/components/document/rich/diagramSource.ts",
     "src/components/document/rich/richRenderer.ts",
+    "src/components/document/rich/visualFrame.ts",
     "src/components/formatTimestamp.ts",
     "src/components/glyphs/lifecycleTone.ts",
     "src/components/glyphs/cliLogoKind.ts",
