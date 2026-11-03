@@ -325,6 +325,7 @@ test('automation', async () => {
       'schedule.pause',
       'schedule.resume',
       'schedule.run',
+      'schedule.update',
       'terminal.create',
       'terminal.list',
       'terminal.read',

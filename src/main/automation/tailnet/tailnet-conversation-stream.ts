@@ -35,6 +35,7 @@ import {
 } from '../../../server/conversation-stream-shaping'
 import type { ConversationGatewayHost } from './tailnet-conversation-host'
 import { redactConversationValue } from '../../conversation-tool-details'
+import { mayHoldQuotes, quotesToPlainText } from '../../../shared/chat-quotes'
 import {
   createWebSocketFrameDecoder,
   encodeCloseFrame,
@@ -374,8 +375,10 @@ export function createTailnetConversationStream(options: TailnetConversationStre
   }
   // Paths are rewritten against the conversation the socket follows, so its
   // own files read workspace-relative, as they do on the desktop.
+  // A quote in a message leaves as its words (`quotesForWire`), before the
+  // paths are rewritten, so a path inside a quoted passage is rewritten too.
   const redact = <T>(frame: T, workspaceRoot: string | null = currentKey?.workspaceRoot ?? null): T =>
-    redactHostPaths(redactConversationValue(frame), { home: homedir(), workspaceRoot })
+    redactHostPaths(quotesForWire(redactConversationValue(frame)), { home: homedir(), workspaceRoot })
   /** Extend a waiting delta with a later one of the same message. */
   const extend = (into: LiveEntry & { delta: object }, event: ConversationEvent): void => {
     const text = String(event.payload!.text)
@@ -1086,6 +1089,48 @@ function pathRewriter(home: string, workspaceRoot: string | null): PathRewriter 
   if (rewriters.size > 64) rewriters.clear()
   rewriters.set(cacheKey, rewrite)
   return rewrite
+}
+
+/**
+ * A message's quotes as a device reads them: the passage and its comment as
+ * words (`quotesToPlainText`), never the token the desktop keeps them in
+ * (shared/chat-quotes.ts). The `text` of a `user_message` has always been the
+ * person's words alone, and a phone or a paired Studio reading it may be any
+ * release, so the token stays on this machine (docs/compatibility.md, "Direct
+ * conversation lane"). Only a frame that holds one is copied.
+ */
+export function quotesForWire<T>(value: T): T {
+  // Copy-on-write: a frame is walked without allocating, and only the arrays
+  // and objects on the way to a `user_message` whose text holds a token are
+  // copied. Every other frame — a streamed delta, a snapshot of megabytes —
+  // comes back as the same object.
+  const walk = (entry: unknown): unknown => {
+    if (!entry || typeof entry !== 'object') return entry
+    if (Array.isArray(entry)) {
+      let copy: unknown[] | null = null
+      for (let index = 0; index < entry.length; index++) {
+        const child = entry[index]
+        const next = walk(child)
+        if (next !== child) (copy ??= entry.slice())[index] = next
+      }
+      return copy ?? entry
+    }
+    const record = entry as Record<string, unknown>
+    if (record.type === 'user_message') {
+      const payload = record.payload as Record<string, unknown> | undefined
+      if (typeof payload?.text !== 'string' || !mayHoldQuotes(payload.text)) return entry
+      return { ...record, payload: { ...payload, text: quotesToPlainText(payload.text) } }
+    }
+    let copy: Record<string, unknown> | null = null
+    for (const key in record) {
+      const child = record[key]
+      if (!child || typeof child !== 'object') continue
+      const next = walk(child)
+      if (next !== child) (copy ??= { ...record })[key] = next
+    }
+    return copy ?? entry
+  }
+  return walk(value) as T
 }
 
 /**

@@ -75,6 +75,15 @@ Called by an agent of this app, the scheduled agent is held to that agent's own
 preset: a looser one is refused with `permission_escalation`, and an omitted
 one is stored as the caller's.
 
+## Change one
+
+`schedule_update` with `{id}` and any of `schedule_create`'s fields changes a
+scheduled agent in place; anything left out stays as it was. `workspaceId`
+moves it to that workspace's project, `model: ""` returns it to the CLI's
+default, `worktree: false` runs it in the project's checkout, and `cron`
+without `once` makes a one-time schedule repeat. It is held to your preset as
+`schedule_create` is, the preset it keeps included.
+
 ## Run now and remove
 
 `schedule_run` with `{id}` starts the scheduled agent's run now, without
@@ -101,8 +110,8 @@ skipped rather than starting a second chat beside the first.
 ## When you are a scheduled run
 
 A chat a scheduled agent started may read `schedule_list`, but
-`schedule_create`, `schedule_delete`, `schedule_run`, `schedule_pause` and
-`schedule_resume` refuse it with
+`schedule_create`, `schedule_update`, `schedule_delete`, `schedule_run`,
+`schedule_pause` and `schedule_resume` refuse it with
 `scheduled_run_refused`: a run never makes, removes or fires a schedule, so no
 run can start a chain of runs. If the task seems to need a schedule changed,
 say so in your reply for the person to do in the app.

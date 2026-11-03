@@ -318,6 +318,11 @@ function serialise(node: Node, parentTag: string): string {
   if (!isElement(node) || isChrome(node, parentTag)) return ''
   const element = node
 
+  // An element that stands for words it does not draw — a quote's chip, which
+  // shows a number and a label for a passage and a comment — copies as them.
+  const copyAs = element.getAttribute('data-copy-markdown')
+  if (copyAs !== null) return block(copyAs)
+
   if (isCodeBlockRoot(element)) {
     const code = codeBlockText(element)
     return code ? block(fencedCode(code, codeBlockLanguage(element))) : ''

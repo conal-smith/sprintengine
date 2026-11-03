@@ -70,6 +70,8 @@ import {
 import { Modal, ModalButton, ModalFooter, ModalHeader } from '../ui/Modal'
 import { ExtensionsRail } from './ExtensionsRail'
 import { useWorkspaceStore } from '../../store/workspaceStore'
+import { selectChatListView } from '../../store/slices/settingsSlice'
+import { ChatListGroupingMenu } from './sidebar/ChatListGroupingMenu'
 import { type HighlightColor, type LayoutTemplate, type Workspace, type WorkspaceId } from '../../types/workspace'
 import type { MeshConversationChange } from '../../../../shared/tailnet-mesh'
 import { usePendingEditorReveal } from '../../utils/agentEditorReveal'
@@ -329,6 +331,10 @@ type WorkspaceSidebarProps = {
   onOpenScheduledAgent?: (id: string) => void
   // The scheduled agent the door in this window is editing, drawn selected.
   openScheduledAgentId?: string | null
+  // Open a paired machine's scheduled agent: the same editor, saving there.
+  onOpenRemoteScheduledAgent?: (connectionId: string, id: string) => void
+  // The paired machine's scheduled agent the door is editing, drawn selected.
+  openRemoteScheduledAgent?: { connectionId: string; id: string } | null
   // Reopen a kept New chat draft, and throw one away. Absent, no Drafts section.
   onOpenDraft?: (id: string) => void
   onDeleteDraft?: (id: string) => void
@@ -379,6 +385,10 @@ const NO_SCHEDULED_AGENTS: ScheduledAgentView[] = []
 // The Working section's fold (sidebar/workingSection.ts), keyed beside the shelves' in the same state.
 const WORKING_SHELF_KEY = '__working__'
 const WORKING_SHELF_ID = 'ws-working-chats'
+// The By status list's Working shelf, at the foot of the stream. A key of its
+// own because it starts closed where the section above starts open.
+const STATUS_WORKING_SHELF_KEY = '__status_working__'
+const STATUS_WORKING_SHELF_ID = 'ws-status-working-chats'
 const NO_WORKING_IDS: ReadonlySet<string> = new Set()
 
 const DRAG_MIME_WORKSPACE = 'application/x-sprintengine-workspace'
@@ -450,6 +460,8 @@ function WorkspaceSidebar({
   onNewScheduledAgent,
   onOpenScheduledAgent,
   openScheduledAgentId = null,
+  onOpenRemoteScheduledAgent,
+  openRemoteScheduledAgent = null,
   onOpenDraft,
   onDeleteDraft,
   openDraftId = null,
@@ -2080,16 +2092,18 @@ function WorkspaceSidebar({
     [unattachedRemote, now],
   )
 
-  // Which shape this rail lists chats in — the project tree, or one stream of
-  // all of them (all-chats-view, 2026-09-07). Read from the store rather than
-  // drilled through props: it is a persisted app-level preference, the way the
-  // active door is, and every window shows the same shape.
+  // Which shape this rail lists chats in — the project tree, every chat by
+  // status, or one stream of all of them (all-chats-view, 2026-09-07). Read
+  // from the store rather than drilled through props: the default is a
+  // persisted app-level preference, set in Settings ▸ Appearance, and every
+  // window opens in it.
   //
-  // Read here, set in Settings → Appearance (owner, 2026-09-07). It rode over
-  // the list for a day and was struck: a control the person touches once and
-  // lives with does not deserve a permanent seat above the thing it arranges,
-  // and the rail's one control at the top is New chat.
-  const chatListView = useWorkspaceStore((s) => s.chatListView)
+  // The grouping menu beside New chat changes it for this window (owner
+  // request 2026-11-02). A segmented switch that rode over the list was struck
+  // on 2026-09-07 for spending a permanent row on something touched once; the
+  // menu folds into a glyph on New chat's own row, the way the scheduled
+  // clock does, and Settings keeps the default.
+  const chatListView = useWorkspaceStore(selectChatListView)
 
   const groupByKey = useMemo(() => {
     const map = new Map<string, FolderGroup>()
@@ -2394,8 +2408,10 @@ function WorkspaceSidebar({
   // the row is already on screen, and a header over an empty body is the
   // quiet-folder case above.
   // The chats folded into the Working section while their agent works, when
-  // the person has turned it on (sidebar/workingSection.ts).
-  const workingSectionOn = useWorkspaceStore((s) => s.appSettings.sidebarWorkingSection)
+  // the person has turned it on (sidebar/workingSection.ts), or into the By
+  // status list's Working shelf, which is that list's whole point.
+  const workingSectionSetting = useWorkspaceStore((s) => s.appSettings.sidebarWorkingSection)
+  const workingSectionOn = workingSectionSetting || chatListView === 'status'
   const workingIds = useMemo<ReadonlySet<WorkspaceId>>(() => {
     if (!workingSectionOn) return NO_WORKING_IDS
     const ids = new Set<WorkspaceId>()
@@ -3485,8 +3501,9 @@ function WorkspaceSidebar({
               ))
             : null}
           {/* A paired machine's, after this computer's: the same row with that
-              machine's mark, driven over there. The pause of them all is that
-              machine's, said on each of its rows. */}
+              machine's mark, driven over there. It opens in the same editor
+              this computer's open in, and saves there. The pause of them all
+              is that machine's, said on each of its rows. */}
           {expanded
             ? remoteScheduled.machines.flatMap((machine) =>
                 machine.agents.map((agent) => (
@@ -3502,10 +3519,16 @@ function WorkspaceSidebar({
                     }}
                     machine={{ ref: { kind: 'paired', name: machine.machineName }, name: machine.machineName }}
                     runInProgress={null}
-                    selected={false}
+                    selected={
+                      openRemoteScheduledAgent?.connectionId === machine.connectionId &&
+                      openRemoteScheduledAgent.id === agent.id
+                    }
                     pausedAll={machine.pausedAll !== null}
                     {...(machine.operable
                       ? {
+                          ...(onOpenRemoteScheduledAgent
+                            ? { onOpen: () => onOpenRemoteScheduledAgent(machine.connectionId, agent.id) }
+                            : {}),
                           onClose: () => actOnRemoteScheduled(machine, agent, 'delete'),
                           onTogglePause: () =>
                             actOnRemoteScheduled(machine, agent, agent.pausedAt === undefined ? 'pause' : 'resume'),
@@ -3525,7 +3548,7 @@ function WorkspaceSidebar({
   // chats whose agent is at work, each with the project line that says where
   // it goes back to. Absent while none is working, or while the switch is off.
   const renderWorkingSection = () => {
-    if (workingIds.size === 0) return null
+    if (workingIds.size === 0 || chatListView === 'status') return null
     const rows = sortWorkspacesByUserMessage(localRailWorkspaces.filter((w) => workingIds.has(w.id)))
     const expanded = expandedShelves[WORKING_SHELF_KEY] !== false
     return (
@@ -3552,18 +3575,64 @@ function WorkspaceSidebar({
     )
   }
 
-  const renderChatStream = () => {
+  // The By status list's Working shelf: the chats whose agent is at work,
+  // folded at the foot of the stream and closed until the person opens it, so
+  // the list leads with what is waiting on them. The fold's count still says
+  // how much is going on. A paired machine's working chats fold in with this
+  // computer's: by status, where a chat runs is not the question.
+  const renderStatusWorkingShelf = (remoteWorking: readonly RemoteConversation[]) => {
+    const local = sortWorkspacesByUserMessage(localRailWorkspaces.filter((w) => workingIds.has(w.id)))
+    const rows = interleaveChats(local, remoteWorking, chatRecency)
+    if (rows.length === 0) return null
+    const expanded = expandedShelves[STATUS_WORKING_SHELF_KEY] === true
+    return (
+      <>
+        <ShelfFoldRow
+          label="Working"
+          count={rows.length}
+          expanded={expanded}
+          flush
+          controlsId={STATUS_WORKING_SHELF_ID}
+          onToggle={() => setExpandedShelves((prev) => ({ ...prev, [STATUS_WORKING_SHELF_KEY]: !expanded }))}
+        />
+        <div id={STATUS_WORKING_SHELF_ID} role="group" aria-label="Chats working" hidden={!expanded}>
+          {expanded
+            ? rows.map((entry) =>
+                entry.kind === 'local'
+                  ? renderWorkspaceRow(entry.workspace, keyOf(entry.workspace), {
+                      keyPrefix: 'working-',
+                      flatProject: flatProjectOf(entry.workspace),
+                    })
+                  : renderRemoteConversationRow(entry.conversation, {
+                      keyPrefix: 'working-',
+                      flatProject: flatProjectOfRemote(entry.conversation),
+                    }),
+              )
+            : null}
+        </div>
+      </>
+    )
+  }
+
+  // The flat stream, newest message first, for All chats and By status. By
+  // status lifts the working chats out of it into the shelf above the Snoozed
+  // one, so what is left in the stream is what waits on the person.
+  const renderChatStream = (byStatus: boolean) => {
     const snoozedRows = sortByWake(localRailWorkspaces.filter((w) => !isShelved(w) && isAsleep(w)))
     const streamRows = sortWorkspacesByUserMessage(
       localRailWorkspaces.filter(
         (w) => !isShelved(w) && !isAsleep(w) && !starredWorkspaceIds.has(w.id) && !workingIds.has(w.id),
       ),
     )
+    const remoteWorking = byStatus ? streamRemote.filter((conversation) => conversation.activity === 'working') : []
+    const remoteStream = byStatus
+      ? streamRemote.filter((conversation) => conversation.activity !== 'working')
+      : streamRemote
     const sleeping = sleepingByWake(snoozedRows, sleepingRemote)
     const snoozeExpanded = expandedShelves[ALL_CHATS_SNOOZE_SHELF_KEY] === true
     return (
-      <section role="group" className="relative pt-1" aria-label="All chats">
-        {interleaveChats(streamRows, streamRemote, chatRecency).map((entry) =>
+      <section role="group" className="relative pt-1" aria-label={byStatus ? 'Chats by status' : 'All chats'}>
+        {interleaveChats(streamRows, remoteStream, chatRecency).map((entry) =>
           entry.kind === 'local'
             ? renderWorkspaceRow(entry.workspace, keyOf(entry.workspace), {
                 keyPrefix: 'all-',
@@ -3573,6 +3642,7 @@ function WorkspaceSidebar({
                 flatProject: flatProjectOfRemote(entry.conversation),
               }),
         )}
+        {byStatus ? renderStatusWorkingShelf(remoteWorking) : null}
         {sleeping.length > 0 ? (
           <>
             <ShelfFoldRow
@@ -4001,6 +4071,8 @@ function WorkspaceSidebar({
                 </IconButton>
               </Tooltip>
             ) : null}
+            {/* How this window groups its chats (sidebar/ChatListGroupingMenu.tsx). */}
+            <ChatListGroupingMenu />
           </div>
         </div>
 
@@ -4115,7 +4187,9 @@ function WorkspaceSidebar({
             SESSION. They are rows of their projects now, below, wearing one
             green machine glyph each. */}
           {renderWorkingSection()}
-          {chatListView === 'all' ? renderChatStream() : activeGroups.map((group) => renderFolderSection(group))}
+          {chatListView === 'projects'
+            ? activeGroups.map((group) => renderFolderSection(group))
+            : renderChatStream(chatListView === 'status')}
           {renderDraftsSection()}
           {renderScheduledSection()}
         </nav>

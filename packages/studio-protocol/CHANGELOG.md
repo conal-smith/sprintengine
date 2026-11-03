@@ -18,6 +18,10 @@
 - `visual` among `STUDIO_RESERVED_TOOLSET_NAMES`: `visual.preview`, which
   draws an agent's ```visual block as the chat will and answers with a
   picture, its height and its console, which a Studio's shell offers.
+- `plugin` among `STUDIO_RESERVED_TOOLSET_NAMES`: `plugin.search`, which
+  finds a plugin in the sources a Studio lists, and `plugin.offer`, which
+  shows one in the calling agent's chat to install, which a Studio's shell
+  offers.
 - `extension` among `STUDIO_RESERVED_TOOLSET_NAMES`: `extension.create`,
   which makes a SprintEngine Studio extension project, and `extension.guide`,
   the guide to building one, which a Studio's shell offers.

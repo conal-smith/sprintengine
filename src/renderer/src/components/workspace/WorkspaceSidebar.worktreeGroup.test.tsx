@@ -177,7 +177,7 @@ test('WorkspaceSidebar.worktreeGroup', async () => {
           await new Promise((resolve) => dom.window.setTimeout(resolve, 0))
         })
       }
-      const headers = () => [...container.querySelectorAll('button[aria-expanded]')]
+      const headers = () => [...container.querySelectorAll('[role="tree"] button[aria-expanded]')]
       // The header's actions live behind its overflow button, in a menu that
       // portals out of the section — so open it and read it off the document.
       const folderMenuItems = (header: Element) => {

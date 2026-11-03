@@ -67,7 +67,8 @@ function skipped(element: Element): boolean {
   )
 }
 
-type TextPosition = { node: Text; offset: number }
+/** Where one character of a segment's text was drawn: its text node and offset. */
+export type TextPosition = { node: Text; offset: number }
 
 function readText(node: Node, folder: ReturnType<typeof createFindFolder<TextPosition>>) {
   if (node.nodeType === 3) {
@@ -93,12 +94,7 @@ function readText(node: Node, folder: ReturnType<typeof createFindFolder<TextPos
  */
 export function segmentRanges(elements: readonly Element[], query: string): Range[] {
   if (!query || elements.length === 0) return []
-  const folder = createFindFolder<TextPosition>()
-  for (const element of elements) {
-    folder.separate()
-    readText(element, folder)
-  }
-  const { text, tags } = folder.result()
+  const { text, tags } = readSegmentText(elements)
   const document = elements[0]!.ownerDocument
   const ranges: Range[] = []
   for (const at of occurrences(text, query)) {
@@ -116,6 +112,22 @@ export function segmentRanges(elements: readonly Element[], query: string): Rang
     ranges.push(range)
   }
   return ranges
+}
+
+/**
+ * One segment's elements read as a find reads them, in document order: the
+ * folded text (case folded, whitespace runs one space) and, for each of its
+ * characters, where on the page it was drawn — null for a folded space, which
+ * has no node of its own. Quoting reads a reply the same way, so a passage it
+ * keeps is found again by the same rules (quoteAnchors.ts).
+ */
+export function readSegmentText(elements: readonly Element[]): { text: string; tags: (TextPosition | null)[] } {
+  const folder = createFindFolder<TextPosition>()
+  for (const element of elements) {
+    folder.separate()
+    readText(element, folder)
+  }
+  return folder.result()
 }
 
 /** The segments a transcript has drawn right now, each with its elements in document order. */

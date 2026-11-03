@@ -5,16 +5,27 @@ import { QuoteGlyph } from '../../ui/QuoteGlyph'
 import { OVERLAY_SURFACE_CLASS } from '../../ui/tokens'
 import { selectionClipboard } from '../../../utils/selectionToMarkdown'
 import { showToast } from '../../../store/toastStore'
+import { quoteAsMarkdown } from '../../../../../shared/chat-quotes'
+import { citationForRange, type QuoteCitation } from './quoteAnchors'
 
 // Quote a stretch of the conversation back into the composer: select text in
-// the transcript — a reply, a message of your own, or a run across several —
-// and a small toolbar (or the quote shortcut) carries it down as a markdown
-// blockquote, so the follow-up says which sentence it is about.
+// the transcript and a small toolbar (or the quote shortcut) carries it down,
+// so the follow-up says which sentence it is about.
+//
+// A passage of one reply is cited: it goes into the composer as a chip
+// standing for the passage, with an optional comment, and stays highlighted
+// in the reply (shared/chat-quotes.ts holds the format, chatQuotes.tsx the
+// rest). Anything else — a message of your own, a run across several
+// messages, a step's output — has no single reply to point back at, and
+// arrives as a markdown blockquote instead, as the diff window's "Add to chat"
+// does.
 //
 // What is quoted is what ⌘C would copy (`selectionToMarkdown`): the markdown
 // the selection was rendered from, so bold, inline code, lists, tables and
 // fenced code arrive as they were written rather than as the browser's
 // flattened text, and the view's chrome (`data-copy-exclude`) stays out.
+
+export { quoteAsMarkdown }
 
 /** The command id of the quote shortcut, as `commandRegistry` registers it. */
 export const QUOTE_SELECTION_COMMAND = 'chat.quoteSelection'
@@ -33,47 +44,6 @@ export const QUOTE_MAX_CHARS = 8_000
 // window's edges.
 const TOOLBAR_GAP = 6
 const VIEWPORT_MARGIN = 8
-
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/u
-
-/**
- * Markdown as one blockquote: every line `> `-prefixed. Outside fenced code,
- * trailing spaces go and a run of blank lines is one paragraph break (a bare
- * `>`, so the quote stays one block). Inside a fence every line is kept as it
- * was — a blank line or trailing space in code is part of the code — and a
- * fence the selection cut open is closed, so text typed after the quote is
- * never swallowed into it.
- */
-export function quoteAsMarkdown(markdown: string): string {
-  const lines = markdown.replace(/\r\n?/gu, '\n').replace(/ /gu, ' ').split('\n')
-  const out: string[] = []
-  let fence: string | null = null
-  for (const raw of lines) {
-    if (fence !== null) {
-      out.push(raw)
-      const close = /^ {0,3}(`{3,}|~{3,})\s*$/u.exec(raw)?.[1]
-      if (close && close[0] === fence[0] && close.length >= fence.length) fence = null
-      continue
-    }
-    const line = raw.trimEnd()
-    if (!line) {
-      if (out.length && out.at(-1) !== '') out.push('')
-      continue
-    }
-    out.push(line)
-    const opening = FENCE_OPEN.exec(line)?.[1]
-    // A backtick fence's info string cannot hold a backtick; one that does is
-    // inline code that happens to start a line.
-    if (opening && !(opening[0] === '`' && line.slice(line.indexOf(opening) + opening.length).includes('`')))
-      fence = opening
-  }
-  if (fence !== null) {
-    while (out.length && out.at(-1) === '') out.pop()
-    out.push(fence)
-  }
-  while (out.length && out.at(-1) === '') out.pop()
-  return out.map((line) => (line ? `> ${line}` : '>')).join('\n')
-}
 
 /**
  * The draft with a quote set in at `caret`, as a block of its own: text before
@@ -125,31 +95,43 @@ export function readQuotableSelection(root: HTMLElement, selection: Selection | 
   return { text, anchor: { left: top.left, right: bottom.right, top: top.top, bottom: bottom.bottom } }
 }
 
-export type SelectionQuote = { kind: 'quote'; markdown: string } | { kind: 'too-long'; length: number }
+/** A passage of one reply, cited: the markdown the agent reads and what finds the passage again. */
+export type SelectionCitation = QuoteCitation & { quote: string }
+
+export type SelectionQuote =
+  | { kind: 'quote'; markdown: string }
+  | { kind: 'cite'; citation: SelectionCitation; anchor: SelectionAnchor }
+  | { kind: 'too-long'; length: number }
 
 /**
- * The quote a selection inside `root` makes — its markdown as a blockquote —
- * or why it cannot be one. Null when the selection is not this transcript's
- * or holds nothing but chrome.
+ * The quote a selection inside `root` makes — a citation of a passage when
+ * the selection lies inside one reply's prose, otherwise its markdown as a
+ * blockquote — or why it cannot be one. Null when the selection is not this
+ * transcript's or holds nothing but chrome.
  */
 export function quoteForSelection(root: HTMLElement, selection: Selection | null): SelectionQuote | null {
-  if (!readQuotableSelection(root, selection)) return null
+  const quotable = readQuotableSelection(root, selection)
+  if (!quotable || !selection) return null
   const copied = selectionClipboard(selection, root)?.text.trim()
   if (!copied) return null
   if (copied.length > QUOTE_MAX_CHARS) return { kind: 'too-long', length: copied.length }
+  const citation = selection.rangeCount === 1 ? citationForRange(selection.getRangeAt(0)) : null
+  if (citation) return { kind: 'cite', citation: { ...citation, quote: copied }, anchor: quotable.anchor }
   const markdown = quoteAsMarkdown(copied)
   return markdown ? { kind: 'quote', markdown } : null
 }
 
 /**
- * Quote the current selection into the composer through `onQuote`, then clear
- * it. Returns whether the selection was this transcript's to quote — true too
- * when it was refused as too long, which is said with a toast.
+ * Quote the current selection into the composer — a passage of one reply
+ * through `onCite`, anything else as a blockquote through `onQuote` — then
+ * clear it. Returns whether the selection was this transcript's to quote —
+ * true too when it was refused as too long, which is said with a toast.
  */
 export function quoteSelectionInto(
   root: HTMLElement,
   selection: Selection | null,
   onQuote: (markdown: string) => void,
+  onCite?: (citation: SelectionCitation, anchor: SelectionAnchor) => void,
 ): boolean {
   const quote = quoteForSelection(root, selection)
   if (!quote) return false
@@ -161,7 +143,9 @@ export function quoteSelectionInto(
     })
     return true
   }
-  onQuote(quote.markdown)
+  if (quote.kind === 'cite' && onCite) onCite(quote.citation, quote.anchor)
+  else if (quote.kind === 'cite') onQuote(quoteAsMarkdown(quote.citation.quote))
+  else onQuote(quote.markdown)
   selection?.removeAllRanges()
   return true
 }
@@ -226,11 +210,14 @@ export const QuoteSelectionToolbar = memo(function QuoteSelectionToolbar({
   rootRef,
   enabled,
   onQuote,
+  onCite,
   shortcut,
 }: {
   rootRef: RefObject<HTMLElement | null>
   enabled: boolean
   onQuote: (markdown: string) => void
+  /** A passage of one reply, cited; without it a citation is quoted as a blockquote too. */
+  onCite?: (citation: SelectionCitation, anchor: SelectionAnchor) => void
   /** The quote shortcut as the platform writes it, for the tooltip. */
   shortcut?: string | null
 }): JSX.Element | null {
@@ -359,7 +346,7 @@ export const QuoteSelectionToolbar = memo(function QuoteSelectionToolbar({
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
             const root = rootRef.current
-            if (root) quoteSelectionInto(root, document.getSelection(), onQuote)
+            if (root) quoteSelectionInto(root, document.getSelection(), onQuote, onCite)
             setSelection(null)
           }}
         >

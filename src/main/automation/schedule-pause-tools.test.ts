@@ -76,7 +76,11 @@ async function harness(options: { callerPreset?: CliPermissionPreset; preset?: C
       ({
         sequence: 1,
         state: {
-          workspaces: [workspace('ws-1'), workspace('ws-run', { scheduledAgentId: 'sa-1' })],
+          workspaces: [
+            workspace('ws-1'),
+            workspace('ws-other', { folderPath: '/Users/dev/other' }),
+            workspace('ws-run', { scheduledAgentId: 'sa-1' }),
+          ],
           activeWorkspaceId: 'ws-1',
           primaryWorkspaceWindowId: 'primary',
           workspaceWindows: [],
@@ -178,4 +182,61 @@ test('pausing and resuming are mutations, and resuming is asked about as a launc
   )
   assert.equal(isAgentLaunchingGatewayTool('sprintengine-studio', 'schedule.resume'), true)
   assert.equal(isAgentLaunchingGatewayTool('sprintengine-studio', 'schedule.pause'), false)
+})
+
+test('schedule.update changes a schedule in place and keeps what it was not told', async () => {
+  const { service, call } = await harness({ preset: 'auto' })
+  const updated = await call('schedule.update', {
+    id: 'sa-1',
+    prompt: 'Apply bug fixes to Studio, then open a pull request',
+    cron: '0 9 * * 1-5',
+    model: 'opus',
+    worktreeName: 'fixes',
+    skills: ['gh-triage'],
+  })
+  assert.equal(updated.isError, undefined)
+  const agent = service.get('sa-1')!
+  assert.equal(agent.prompt, 'Apply bug fixes to Studio, then open a pull request')
+  assert.deepEqual(agent.schedule, { cron: '0 9 * * 1-5', timezone: 'UTC' })
+  assert.equal(agent.cliModel, 'opus')
+  assert.deepEqual(agent.worktree, { name: 'fixes' })
+  assert.deepEqual(agent.skills, [{ id: 'gh-triage', name: 'gh-triage' }])
+  // Kept: its project, its CLI and its preset.
+  assert.equal(agent.folderPath, '/Users/dev/acme')
+  assert.equal(agent.cli, 'claude-code')
+  assert.equal(agent.permissionPreset, 'auto')
+
+  // Taken off: the model, the worktree.
+  await call('schedule.update', { id: 'sa-1', model: '', worktree: false })
+  assert.equal(service.get('sa-1')!.cliModel, null)
+  assert.equal(service.get('sa-1')!.worktree, null)
+  assert.equal(service.get('sa-1')!.prompt, 'Apply bug fixes to Studio, then open a pull request')
+
+  // Moved to another workspace's project.
+  await call('schedule.update', { id: 'sa-1', workspaceId: 'ws-other' })
+  assert.equal(service.get('sa-1')!.folderPath, '/Users/dev/other')
+
+  // Once, then repeating again on a cron.
+  await call('schedule.update', { id: 'sa-1', once: '2026-10-01T09:00:00.000Z' })
+  assert.equal(service.get('sa-1')!.schedule.once, Date.parse('2026-10-01T09:00:00.000Z'))
+  await call('schedule.update', { id: 'sa-1', cron: '0 10 * * *' })
+  assert.equal(service.get('sa-1')!.schedule.once, undefined)
+  assert.equal(service.get('sa-1')!.schedule.cron, '0 10 * * *')
+
+  assert.equal(errorCode(await call('schedule.update', { id: 'nope', prompt: 'x' })), 'unknown_scheduled_agent')
+  assert.equal(errorCode(await call('schedule.update', { prompt: 'x' })), 'invalid_arguments')
+  assert.equal(errorCode(await call('schedule.update', { id: 'sa-1', cron: 'not a cron' })), 'scheduled_agent_invalid')
+})
+
+test("schedule.update is refused to a scheduled run, and held to its caller's preset", async () => {
+  const { call } = await harness({ callerPreset: 'manual', preset: 'bypass' })
+  const fromRun = await call('schedule.update', { id: 'sa-1', prompt: 'x' }, agentCaller('ws-run'))
+  assert.equal(errorCode(fromRun), 'scheduled_run_refused')
+  // A looser schedule than the agent asking is not one it may rewrite.
+  const looser = await call('schedule.update', { id: 'sa-1', prompt: 'x' }, agentCaller('ws-1'))
+  assert.equal(errorCode(looser), 'permission_escalation')
+  assert.equal(
+    isStudioGatewayMutation('schedule.update', () => []),
+    true,
+  )
 })

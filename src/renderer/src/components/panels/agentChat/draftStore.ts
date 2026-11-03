@@ -13,6 +13,7 @@ import {
   parseConversationMentions,
   type ConversationMentionRef as ComposerMentionRef,
 } from '../../../../../shared/conversation/mentions'
+import { clipKeepingQuotes } from '../../../../../shared/chat-quotes'
 // `files` are the files attached by path (the composer's file cards), local to
 // this device like the rest of the draft; the agent receives them as paths
 // after the words when the draft is sent.
@@ -32,7 +33,7 @@ function normalizeDraft(value: unknown): ComposerDraft | null {
   const raw = value as Partial<ComposerDraft>
   if (typeof raw.text !== 'string' || typeof raw.updatedAt !== 'number' || !Number.isFinite(raw.updatedAt)) return null
   return {
-    text: raw.text.slice(0, MAX_DRAFT_CHARS),
+    text: clipKeepingQuotes(raw.text, MAX_DRAFT_CHARS),
     skillIds: Array.isArray(raw.skillIds)
       ? raw.skillIds.filter((id): id is string => typeof id === 'string' && id.length <= 4096).slice(0, 32)
       : [],

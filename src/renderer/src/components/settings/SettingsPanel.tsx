@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { VersionControlProviderId, VersionControlProviderProbe } from '../../../../shared/version-control'
 import { useWorkspaceStore } from '../../store/workspaceStore'
+import type { ChatListView } from '../../store/slices/settingsSlice'
 import { getRendererHost, selectModuleEnabled } from '../../modules'
 import type { RegisteredSettingsSection } from '../../modules/renderer-host'
 import { AgentBrowserSettings } from './AgentBrowserSettings'
@@ -1245,10 +1246,10 @@ export default function SettingsPanel({
           <SettingsPageHeader title="Appearance" />
           <AppThemePicker value={appearanceTheme} onChange={setAppearanceTheme} />
           <SystemThemeRows />
-          {/* How the chat rail lists conversations (all-chats-view). It lives
-              here rather than over the list itself (owner, 2026-09-07): it is
-              how this person reads their work — set once, lived with — and the
-              rail's one control at the top is New chat.
+          {/* How the chat rail lists conversations by default (all-chats-view).
+              The default lives here (owner, 2026-09-07): it is how this person
+              reads their work — set once, lived with. The grouping menu beside
+              New chat changes it for one window (owner request 2026-11-02).
 
               Appearance and not General: it changes the shape of a list, not
               what the app does — the same question as the theme and the window
@@ -1261,12 +1262,13 @@ export default function SettingsPanel({
             <SettingCard>
               <SettingsRow
                 label="Chat list"
-                help="Group chats under their project, or list them all together, most recently messaged first."
+                help="How each window groups its chats: under their project, by status with working chats folded away at the foot of the list, or all together, most recently messaged first. The filter beside New chat changes it for one window."
               >
-                <SegmentedControl<'projects' | 'all'>
+                <SegmentedControl<ChatListView>
                   ariaLabel="Chat list"
                   items={[
                     { value: 'projects', label: 'By project' },
+                    { value: 'status', label: 'By status' },
                     { value: 'all', label: 'All chats' },
                   ]}
                   value={chatListView}
@@ -1277,7 +1279,7 @@ export default function SettingsPanel({
                   keeps them still), so it is the person's to turn on. */}
               <SettingToggle
                 label="Working section"
-                description="While an agent works in a chat, fold it into a Working section at the top of the list, and put it back when the agent finishes or needs you. Starred chats and the chat you are in stay where they are."
+                description="While an agent works in a chat, fold it into a Working section at the top of the list, and put it back when the agent finishes or needs you. Starred chats and the chat you are in stay where they are. Grouped by status, working chats always fold away, into a closed section at the foot of the list."
                 enabled={sidebarWorkingSection}
                 onChange={setSidebarWorkingSection}
               />

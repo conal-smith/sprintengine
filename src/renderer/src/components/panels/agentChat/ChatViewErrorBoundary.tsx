@@ -15,6 +15,7 @@
 
 import React from 'react'
 
+import { preloadableLazy } from '../../../utils/preloadableLazy'
 import { GhostButton, InlineNotice } from '../../ui'
 
 type ChatViewErrorBoundaryProps = {
@@ -50,24 +51,30 @@ const failedLoads = new Set<() => void>()
  * fresh lazy component when the chat boundary's Reload chat asks
  * (`retryFailedLoads`), never by itself, so a chunk that keeps failing is not
  * fetched in a loop.
+ *
+ * Preloadable too (utils/preloadableLazy.tsx): New chat fetches the chat's
+ * code while the person types, so the first chat a window opens draws at once
+ * rather than through a fallback React holds for 300 ms.
  */
 export function reloadableLazy<P extends object>(
   load: () => Promise<{ default: React.ComponentType<P> }>,
-): React.ComponentType<P> {
-  const fresh = () => React.lazy(attempt)
-  const attempt = (): Promise<{ default: React.ComponentType<P> }> =>
-    load().catch((error: unknown) => {
-      failedLoads.add(renew)
-      throw error
-    })
+): React.ComponentType<P> & { preload(): void } {
+  const fresh = () =>
+    preloadableLazy<P>(() =>
+      load().catch((error: unknown) => {
+        failedLoads.add(renew)
+        throw error
+      }),
+    )
   const renew = () => {
     current = fresh()
   }
   let current = fresh()
   function Reloadable(props: P) {
-    const Current = current as unknown as React.ComponentType<P>
+    const Current = current.Component
     return <Current {...props} />
   }
+  Reloadable.preload = () => current.preload()
   return Reloadable
 }
 

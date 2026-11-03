@@ -83,8 +83,9 @@ type ScheduledAgentRowAction = 'open' | 'run-now' | 'toggle-pause' | 'close'
  * right-click menu, with Run now.
  *
  * A schedule on a paired machine wears that machine's mark on its project
- * line, as its runs' chats do. It has no editor here, so opening it opens its
- * menu: Run now, Pause or Resume, and Close, each asked of that machine.
+ * line, as its runs' chats do. Opening it opens the same editor, which saves
+ * it on that machine; its menu's Run now, Pause or Resume, and Close are each
+ * asked of that machine too. A row with no editor opens its menu instead.
  *
  * Paused — on its own, or with every other — the row is quiet: its title and
  * mark in muted ink, the pause mark for the clock, and "Paused" in the seat

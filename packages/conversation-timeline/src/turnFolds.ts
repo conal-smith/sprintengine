@@ -16,12 +16,30 @@ type IntermediateText = { text: string; beforeToolUseId: string }
 
 /**
  * A step whose result is for the person to look at, not for the agent to work
- * from: a picture it generated. A picture it only read, or a screenshot it took
- * to check its own work, is how it got there and folds with the rest. A new
- * kind of thing an agent shows (an embedded page, a map) belongs here.
+ * from: a picture it generated, or a plugin it offered them to install. A
+ * picture it only read, or a screenshot it took to check its own work, is how
+ * it got there and folds with the rest. A new kind of thing an agent shows (an
+ * embedded page, a map) belongs here.
  */
 export function stepShownToUser(tool: TranscriptToolEntry): boolean {
-  return tool.name === 'GenerateImage' && tool.outputStatus !== 'error'
+  if (tool.outputStatus === 'error') return false
+  return tool.name === 'GenerateImage' || isPluginOffer(tool)
+}
+
+// The Studio MCP server's id (`STUDIO_MCP_SERVER_ID` in the app's
+// product-identity.ts), spelled out because this package imports nothing of
+// the app's.
+const STUDIO_SERVER_ID = 'sprintengine-studio'
+
+/**
+ * Studio's `plugin.offer`, under any runtime's spelling of it:
+ * `mcp__sprintengine-studio__plugin_offer`, `sprintengine-studio.plugin_offer`,
+ * or `plugin_offer` with the server named beside it. Another server's tool of
+ * the same name draws no card of ours.
+ */
+export function isPluginOffer(tool: Pick<TranscriptToolEntry, 'name' | 'serverName'>): boolean {
+  const studio = tool.serverName === STUDIO_SERVER_ID || tool.name.includes(STUDIO_SERVER_ID)
+  return studio && /(?:^|__|[./])plugin[._]offer$/u.test(tool.name)
 }
 
 export { proseShownToUser }

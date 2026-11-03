@@ -2640,6 +2640,137 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     },
   }
 
+  // A schedule changed in place: what a paired desktop's editor saves, as this
+  // machine's own editor does. What is left out stays as it was.
+  const scheduledAgentUpdate: McpToolRegistration = {
+    name: 'schedule.update',
+    description:
+      'Change a scheduled agent in place: its prompt, schedule, project, CLI, model, preset, worktree, skills ' +
+      'or MCP servers. Anything left out stays as it was. Naming `cron` without `once` makes a one-time ' +
+      'schedule repeat. ' +
+      CALLER_PRESET_CAP_SENTENCE +
+      ' Refused to a chat a scheduled agent started.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Scheduled agent id from schedule.list.' },
+        workspaceId: {
+          type: 'string',
+          description: 'Workspace id from workspace.list: run in its project and machine instead.',
+        },
+        prompt: { type: 'string', description: 'The first message each run is sent.' },
+        name: { type: 'string', description: "Its title; empty for its prompt's first line." },
+        cron: { type: 'string', description: 'Five-field cron, e.g. "0 9 * * 1-5" for weekdays at 9:00 AM.' },
+        timezone: { type: 'string', description: 'IANA zone the cron is read in.' },
+        once: {
+          type: 'string',
+          description: 'Run once, at this ISO 8601 instant, instead of repeating; `cron` is then ignored.',
+        },
+        cli: { type: 'string', description: 'Agent CLI id (e.g. "claude-code").' },
+        model: { type: 'string', description: "The CLI's model id; empty for its default." },
+        permissionPreset: {
+          type: 'string',
+          enum: [...LAUNCH_PERMISSION_PRESETS],
+          description: "Each run's CLI permission preset, as for schedule.create.",
+        },
+        worktree: {
+          type: 'boolean',
+          description: 'Run each time in a fresh git worktree (true) or in the project checkout (false).',
+        },
+        worktreeName: {
+          type: 'string',
+          description: "What each run's worktree and its branch are named from; implies `worktree`.",
+        },
+        skills: { type: 'array', items: { type: 'string' }, description: 'Skill ids attached to each run.' },
+        mcpServers: { type: 'array', items: { type: 'string' }, description: 'Installed MCP server ids.' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    handler: async (args, context) => {
+      const refused = refuseScheduledRunCaller(context, 'change')
+      if (refused) return refused
+      const id = requireString(args, 'id')
+      if (typeof id !== 'string') return id
+      const service = scheduledAgentsOrFailure()
+      if (!('update' in service)) return service
+      const existing = service.get(id)
+      if (!existing) return failure('unknown_scheduled_agent', `No scheduled agent "${id}".`)
+      if (args.prompt !== undefined) {
+        const dashed = refuseOptionLikePrompt(args.prompt)
+        if (dashed) return dashed
+      }
+      let folderPath = existing.folderPath
+      let hostId = existing.hostId
+      if (typeof args.workspaceId === 'string' && args.workspaceId) {
+        const workspace = findWorkspace(args.workspaceId)
+        if (!workspace?.folderPath) return resolveWorkspaceRoot(args.workspaceId) as McpToolResult
+        folderPath = workspace.worktree?.repoRoot ?? workspace.folderPath
+        hostId = workspace.hostId ?? null
+      }
+      const requested =
+        typeof args.permissionPreset === 'string' ? parseCliPermissionPreset(args.permissionPreset) : null
+      if (typeof args.permissionPreset === 'string' && requested === null) {
+        return failure(
+          'invalid_arguments',
+          `"permissionPreset" must be one of: ${LAUNCH_PERMISSION_PRESETS.join(', ')}.`,
+        )
+      }
+      // The preset it will run on, held to the caller's own ceiling whether it
+      // was named here or kept: a new prompt on a looser preset is a new launch.
+      const capped = capScheduledAgentPreset(
+        requested ?? existing.permissionPreset,
+        launchPermissionCeiling(context, backends.resolveAgentPermissionPreset),
+      )
+      if ('refused' in capped) return failure(capped.refused.code, capped.refused.message)
+      const once = typeof args.once === 'string' && args.once.trim() ? Date.parse(args.once) : undefined
+      if (once !== undefined && !Number.isFinite(once)) {
+        return failure('invalid_arguments', '"once" must be an ISO 8601 instant, such as 2026-10-07T15:30:00Z.')
+      }
+      const cron = typeof args.cron === 'string' ? args.cron : undefined
+      const timezone =
+        typeof args.timezone === 'string' && args.timezone.trim() ? args.timezone : existing.schedule.timezone
+      const schedule =
+        once !== undefined
+          ? { cron: cron ?? existing.schedule.cron, timezone, once }
+          : cron !== undefined
+            ? { cron, timezone }
+            : { ...existing.schedule, timezone }
+      // An attachment keeps the name it was saved with; a new one is named by its id.
+      const attachments = (value: unknown, kept: ScheduledAgentView['skills']) =>
+        Array.isArray(value)
+          ? value
+              .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+              .map((entryId) => kept.find((attachment) => attachment.id === entryId) ?? { id: entryId, name: entryId })
+          : kept
+      const worktreeName = typeof args.worktreeName === 'string' ? args.worktreeName.trim() : ''
+      const worktree = worktreeName
+        ? { name: worktreeName }
+        : args.worktree === true
+          ? { name: '' }
+          : args.worktree === false
+            ? null
+            : existing.worktree
+      const name = typeof args.name === 'string' ? args.name.trim() : existing.name
+      const updated = await service.update(id, {
+        ...(name ? { name } : {}),
+        ...(existing.tag ? { tag: existing.tag } : {}),
+        prompt: typeof args.prompt === 'string' ? args.prompt : existing.prompt,
+        schedule,
+        folderPath,
+        hostId,
+        cli: (typeof args.cli === 'string' && args.cli.trim()) || existing.cli,
+        cliModel: typeof args.model === 'string' ? args.model.trim() || null : existing.cliModel,
+        permissionPreset: capped.permissionPreset,
+        skills: attachments(args.skills, existing.skills),
+        mcpServers: attachments(args.mcpServers, existing.mcpServers),
+        worktree,
+      })
+      if (!updated.ok) return failure('scheduled_agent_invalid', updated.message)
+      return success({ scheduledAgent: scheduledAgentForCaller(updated.agent) })
+    },
+  }
+
   const scheduledAgentDelete: McpToolRegistration = {
     name: 'schedule.delete',
     description:
@@ -2782,6 +2913,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     marketplaceList,
     scheduledAgentList,
     scheduledAgentCreate,
+    scheduledAgentUpdate,
     scheduledAgentDelete,
     scheduledAgentRun,
     scheduledAgentPause,

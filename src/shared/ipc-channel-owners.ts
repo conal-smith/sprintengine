@@ -143,6 +143,7 @@ const SERVER_IPC_CHANNEL_TABLE = {
   'mesh:scheduled-agents': { retry: 'once' },
   'mesh:scheduled-agent-action': {},
   'mesh:create-scheduled-agent': {},
+  'mesh:update-scheduled-agent': {},
   'mesh:create-conversation': {},
   'mesh:forget': {},
   'mesh:get-live-state': { retry: 'once' },

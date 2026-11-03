@@ -166,6 +166,7 @@ import { createTourTools } from './automation/tour-tools'
 import { createVisualTools } from './automation/visual-tools'
 import { createElectronVisualPreview } from './visual/visual-preview-window'
 import { createExtensionTools } from './automation/extension-tools'
+import { createPluginTools } from './automation/plugin-tools'
 import { createExtensionScaffoldHandlers, resolveScaffoldRoots } from './ipc/extension-scaffold-ipc'
 import { createAppTourService } from './tours/tour-app'
 import { canvasBoardStoreDir } from './canvas/canvas-board-store'
@@ -1837,6 +1838,13 @@ export function createAppServices(
     scaffold: createExtensionScaffoldHandlers(),
     guideRoot: () => resolveScaffoldRoots().guideRoot,
   })
+  // `plugin.search` and `plugin.offer`: the plugin sources the Extensions door
+  // lists, which main keeps. In process the gateway's own; out of process the
+  // shell's `plugin` toolset.
+  const pluginTools = createPluginTools({
+    listSources: () => skillsService.listSources(),
+    getScan: (input) => skillsService.getScan(input),
+  })
 
   // Instance-global SprintEngine Studio MCP surface: reads come from the
   // workspace-sync snapshot and terminal runtime, and mutations go straight to
@@ -1950,6 +1958,7 @@ export function createAppServices(
           worktree: worktreeTools,
           artifacts: artifactsTools,
           extension: extensionTools,
+          plugin: pluginTools,
           tailnet: createTailnetTools({ resolveTailnet: () => tailnetToolsFrontDoor }),
         }),
       })
@@ -2051,6 +2060,7 @@ export function createAppServices(
             { name: 'worktree', registrations: worktreeTools },
             { name: 'artifacts', registrations: artifactsTools },
             { name: 'extension', registrations: extensionTools },
+            { name: 'plugin', registrations: pluginTools },
             ...shellTerminalToolsets(
               createServerGatewayBackends({
                 getWorkspaceSyncSnapshot: () => workspaceSyncService.getSnapshot(),

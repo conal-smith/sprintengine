@@ -207,6 +207,103 @@ test('A schedule is made there with what this door would have scheduled here', a
   }
 })
 
+test('A schedule there is saved from this editor on its `schedule.update`, whole', async () => {
+  const machine = await pairedMachine(['conversations', 'scheduled-agents', 'scheduled-agents-edit'], () =>
+    success({ scheduledAgent: { ...listed, prompt: 'Triage new issues, then label them' } }),
+  )
+  // A machine from before the editor reached it lists, runs and pauses its
+  // schedules, and is never asked to change one.
+  const older = await pairedMachine(['conversations', 'scheduled-agents'], (call) => {
+    assert.equal(call.name, 'schedule.list')
+    return success({ scheduledAgents: [listed], pausedAll: null })
+  })
+  try {
+    const listedHere = await machine.mesh.scheduledAgents({ connectionId: machine.connectionId })
+    assert.ok(listedHere.ok)
+    assert.equal(listedHere.canEdit, true)
+    machine.toolCalls.length = 0
+
+    const answer = await machine.mesh.updateScheduledAgent({
+      connectionId: machine.connectionId,
+      id: 'sa-1',
+      prompt: ' Triage new issues, then label them ',
+      cron: '0 9 * * 1-5',
+      timezone: 'Europe/London',
+      cli: 'claude-code',
+      model: null,
+      permissionPreset: 'auto',
+      worktreeName: null,
+      skills: [],
+      mcpServers: [],
+    })
+    assert.ok(answer.ok)
+    assert.equal(answer.agent.prompt, 'Triage new issues, then label them')
+    assert.deepEqual(machine.toolCalls, [
+      {
+        name: 'schedule.update',
+        arguments: {
+          id: 'sa-1',
+          prompt: 'Triage new issues, then label them',
+          cron: '0 9 * * 1-5',
+          timezone: 'Europe/London',
+          cli: 'claude-code',
+          permissionPreset: 'auto',
+          // What the editor took off is taken off there, not kept.
+          model: '',
+          worktree: false,
+          skills: [],
+          mcpServers: [],
+        },
+      },
+    ])
+
+    // Another project there, by one of its chats.
+    machine.toolCalls.length = 0
+    await machine.mesh.updateScheduledAgent({
+      connectionId: machine.connectionId,
+      id: 'sa-1',
+      workspaceId: 'ws-other',
+      prompt: 'Triage',
+      cron: '0 9 * * 1-5',
+      timezone: 'UTC',
+      once: Date.parse('2026-11-03T09:00:00.000Z'),
+      cli: 'claude-code',
+      model: 'opus',
+      worktreeName: 'triage',
+      skills: ['gh-triage'],
+    })
+    assert.deepEqual(machine.toolCalls[0]?.arguments, {
+      id: 'sa-1',
+      workspaceId: 'ws-other',
+      prompt: 'Triage',
+      cron: '0 9 * * 1-5',
+      timezone: 'UTC',
+      once: '2026-11-03T09:00:00.000Z',
+      cli: 'claude-code',
+      model: 'opus',
+      worktreeName: 'triage',
+      skills: ['gh-triage'],
+      mcpServers: [],
+    })
+
+    const listedThere = await older.mesh.scheduledAgents({ connectionId: older.connectionId })
+    assert.ok(listedThere.ok)
+    assert.equal(listedThere.canEdit, false)
+    const refused = await older.mesh.updateScheduledAgent({
+      connectionId: older.connectionId,
+      id: 'sa-1',
+      prompt: 'x',
+      cron: '0 9 * * *',
+      timezone: 'UTC',
+      cli: 'claude-code',
+    })
+    assert.equal(!refused.ok && refused.code, 'scheduled_agents_edit_unsupported')
+  } finally {
+    await machine.close()
+    await older.close()
+  }
+})
+
 test('A row without what it needs is not a schedule', () => {
   assert.equal(scheduledAgentViewOf({ id: 'x', prompt: 'p' }), null)
   assert.equal(scheduledAgentViewOf({ prompt: 'p', schedule: { cron: '* * * * *' } }), null)

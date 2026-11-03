@@ -1,6 +1,7 @@
 import type { ConversationImageAttachment } from '../../../../../shared/conversation-runtime'
 import { parseConversationMentions, type ConversationMentionRef } from '../../../../../shared/conversation/mentions'
 import { MAX_DRAFT_CHARS } from './draftStore'
+import { clipKeepingQuotes } from '../../../../../shared/chat-quotes'
 
 // The prompt stash: drafts set aside with ⌘S to clear the box for something
 // else, and brought back from the picker ⌘S opens on an empty box. One list
@@ -104,7 +105,7 @@ function normalizeEntry(value: unknown): StashedPrompt | null {
   if (typeof raw.stashedAt !== 'number' || !Number.isFinite(raw.stashedAt)) return null
   const entry: StashedPrompt = {
     id: raw.id,
-    text: raw.text.slice(0, MAX_DRAFT_CHARS),
+    text: clipKeepingQuotes(raw.text, MAX_DRAFT_CHARS),
     files: Array.isArray(raw.files) ? raw.files.filter(isSafePath).slice(0, MAX_STASH_FILES) : [],
     mentions: parseConversationMentions(raw.mentions) ?? [],
     images: Array.isArray(raw.images)
@@ -259,7 +260,7 @@ export function createPromptStash({
       const images = (input.images ?? []).slice(0, MAX_STASH_IMAGES)
       const entry: StashedPrompt = {
         id,
-        text: input.text.slice(0, MAX_DRAFT_CHARS),
+        text: clipKeepingQuotes(input.text, MAX_DRAFT_CHARS),
         files: (input.files ?? []).filter(isSafePath).slice(0, MAX_STASH_FILES),
         mentions: [...(input.mentions ?? [])],
         images: images.map((image) => ({

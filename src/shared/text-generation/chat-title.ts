@@ -15,6 +15,7 @@
  */
 
 import { MAX_WORKSPACE_TITLE_LENGTH } from '../workspace-title'
+import { quotesToPlainText } from '../chat-quotes'
 
 /**
  * How much of the first prompt the model sees. A title needs the request,
@@ -73,7 +74,8 @@ Editorial rules:
  * happens to contain instructions of its own reads as quoted material.
  */
 export function buildChatTitlePrompt(message: string): string {
-  const body = limitSection(message.trim(), MAX_CHAT_TITLE_INPUT_CHARS)
+  // A quoted passage is read as words, never as the token it rides in.
+  const body = limitSection(quotesToPlainText(message).trim(), MAX_CHAT_TITLE_INPUT_CHARS)
   return `${CHAT_TITLE_INSTRUCTIONS}\n\nUser message:\n${body}`
 }
 

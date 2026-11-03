@@ -142,3 +142,30 @@ export function remoteProjectOfWorkspace(
   const key = folderKey(folderPath)
   return projects.find((project) => project.key === key) ?? null
 }
+
+/**
+ * The project a scheduled agent there runs in, by its folder: the machine's
+ * own row when a chat stands in it, else the folder alone — a schedule's
+ * project need have no chat open. The folder alone has no workspace to ask
+ * about it (`workspaceId` empty), and saving it leaves the project as it was.
+ */
+export function remoteProjectOfFolder(projects: readonly RemoteProject[], folderPath: string): RemoteProject | null {
+  const folder = folderPath.trim()
+  if (!folder) return null
+  const key = folderKey(folder)
+  return (
+    projects.find((project) => project.key === key) ?? {
+      key,
+      name: folderName(folder),
+      folderPath: folder,
+      repository: null,
+      workspaceId: '',
+      conversationCount: 0,
+    }
+  )
+}
+
+/** Whether a picked project is another folder than the one a schedule runs in. */
+export function remoteProjectMoved(picked: RemoteProject | null, folderPath: string): picked is RemoteProject {
+  return picked !== null && picked.workspaceId !== '' && picked.key !== folderKey(folderPath.trim())
+}

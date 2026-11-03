@@ -14,7 +14,7 @@
 import { parseMachinePath } from '../../../../shared/machine-paths'
 import { workspaceHostIdOf } from '../../../../shared/execution-host'
 import { withoutStudioNoticePrefix } from '../../../../shared/studio-notice'
-import { limitResetSendAt } from '../../../../shared/scheduled-messages'
+import { limitResetSendAt, selectChatScheduledMessages } from '../../../../shared/scheduled-messages'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
@@ -114,6 +114,7 @@ import {
 } from './agentChat/incrementalConversationProjection'
 import { ConversationLinkProvider } from './agentChat/conversationLinks'
 import { SubagentStopProvider, SubagentTypesProvider } from './agentChat/subagentStatus'
+import { PluginOfferChatProvider, type PluginOfferChat } from './agentChat/pluginOffer/PluginOfferCard'
 import { StopGlyph } from './agentChat/stopGlyph'
 import { recalledConversationScroll, rememberConversationScroll } from './agentChat/conversationViewState'
 import { chatResumesInTerminal, resumeChatInTerminal } from './agentChat/resumeInTerminal'
@@ -146,7 +147,11 @@ import {
   ScheduledMessageRows,
   type ScheduledMessageView,
 } from './agentChat/scheduledMessages'
-import { canScheduleMessages, updateScheduledMessage } from '../../store/scheduledMessagesStore'
+import {
+  canScheduleMessages,
+  updateScheduledMessage,
+  useScheduledMessagesStore,
+} from '../../store/scheduledMessagesStore'
 import { SendTimeTag, type SendAtLimitReset } from '../workspace/agentComposer/schedule/SendTimeEditor'
 import { defaultSendAt } from '../workspace/agentComposer/schedule/sendTime'
 import { selectUsageLimitSnapshot, usageLimitProviderOf } from '../../store/usageLimitsStore'
@@ -163,6 +168,8 @@ import {
   insertQuoteIntoDraft,
   quoteSelectionInto,
 } from './agentChat/quoteSelection'
+import { useChatQuotes } from './agentChat/useChatQuotes'
+import { ChatQuoteActionsProvider } from './agentChat/chatQuotes'
 import {
   forwardPasteToComposer,
   isEditableElement,
@@ -2720,6 +2727,48 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     [setDraft],
   )
   quoteIntoComposerRef.current = quoteIntoComposer
+  // A passage of one reply cited from the transcript: a chip in the draft,
+  // its comment, and its mark in the reply (agentChat/useChatQuotes).
+  const chatQuotes = useChatQuotes({
+    draft,
+    setDraft,
+    composerRef,
+    pendingCaretRef,
+    rows: timelineRows,
+    // Every message still to go holds numbers too: the queue, wherever it is
+    // held, and the messages scheduled into this chat. Turns not paged in yet
+    // are not read; a number one of them used can come round again, which the
+    // marks and the agent's block tell apart by the passage (chat-quotes.ts).
+    pendingTexts: () => [
+      ...(queuedTurn?.text ? [queuedTurn.text] : []),
+      ...handingOff.map((turn) => turn.text),
+      ...(hostQueue?.messages.map((message) => message.text) ?? []),
+      ...selectChatScheduledMessages(useScheduledMessagesStore.getState().state, { workspaceId, agentId }).map(
+        (message) => message.text,
+      ),
+    ],
+    transcriptRef,
+    listRef,
+    scrollToRow: (index) => {
+      setAnchoredUserId(null)
+      void listRef.current?.scrollToIndex({ index, viewPosition: 0, animated: false })
+    },
+    pauseFollowing: () => {
+      atBottomRef.current = false
+      setAtBottom(false)
+    },
+    hasMore,
+    loadingEarlier,
+    loadEarlier,
+    submit: submitComposer,
+  })
+  // A chat on another machine keeps the blockquote: the token a quote rides in
+  // stays on the machine that made it, and the wire carries messages as words
+  // (docs/compatibility.md), so the far side would neither mark the passage
+  // nor, on an older release, expand it for its agent.
+  const citeIntoComposer = transport.kind === 'local' ? chatQuotes.cite : undefined
+  const goToQuoteSource = chatQuotes.goToSource
+  const quoteActions = useMemo(() => ({ goToSource: goToQuoteSource }), [goToQuoteSource])
   // Replay: the conversation played back from its first message, drawn over
   // this view (agentChat/conversationReplayView). It reads the whole log, so
   // the turns this view has not paged in yet are fetched first; leaving, or
@@ -2760,7 +2809,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
   quoteSelectionRef.current = () => {
     const transcript = transcriptRef.current
     if (!transcript || composerInputDisabled) return false
-    return quoteSelectionInto(transcript, document.getSelection(), quoteIntoComposer)
+    return quoteSelectionInto(transcript, document.getSelection(), quoteIntoComposer, citeIntoComposer)
   }
   // Restart agent session (`chat.restartSession`): end the agent's process the
   // way Settle and the idle sweep do — suspended, so the session keeps its
@@ -3188,6 +3237,18 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       mcpServerActions,
     ],
   )
+  // What a plugin card an agent drew lends from this chat: its CLI, whose
+  // servers it reads, and a sign-in on this chat's own servers.
+  const pluginOfferChat = useMemo<PluginOfferChat>(
+    () => ({
+      cli: chatCli ?? null,
+      signIn:
+        runMcpServerAction && sessionId && mcpServerActions?.includes('sign-in')
+          ? (serverId: string) => runMcpServerAction({ sessionId, serverId, action: 'sign-in' })
+          : null,
+    }),
+    [chatCli, runMcpServerAction, sessionId, mcpServerActions],
+  )
   const removeDraftFile = useCallback(
     (path: string) =>
       setDraftMetadata((current) => ({ ...current, files: current.files.filter((entry) => entry !== path) })),
@@ -3504,12 +3565,13 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
         }
   chromeRef.current = chrome
   // What rows read besides their own item: it changes with a turn starting or
-  // ending, a retry becoming possible, a jump's flash, never with a token.
+  // ending, a retry becoming possible, a jump's flash, a plugin card's session
+  // changing, never with a token.
   // `chrome` is the previous object while nothing in it changed (above).
   const rowContext = useMemo(
-    () => ({ chrome, flashRowId, hydrated, replayThroughSeq, unreadRowId }),
+    () => ({ chrome, flashRowId, hydrated, replayThroughSeq, unreadRowId, pluginOfferChat }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chrome, flashRowId, hydrated, replayThroughSeq, unreadRowId],
+    [chrome, flashRowId, hydrated, replayThroughSeq, unreadRowId, pluginOfferChat],
   )
 
   const latestCompletedTurnId = shape.latestCompletedTurnId ?? null
@@ -4158,7 +4220,11 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                       onFlashEnd={clearFlash}
                     >
                       <SubagentStopProvider value={stopSubagent}>
-                        <TimelineRow key={item.id} row={item} chrome={chrome} />
+                        <PluginOfferChatProvider value={pluginOfferChat}>
+                          <ChatQuoteActionsProvider value={quoteActions}>
+                            <TimelineRow key={item.id} row={item} chrome={chrome} />
+                          </ChatQuoteActionsProvider>
+                        </PluginOfferChatProvider>
                       </SubagentStopProvider>
                     </ConversationRowFrame>
                   </>
@@ -4225,7 +4291,10 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
               enabled={!composerInputDisabled && viewActive}
               shortcut={quoteShortcutLabel}
               onQuote={quoteIntoComposer}
+              onCite={citeIntoComposer}
             />
+            {chatQuotes.highlights}
+            {chatQuotes.editor}
           </div>
 
           <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
@@ -4579,6 +4648,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
                     ...stashPicker.comboboxProps,
                   }}
                   value={draft}
+                  renderQuoteChip={chatQuotes.renderQuoteChip}
                   historyScope={`${workspaceId}\0${agentId}`}
                   onBlur={flushDraft}
                   leavesDrop={dataTransferHasDroppableFiles}

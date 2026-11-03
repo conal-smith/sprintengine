@@ -22,6 +22,7 @@ import type {
   ConversationThread,
   ConversationWorkspaceKey,
 } from '../shared/conversation-index'
+import { quotesToInlineText } from '../shared/chat-quotes'
 
 type Fingerprint = { file: string; size: number; mtime: number }
 // 3 since a row carries `lastTurnEndedAt`: a version 2 cache has rows read
@@ -181,7 +182,11 @@ export class ConversationIndex {
         if (event.type !== 'user_message' && event.type !== 'content_delta') continue
         const key = `${event.type}:${turnId}`
         if (seen.has(key)) continue
-        const value = `${tails.get(key) ?? ''}${text(event.payload?.text)}`
+        // A person's message is searched as its words: a quote it carries is
+        // its passage and comment, never the token it rides in.
+        const said =
+          event.type === 'user_message' ? quotesToInlineText(text(event.payload?.text)) : text(event.payload?.text)
+        const value = `${tails.get(key) ?? ''}${said}`
         const offset = value.toLowerCase().indexOf(query)
         tails.set(key, value.slice(-Math.max(160, query.length)))
         if (offset < 0) continue
@@ -530,7 +535,7 @@ function foldEvent(fold: ThreadFold, event: ConversationEvent): void {
     fold.turns.add(text(event.payload?.turnId) || event.id)
     // A message Studio sent the chat is not what the person opened it with.
     if (!thread.firstUserText && !readConversationMessageOrigin(event.payload?.origin)) {
-      thread.firstUserText = text(event.payload?.text)
+      thread.firstUserText = quotesToInlineText(text(event.payload?.text))
       if (thread.titleSource === 'first-message') thread.title = firstMessageTitle(thread.firstUserText)
     }
   }

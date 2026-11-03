@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type RefObject } from 'react'
 import type { LegendListRef } from '@legendapp/list/react'
 import type { ConversationTimelineRow } from './conversationTimeline'
+import { quotesToInlineText } from '../../../../../shared/chat-quotes'
 
 /** A short conversation is read by scrolling; the minimap starts at three prompts. */
 export const TURN_MINIMAP_MIN_TURNS = 3
@@ -22,7 +23,7 @@ export function deriveTurnMarks(rows: readonly ConversationTimelineRow[]): TurnM
   const marks: TurnMark[] = []
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index]!
-    if (row.kind === 'user') marks.push({ id: row.id, rowIndex: index, prompt: row.entry.text })
+    if (row.kind === 'user') marks.push({ id: row.id, rowIndex: index, prompt: quotesToInlineText(row.entry.text) })
   }
   return marks
 }

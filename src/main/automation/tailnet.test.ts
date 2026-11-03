@@ -821,6 +821,7 @@ test('tailnet', async () => {
         'chat-search',
         'approval-rules',
         'scheduled-agents',
+        'scheduled-agents-edit',
       ])
 
       // The pairing code is one-time: replaying it does not mint a second device.
@@ -952,6 +953,7 @@ test('tailnet', async () => {
         'chat-search',
         'approval-rules',
         'scheduled-agents',
+        'scheduled-agents-edit',
       ])
       // Every one the wire defines but shrinking an upload, which only a
       // machine with an image codec advertises; this harness has none.
