@@ -1,4 +1,5 @@
 import type { WorktreePoolSettings } from '../../shared/ipc/worktree-pool'
+import type { WorktreeHold, WorktreeLeases } from '../worktree-leases'
 import type { MeasureDiskUsage } from './disk-usage'
 import type { PoolRecord, SlotRecord } from './pool-store'
 import type { SlotGitRunner } from './slot-git'
@@ -60,12 +61,38 @@ export type PoolContext = {
   persist: (pool: PoolRuntime, options?: { sizeOnly?: boolean }) => Promise<void>
   slotById: (pool: PoolRuntime, slotId: string) => SlotRecord | undefined
   somethingRunsIn: (path: string) => Promise<boolean>
+  /**
+   * The process's holds on worktree paths (worktree-leases.ts): a step that
+   * changes what is at a slot's path holds it exclusive, through
+   * {@link holdIdle}, so a turn or terminal starting there waits for it.
+   */
+  leases: WorktreeLeases
   getSettings: () => Promise<WorktreePoolSettings>
   resolveRepo: (repoRoot: string) => Promise<ResolvedRepo | null>
   poolFor: (repoRoot: string, create: boolean) => Promise<PoolRuntime | null>
   /** Whether this instance may drive the pool: it holds the container's lock, and the pool has been recovered. */
   ready: (pool: PoolRuntime) => Promise<boolean>
   load: () => Promise<void>
+}
+
+/**
+ * The exclusive hold on `path` for a step that changes what is there, once
+ * nothing runs in it: null when a turn, session or terminal is starting there
+ * (or waits to), or is running there. Asked again under the hold, so a start
+ * that came between the step's own look and the hold is seen. Taken before the
+ * pool's mutex, never inside it (worktree-leases.ts).
+ */
+export async function holdIdle(ctx: PoolContext, path: string, reason: string): Promise<WorktreeHold | null> {
+  const hold = await ctx.leases.tryExclusive(path, reason)
+  if (!hold) return null
+  try {
+    if (!(await ctx.somethingRunsIn(path))) return hold
+  } catch (error) {
+    hold.release()
+    throw error
+  }
+  hold.release()
+  return null
 }
 
 export function tail(text: string | null | undefined, max = NOTE_TAIL_CHARS): string | null {

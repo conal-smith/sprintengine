@@ -8,7 +8,7 @@ import { removeWorktreeKeepingSubmoduleWork } from '../worktree-submodule-remova
 import { MEASURE_CONCURRENCY } from './disk-usage'
 import type { SlotRecord } from './pool-store'
 import { commitIsReachable, readSlotStatus } from './slot-git'
-import { type PoolContext, type PoolRuntime, tail } from './pool-context'
+import { type PoolContext, type PoolRuntime, holdIdle, tail } from './pool-context'
 import { hold, forgetRegistration, reservePath } from './pool-slot-steps'
 
 /** Evicting idle slots (worktree-pool-service.ts), and measuring them against the disk limit. */
@@ -38,6 +38,15 @@ export async function evictSlot(
       await ctx.persist(pool)
     })
   }
+  // Held for the whole removal, taken before the slot is marked: a turn or
+  // terminal starting in the slot waits for it, then finds the slot gone and
+  // has its chat's worktree brought back (chat-folder-guard.ts).
+  const pathHold = await holdIdle(ctx, slot.path, 'the pool is removing this worktree')
+  if (!pathHold) {
+    // A removal resumed after a restart waits as an idle slot for the next.
+    if (slot.state === 'evicting' && !pool.busy.has(slot.id)) await putBack()
+    return SOMETHING_IN_IT
+  }
   const began = await ctx.withPool(pool, async () => {
     if (pool.busy.has(slot.id) || (slot.state !== 'idle' && slot.state !== 'evicting')) return false
     pool.busy.add(slot.id)
@@ -46,12 +55,11 @@ export async function evictSlot(
     await ctx.persist(pool)
     return true
   })
-  if (!began) return 'Only a worktree that is ready to reuse can be removed.'
+  if (!began) {
+    pathHold.release()
+    return 'Only a worktree that is ready to reuse can be removed.'
+  }
   try {
-    if (await ctx.somethingRunsIn(slot.path)) {
-      await putBack()
-      return 'A terminal is open in it. Close it first.'
-    }
     if (await pathExists(slot.path)) {
       const status = await readSlotStatus(ctx.git, slot.path)
       if (!status.ok || status.status.changedPaths > 0 || status.status.branch !== null) {
@@ -164,8 +172,12 @@ export async function evictSlot(
     return true
   } finally {
     pool.busy.delete(slot.id)
+    pathHold.release()
   }
 }
+
+/** Why a step that changes a slot backs off: a live terminal or chat is in it, or one is starting there. */
+const SOMETHING_IN_IT = 'Something is running or starting in it.'
 
 /**
  * How long a slot may sit ready and unused before it goes, kept number or
@@ -317,15 +329,17 @@ export async function clearIgnored(
   pool: PoolRuntime,
   slot: SlotRecord,
 ): Promise<WorktreePoolActionResult> {
-  if (await ctx.somethingRunsIn(slot.path)) {
-    return { ok: false, message: 'A terminal is open in that worktree. Close it first.' }
-  }
+  const pathHold = await holdIdle(ctx, slot.path, 'the pool is clearing this worktree’s ignored files')
+  if (!pathHold) return { ok: false, message: 'Something is running or starting in that worktree.' }
   const began = await ctx.withPool(pool, async () => {
     if (pool.busy.has(slot.id) || slot.state !== 'idle') return false
     pool.busy.add(slot.id)
     return true
   })
-  if (!began) return { ok: false, message: 'Only a worktree that is ready to reuse can be cleared.' }
+  if (!began) {
+    pathHold.release()
+    return { ok: false, message: 'Only a worktree that is ready to reuse can be cleared.' }
+  }
   try {
     // Never the sidecar an older build wrote: until the store's one-time move
     // has taken it (workspace-store-migration.ts), it holds the history of
@@ -343,6 +357,7 @@ export async function clearIgnored(
     })
   } finally {
     pool.busy.delete(slot.id)
+    pathHold.release()
   }
   await measureSlot(ctx, pool, slot)
   return { ok: true, message: 'Cleared. The next agent in it runs the install from the start.' }

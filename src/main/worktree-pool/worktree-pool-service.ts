@@ -12,6 +12,7 @@ import { worktreeContainerPath } from '../../shared/worktree-paths'
 import { insideAny, pathSpellings } from '../agent-worktree-keep-checks'
 import { worktreeBranchLedger, type WorktreeBranchLedger } from '../worktree-branch-ledger'
 import { worktreeBranchPrefix } from '../worktree-branch-prefix'
+import { worktreeLeases, type WorktreeLeases } from '../worktree-leases'
 import { measureDiskUsage, type MeasureDiskUsage } from './disk-usage'
 import {
   acquireInstanceLock,
@@ -86,8 +87,8 @@ export type { PoolChat } from './pool-idle'
  *   same step, by a status read of the slot (untracked files included, ignored
  *   ones not); anything reported makes the slot `held`, and a held slot changes
  *   only when a person picks Commit, Stash, Discard or Keep.
- * - It never recycles a slot something runs in: a live terminal inside the slot
- *   postpones the return.
+ * - It never recycles a slot something runs in, or starts in: a live terminal
+ *   or chat inside the slot, or one starting there, postpones the return.
  * - It never deletes an agent's branch. Returning detaches HEAD; the branch and
  *   its commits stay (the agent worktree cleanup deletes the branch once its
  *   work is on the default branch). A detached HEAD holding commits no ref
@@ -108,6 +109,14 @@ export type { PoolChat } from './pool-idle'
  * that is being returned or evicted. A second Studio is kept off the same slots
  * by a lock file in the container (pool-store.ts). The worktree registry itself
  * is changed under worktree-registry-lock.ts.
+ *
+ * A step that changes what is at a slot's path (return, the reset of a reuse,
+ * eviction, clearing, a held slot's action) first takes the path's exclusive
+ * hold (worktree-leases.ts) and then asks the live list again: a turn, session
+ * or terminal starting in the slot holds it shared until it is on that list,
+ * so neither signal alone leaves the gap between a look and the change. The
+ * hold is taken before the mutex and never inside it, and it never waits: a
+ * step that cannot have it backs off (postponed, passed over, refused).
  *
  * ## Crash recovery
  *
@@ -136,6 +145,12 @@ export type WorktreePoolServiceDeps = {
    * recycled.
    */
   livePaths?: () => string[] | Promise<string[]>
+  /**
+   * The holds on worktree paths the starters take (worktree-leases.ts): a
+   * return, reset, eviction or clear holds its slot's path exclusive, and backs
+   * off while a turn or terminal is starting there. The process's own unless given.
+   */
+  leases?: WorktreeLeases
   onChange?: (snapshot: WorktreePoolSnapshot) => void
   log?: (line: string) => void
   now?: () => number
@@ -359,6 +374,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     persist,
     slotById,
     somethingRunsIn,
+    leases: deps.leases ?? worktreeLeases,
     getSettings,
     resolveRepo,
     poolFor,
@@ -620,7 +636,7 @@ export function createWorktreePoolService(deps: WorktreePoolServiceDeps) {
     if (outcome === 'held') return { ok: true, message: 'Held: it has changes a person should look at.' }
     if (outcome === 'not-found') return { ok: false, message: 'No such lease.' }
     if (outcome === 'busy') return { ok: false, message: 'Another Studio is using this pool.' }
-    return { ok: false, message: 'Something is still running in it; the next sweep returns it.' }
+    return { ok: false, message: 'Something is running or starting in it; the next sweep returns it.' }
   }
 
   /** The lease an agent took through MCP, by the slot path it was given. */

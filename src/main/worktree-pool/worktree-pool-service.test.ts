@@ -21,6 +21,7 @@ import type { MeasureDiskUsage } from './disk-usage'
 import { createWorktreeInventory } from './worktree-inventory'
 import { createWorktreePoolService, type PoolChat } from './worktree-pool-service'
 import { createWorktreePoolTools } from './worktree-pool-tools'
+import { createWorktreeLeases, type WorktreeBusy, type WorktreeHold, type WorktreeLeases } from '../worktree-leases'
 
 const execFileAsync = promisify(execFile)
 const identity = {
@@ -83,6 +84,8 @@ function makeService(
     recorded?: Array<[string, string]>
     /** The chats on record, as worktree-services.ts reads them off the registry; left out, unknown. */
     chats?: PoolChat[]
+    /** The holds on worktree paths; a fresh set unless given, so no case meets another's. */
+    leases?: WorktreeLeases
   } = {},
 ) {
   const live = options.live ?? []
@@ -101,6 +104,7 @@ function makeService(
     ...(options.fetchBackoffMs !== undefined ? { fetchBackoffMs: options.fetchBackoffMs } : {}),
     livePaths: () => [...live, ...sessions],
     liveSessionPaths: () => sessions,
+    leases: options.leases ?? createWorktreeLeases(),
     ...(chats ? { chats: () => chats } : {}),
     onGivenBack: ({ path, branch, leaseBranch }) => {
       givenBack.push(path)
@@ -554,6 +558,135 @@ test('a return waits while a terminal is inside, and a merge in progress holds t
   swept = await returnAll(harness)
   assert.equal(swept[0]?.verdict, 'held')
   assert.equal((await slotAt(harness, 'app-01')).held?.reason, 'operation')
+})
+
+function held(result: WorktreeHold | WorktreeBusy): WorktreeHold {
+  assert.ok(!('busy' in result), 'busy' in result ? result.busy : '')
+  return result
+}
+
+/** Whether `pending` has settled once everything already queued has run. */
+async function settled(pending: Promise<unknown>): Promise<boolean> {
+  let done = false
+  void pending.then(() => (done = true))
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  return done
+}
+
+test('a turn that goes live while its slot is being returned postpones the return: no detach, its branch stays', async () => {
+  const calls: string[][] = []
+  let goesLiveAt: string | null = null
+  const sessions: string[] = []
+  // The turn's session shows up among the live folders between the return's
+  // first look and its git steps, as one that started without a send does.
+  const runner: SlotGitRunner = async (cwd, args, options) => {
+    calls.push(args)
+    if (goesLiveAt !== null && cwd === goesLiveAt && args[0] === 'status') {
+      sessions.push(goesLiveAt)
+      goesLiveAt = null
+    }
+    return defaultSlotGitRunner(cwd, args, options)
+  }
+  const harness = makeService({ git: runner, live: sessions })
+  const leased = await lease(harness, 'racing')
+  goesLiveAt = leased.path
+  calls.length = 0
+  assert.equal(await harness.service.release(leased.leaseId), 'postponed')
+  assert.equal(goesLiveAt, null, 'the session went live during the return')
+  const after = await slotAt(harness, 'app-01')
+  assert.equal(after.state, 'leased', 'still the chat’s')
+  assert.equal(after.lease?.leaseId, leased.leaseId)
+  assert.equal(await git(leased.path, 'branch', '--show-current'), 'agent/racing', 'not detached')
+  assert.equal(
+    calls.some((args) => args[0] === 'switch'),
+    false,
+    'no switch --detach ran',
+  )
+  assert.match((await lockReason(leased.path)) ?? '', /agent/, 'still locked for its agent')
+})
+
+test('a turn or terminal starting in a slot keeps every step that would change it off until it is live', async () => {
+  const leases = createWorktreeLeases()
+  const harness = makeService({ leases })
+  const leased = await lease(harness, 'starting')
+  const starting = held(
+    await leases.acquireShared(join(leased.path, 'src'), { reason: 'a terminal is starting in it' }),
+  )
+  assert.equal(await harness.service.release(leased.leaseId), 'postponed', 'release')
+  const swept = await returnAll(harness)
+  assert.equal(swept[0]?.verdict, 'postponed', 'the sweep')
+  assert.equal((await slotAt(harness, 'app-01')).state, 'leased', 'nothing was written')
+  starting.release()
+  assert.equal((await returnAll(harness))[0]?.verdict, 'returned')
+
+  const opening = held(await leases.acquireShared(leased.path, { reason: 'a terminal is starting in it' }))
+  const evicted = await harness.service.action({ kind: 'evict', repoRoot: repo, slotId: 'app-01' })
+  assert.equal(evicted.ok, false, 'eviction')
+  assert.match(evicted.message ?? '', /running or starting in it/)
+  const cleared = await harness.service.action({ kind: 'clear-ignored', repoRoot: repo, slotId: 'app-01' })
+  assert.equal(cleared.ok, false, 'clearing')
+  assert.match(cleared.message ?? '', /running or starting in that worktree/)
+  const next = await lease(harness, 'next')
+  assert.notEqual(next.path, leased.path, 'reuse passes it over')
+  assert.equal((await slotAt(harness, 'app-01')).state, 'idle')
+  opening.release()
+
+  await writeFile(join(next.path, 'README.md'), '# edited\n')
+  assert.equal((await returnAll(harness)).find((entry) => entry.path === next.path)?.verdict, 'held')
+  const stashing = held(await leases.acquireShared(next.path, { reason: 'a turn is starting in it' }))
+  const stashed = await harness.service.action({ kind: 'held', repoRoot: repo, slotId: 'app-02', action: 'stash' })
+  assert.equal(stashed.ok, false, 'a held slot’s action')
+  assert.match(stashed.message ?? '', /running or starting in that worktree/)
+  assert.equal(await readFile(join(next.path, 'README.md'), 'utf8'), '# edited\n', 'its work is untouched')
+  stashing.release()
+  assert.deepEqual(await leases.holders(container), [], 'every hold given up')
+})
+
+test('a turn or terminal starting while its slot is returned or removed waits for that, then goes on', async () => {
+  const leases = createWorktreeLeases()
+  /** Stops the next `git status` in `path` until the returned function is called. */
+  let pause: { path: string; reached: () => void; gate: Promise<void> } | null = null
+  const pauseAtStatus = (path: string): { reached: Promise<void>; resume: () => void } => {
+    let reached!: () => void
+    let resume!: () => void
+    const atStatus = new Promise<void>((resolve) => (reached = resolve))
+    pause = { path, reached, gate: new Promise<void>((resolve) => (resume = resolve)) }
+    return { reached: atStatus, resume }
+  }
+  const runner: SlotGitRunner = async (cwd, args, options) => {
+    const paused = pause
+    if (paused && cwd === paused.path && args[0] === 'status') {
+      pause = null
+      paused.reached()
+      await paused.gate
+    }
+    return defaultSlotGitRunner(cwd, args, options)
+  }
+  const harness = makeService({ git: runner, leases })
+  const leased = await lease(harness, 'waited')
+
+  let paused = pauseAtStatus(leased.path)
+  const returning = harness.service.release(leased.leaseId)
+  await paused.reached
+  const turn = leases.acquireShared(leased.path, { reason: 'a turn is starting in it' })
+  assert.equal(await settled(turn), false, 'the turn waits while the return is in git')
+  assert.equal(await leases.tryExclusive(leased.path, 'the cleanup is removing this worktree'), null)
+  paused.resume()
+  assert.equal(await returning, 'returned')
+  const started = held(await turn)
+  // The chat-folder guard asks next, and brings the chat's branch back.
+  assert.equal(harness.service.awaitsChat(leased.path, 'agent/waited'), true)
+  started.release()
+
+  paused = pauseAtStatus(leased.path)
+  const evicting = harness.service.action({ kind: 'evict', repoRoot: repo, slotId: 'app-01' })
+  await paused.reached
+  const terminal = leases.acquireShared(join(leased.path, 'src'), { reason: 'a terminal is starting in it' })
+  assert.equal(await settled(terminal), false, 'the terminal waits while the slot is removed')
+  paused.resume()
+  assert.equal((await evicting).ok, true)
+  held(await terminal).release()
+  assert.equal(await exists(leased.path), false, 'removed before the terminal started')
 })
 
 test('a lease passes over an idle slot a terminal sits in and makes a new one', async () => {

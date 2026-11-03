@@ -47,6 +47,45 @@ export async function returnSlot(
   recovering = false,
   park: SlotKeeper | null = null,
 ): Promise<'returned' | 'held' | 'postponed' | 'skipped'> {
+  // Held from before the slot is marked until it is idle or put back: a turn
+  // or terminal starting in it holds the path shared until it is live, so a
+  // return that cannot have the path changes nothing, not even the record,
+  // and the next sweep asks again. Given up before the limits below, which
+  // may evict this very slot under a hold of their own.
+  const pathHold = await ctx.leases.tryExclusive(slot.path, 'the pool is returning this worktree')
+  if (!pathHold) {
+    // Only another of the pool's own steps has it (a sweep and a release at
+    // once): that one decides, as for a slot marked busy. Anything else, a
+    // start included, is asked about again at the next sweep.
+    const holders = await ctx.leases.holders(slot.path)
+    const ownStepOnly = holders.length > 0 && holders.every((holder) => holder.kind === 'exclusive')
+    return ownStepOnly ? 'skipped' : 'postponed'
+  }
+  let outcome: 'returned' | 'held' | 'postponed' | 'skipped'
+  try {
+    outcome = await returnHolding(ctx, pool, slot, recovering, park)
+  } finally {
+    pathHold.release()
+  }
+  if (outcome !== 'returned') return outcome
+  await evictOverLimit(ctx, pool)
+  // A slot comes back bigger than it left (the agent installed, built); with
+  // a disk limit set, that is when the pool learns it went over.
+  if ((await ctx.getSettings()).diskLimitGb !== null && pool.record.slots.includes(slot)) {
+    await measureSlot(ctx, pool, slot)
+    await enforceDiskLimit(ctx)
+  }
+  return 'returned'
+}
+
+/** {@link returnSlot}'s checks and git steps, under the path's exclusive hold. */
+async function returnHolding(
+  ctx: PoolContext,
+  pool: PoolRuntime,
+  slot: SlotRecord,
+  recovering: boolean,
+  park: SlotKeeper | null,
+): Promise<'returned' | 'held' | 'postponed' | 'skipped'> {
   const began = await ctx.withPool(pool, async () => {
     if (pool.busy.has(slot.id)) return null
     const from = slot.state
@@ -84,7 +123,8 @@ export async function returnSlot(
   }
   try {
     // The agent's terminal (or anyone's) is still in there: put it back as
-    // it was, and the next sweep asks again.
+    // it was, and the next sweep asks again. Asked under the hold, so a turn
+    // or terminal that started since the sweep looked is seen here.
     if (await ctx.somethingRunsIn(slot.path)) return await putBack()
     // Locked by another Studio profile (which adopted or leased it) or by a
     // person: theirs, whatever this profile's record says. Held for a person
@@ -118,6 +158,11 @@ export async function returnSlot(
     if (park && status.status.branch !== park.branch) return await putBack()
     const kept = status.status.branch ?? branch
     const oid = status.status.oid
+    // Once more, the last thing before the tree changes: the reads above take
+    // a while, and a chat's live child can open a turn of its own (a
+    // background agent's result arriving) without a send, and so without a
+    // hold.
+    if (await ctx.somethingRunsIn(slot.path)) return await putBack()
     // Detaching is free when HEAD is on a branch (the branch keeps it) or at
     // a commit some ref already reaches. A detached HEAD with commits of its
     // own gets a branch first, or those commits would be reachable only from
@@ -160,20 +205,13 @@ export async function returnSlot(
       await ctx.persist(pool)
     })
     ctx.log(`${slot.path}: returned clean${kept ? ` (${kept} kept)` : ''}`)
+    return 'returned'
   } catch (error) {
     await holdAfterFailure(ctx, pool, slot, messageOf(error), { branch })
     return 'held'
   } finally {
     pool.busy.delete(slot.id)
   }
-  await evictOverLimit(ctx, pool)
-  // A slot comes back bigger than it left (the agent installed, built); with
-  // a disk limit set, that is when the pool learns it went over.
-  if ((await ctx.getSettings()).diskLimitGb !== null && pool.record.slots.includes(slot)) {
-    await measureSlot(ctx, pool, slot)
-    await enforceDiskLimit(ctx)
-  }
-  return 'returned'
 }
 
 /** Whether the agent that leased a slot through MCP is still in the app's records. */

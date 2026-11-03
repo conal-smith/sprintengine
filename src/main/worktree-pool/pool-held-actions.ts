@@ -2,13 +2,15 @@ import type { WorktreePoolActionResult } from '../../shared/ipc/worktree-pool'
 import { worktreeBranchName } from '../../shared/worktree-branch'
 import type { SlotRecord } from './pool-store'
 import { operationInProgress, readSlotGitDir, readSlotStatus, removeSlotMarker } from './slot-git'
-import { type PoolContext, type PoolRuntime, messageOf } from './pool-context'
+import { type PoolContext, type PoolRuntime, holdIdle, messageOf } from './pool-context'
 import { unlockIfOurs } from './pool-slot-steps'
 import { returnSlot } from './pool-return'
 
 /** What a person can do with a held slot (worktree-pool-service.ts): commit, stash, discard or keep its work. */
 
 // ── Held-slot actions ────────────────────────────────────────────────────
+
+const ACTING = { commit: 'committing', stash: 'stashing', discard: 'discarding', keep: 'keeping' } as const
 
 export async function heldAction(
   ctx: PoolContext,
@@ -18,9 +20,9 @@ export async function heldAction(
   message: string | undefined,
 ): Promise<WorktreePoolActionResult> {
   if (slot.state !== 'held') return { ok: false, message: 'That worktree is not held.' }
-  if (await ctx.somethingRunsIn(slot.path)) {
-    return { ok: false, message: 'A terminal is still open in that worktree. Close it first.' }
-  }
+  // Held until the action is done; the return after it takes its own.
+  const pathHold = await holdIdle(ctx, slot.path, `the pool is ${ACTING[action]} the work in this worktree`)
+  if (!pathHold) return { ok: false, message: 'Something is running or starting in that worktree.' }
   const began = await ctx.withPool(pool, async () => {
     if (pool.busy.has(slot.id) || slot.state !== 'held') return false
     pool.busy.add(slot.id)
@@ -28,7 +30,10 @@ export async function heldAction(
     await ctx.persist(pool)
     return true
   })
-  if (!began) return { ok: false, message: 'That worktree is busy.' }
+  if (!began) {
+    pathHold.release()
+    return { ok: false, message: 'That worktree is busy.' }
+  }
   let outcome: WorktreePoolActionResult = { ok: true, message: null }
   try {
     const gitDir = await readSlotGitDir(ctx.git, slot.path)
@@ -94,13 +99,17 @@ export async function heldAction(
       if (!cleaned.ok) return (outcome = { ok: false, message: cleaned.message ?? 'git clean failed.' })
     }
   } finally {
-    await ctx.withPool(pool, async () => {
-      if (pool.record.slots.includes(slot)) {
-        slot.op = null
-        await ctx.persist(pool)
-      }
-    })
-    pool.busy.delete(slot.id)
+    try {
+      await ctx.withPool(pool, async () => {
+        if (pool.record.slots.includes(slot)) {
+          slot.op = null
+          await ctx.persist(pool)
+        }
+      })
+    } finally {
+      pool.busy.delete(slot.id)
+      pathHold.release()
+    }
   }
   if (outcome.ok && pool.record.slots.includes(slot)) {
     const returned = await returnSlot(ctx, pool, slot)

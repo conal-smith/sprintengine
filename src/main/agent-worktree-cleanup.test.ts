@@ -8,6 +8,7 @@ import { afterAll, beforeAll, test } from 'vitest'
 
 import { cleanupAgentWorktrees } from './agent-worktree-cleanup'
 import { runGitCommand } from './git-run'
+import { createWorktreeLeases, type WorktreeHold } from './worktree-leases'
 
 const execFileAsync = promisify(execFile)
 const env = {
@@ -372,6 +373,55 @@ test('a chat whose session starts in a worktree while it is being checked keeps 
   )
   assert.equal(report.entries.find((entry) => entry.path === returning)?.verdict, 'in-use')
   assert.ok(await exists(returning))
+})
+
+test('a turn or terminal starting in a worktree while it is checked keeps it, and the folder stays', async () => {
+  // Never committed to, so it would go. The start holds the folder from its
+  // first step, before anything shows it among the live folders.
+  const starting = await addWorktree('starting-turn')
+  const leases = createWorktreeLeases()
+  const start: { hold: WorktreeHold | null } = { hold: null }
+  const report = await cleanupAgentWorktrees(
+    { repoRoot: repo, protectedPaths: [] },
+    {
+      livePaths: async () => {
+        if (!start.hold) {
+          const taken = await leases.acquireShared(join(starting, 'src'), { reason: 'a terminal is starting in it' })
+          assert.ok(!('busy' in taken))
+          start.hold = taken
+        }
+        return []
+      },
+      leases,
+      log: () => {},
+      now: later,
+    },
+  )
+  assert.equal(report.entries.find((entry) => entry.path === starting)?.verdict, 'in-use')
+  assert.ok(await exists(starting))
+  start.hold?.release()
+
+  const after = await cleanupAgentWorktrees(
+    { repoRoot: repo, protectedPaths: [] },
+    { leases, log: () => {}, now: later },
+  )
+  assert.equal(after.entries.find((entry) => entry.path === starting)?.verdict, 'removed', 'once it has started')
+})
+
+test('a chat bringing back a worktree whose folder is gone keeps git’s note of it', async () => {
+  const gone = await addWorktree('coming-back')
+  await rm(gone, { recursive: true, force: true })
+  const leases = createWorktreeLeases()
+  const restoring = await leases.acquireShared(gone, { reason: 'its chat is bringing it back' })
+  assert.ok(!('busy' in restoring))
+  const report = await cleanupAgentWorktrees(
+    { repoRoot: repo, protectedPaths: [], keepBranches: [] },
+    { leases, log: () => {}, now: later },
+  )
+  assert.equal(report.entries.find((entry) => entry.path === gone)?.verdict, 'in-use')
+  assert.match(await git(repo, 'worktree', 'list'), /coming-back/, 'git still holds it')
+  restoring.release()
+  await git(repo, 'worktree', 'prune')
 })
 
 test('an agent worktree whose folder was deleted is forgotten by git, so its merged branch can go', async () => {

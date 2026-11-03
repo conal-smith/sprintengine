@@ -11,6 +11,7 @@ import { listGitWorktrees } from './git-worktree-list'
 import { resolveRepoRoot } from './git-worktree-validation'
 import { lockAgentWorktree, relockWorktree } from './agent-worktree-lock'
 import { worktreeBranchLedger, type WorktreeBranchLedger } from './worktree-branch-ledger'
+import { worktreeLeases, type WorktreeHold, type WorktreeLeases } from './worktree-leases'
 import { removeWorktreeLeftovers } from './worktree-leftovers'
 import { withWorktreeRegistryLock } from './worktree-registry-lock'
 import { removeWorktreeKeepingSubmoduleWork, type SubmoduleWork } from './worktree-submodule-removal'
@@ -166,6 +167,12 @@ export type AgentWorktreeCleanupDeps = {
   knownWorkspaceIds?: () => Iterable<string> | null
   /** The record of the branches Studio made; the profile's own (`worktree-branch-ledger.ts`) unless given. */
   ledger?: Pick<WorktreeBranchLedger, 'branches' | 'forget'>
+  /**
+   * The holds on worktree paths (worktree-leases.ts): a removal holds its
+   * worktree exclusive, and a turn or terminal starting there keeps it. The
+   * process's own unless given.
+   */
+  leases?: WorktreeLeases
 }
 
 const DEFAULT_REF_CANDIDATES = ['origin/main', 'origin/master', 'main', 'master']
@@ -300,6 +307,28 @@ export async function cleanupAgentWorktrees(
   const protectedSpellings = await Promise.all(
     [...input.protectedPaths, ...((await deps.livePaths?.()) ?? [])].filter(Boolean).map((path) => pathSpellings(path)),
   )
+  const leases = deps.leases ?? worktreeLeases
+  /**
+   * The worktree's exclusive hold, for the removal at the end of its checks,
+   * or null while a turn or terminal is starting there or anything runs in
+   * it. The checks take a while on a big worktree, so the live list is read
+   * again under the hold, the last thing before it goes.
+   */
+  const holdForRemoval = async (path: string, spellings: readonly string[]): Promise<WorktreeHold | null> => {
+    const hold = await leases.tryExclusive(path, 'the cleanup is removing this worktree')
+    if (!hold) return null
+    try {
+      const liveNow = await Promise.all(
+        ((await deps.livePaths?.()) ?? []).filter(Boolean).map((live) => pathSpellings(live)),
+      )
+      if (!liveNow.some((live) => insideAny(live, spellings))) return hold
+    } catch (error) {
+      hold.release()
+      throw error
+    }
+    hold.release()
+    return null
+  }
   const entries: AgentWorktreeCleanupEntry[] = []
   const record = (entry: AgentWorktreeCleanupEntry): void => {
     entries.push(entry)
@@ -361,20 +390,31 @@ export async function cleanupAgentWorktrees(
         record({ ...base, verdict: 'removed', detail: MISSING_FOLDER_DETAIL })
         continue
       }
-      const forgotten = await withWorktreeRegistryLock(root, async () => {
-        if (worktree.locked) {
-          const unlocked = await runGit(root, ['worktree', 'unlock', worktree.path])
-          if (!unlocked.ok) return unlocked
-        }
-        // `remove` on a folder that is gone drops git's note of it alone,
-        // where `prune` would drop every other missing worktree's as well.
-        return runGit(root, ['worktree', 'remove', '--force', worktree.path])
-      })
-      record(
-        forgotten.ok
-          ? { ...base, verdict: 'removed', detail: MISSING_FOLDER_DETAIL }
-          : { ...base, verdict: 'missing', detail: forgotten.message ?? 'git could not forget it' },
-      )
+      // A chat bringing its worktree back to this very path holds it while it
+      // does: the note it is about to need is not forgotten under it.
+      const forgetHold = await holdForRemoval(worktree.path, worktreeSpellings)
+      if (!forgetHold) {
+        record({ ...base, verdict: 'in-use' })
+        continue
+      }
+      try {
+        const forgotten = await withWorktreeRegistryLock(root, async () => {
+          if (worktree.locked) {
+            const unlocked = await runGit(root, ['worktree', 'unlock', worktree.path])
+            if (!unlocked.ok) return unlocked
+          }
+          // `remove` on a folder that is gone drops git's note of it alone,
+          // where `prune` would drop every other missing worktree's as well.
+          return runGit(root, ['worktree', 'remove', '--force', worktree.path])
+        })
+        record(
+          forgotten.ok
+            ? { ...base, verdict: 'removed', detail: MISSING_FOLDER_DETAIL }
+            : { ...base, verdict: 'missing', detail: forgotten.message ?? 'git could not forget it' },
+        )
+      } finally {
+        forgetHold.release()
+      }
       continue
     }
     const writtenAt = await lastWrittenAt(worktree.path)
@@ -469,45 +509,47 @@ export async function cleanupAgentWorktrees(
     }
     // The checks above take a while on a big worktree: a terminal opened in it
     // meanwhile, or a chat's session started there, is asked about once more,
-    // the last thing before it goes.
-    const liveNow = await Promise.all(
-      ((await deps.livePaths?.()) ?? []).filter(Boolean).map((path) => pathSpellings(path)),
-    )
-    if (liveNow.some((spellings) => insideAny(spellings, worktreeSpellings))) {
+    // under the hold that keeps one starting now out until it is done.
+    const removalHold = await holdForRemoval(worktree.path, worktreeSpellings)
+    if (!removalHold) {
       record({ ...base, verdict: 'in-use' })
       continue
     }
-    if (ownLock) {
-      const unlocked = await runGit(root, ['worktree', 'unlock', worktree.path])
-      if (!unlocked.ok) {
-        record({ ...base, verdict: 'error', detail: unlocked.message ?? 'git worktree unlock failed' })
-        continue
+    try {
+      if (ownLock) {
+        const unlocked = await runGit(root, ['worktree', 'unlock', worktree.path])
+        if (!unlocked.ok) {
+          record({ ...base, verdict: 'error', detail: unlocked.message ?? 'git worktree unlock failed' })
+          continue
+        }
       }
-    }
-    // No --force: git re-checks cleanliness itself at the moment of removal.
-    // A worktree with checked-out submodules, which plain `remove` always
-    // refuses, is forced only once its submodules hold nothing to lose and
-    // its status reads clean again (worktree-submodule-removal.ts).
-    const removal = await withWorktreeRegistryLock(root, async () => {
-      const outcome = await removeWorktreeKeepingSubmoduleWork(root, worktree.path, runGit, {
-        knownWorkspaceIds: deps.knownWorkspaceIds ?? null,
+      // No --force: git re-checks cleanliness itself at the moment of removal.
+      // A worktree with checked-out submodules, which plain `remove` always
+      // refuses, is forced only once its submodules hold nothing to lose and
+      // its status reads clean again (worktree-submodule-removal.ts).
+      const removal = await withWorktreeRegistryLock(root, async () => {
+        const outcome = await removeWorktreeKeepingSubmoduleWork(root, worktree.path, runGit, {
+          knownWorkspaceIds: deps.knownWorkspaceIds ?? null,
+        })
+        // Git for Windows reports success with junctions still in place.
+        if (outcome.outcome === 'removed' && !(await removeWorktreeLeftovers(worktree.path))) {
+          log(`left files written after git removed it in ${worktree.path}`)
+        }
+        return outcome
       })
-      // Git for Windows reports success with junctions still in place.
-      if (outcome.outcome === 'removed' && !(await removeWorktreeLeftovers(worktree.path))) {
-        log(`left files written after git removed it in ${worktree.path}`)
+      if (removal.outcome !== 'removed' && ownLock) {
+        await relockWorktree(root, worktree.path, worktree.lockedReason, runGit)
       }
-      return outcome
-    })
-    if (removal.outcome !== 'removed' && ownLock) {
-      await relockWorktree(root, worktree.path, worktree.lockedReason, runGit)
+      record(
+        removal.outcome === 'removed'
+          ? { ...base, verdict: 'removed', detail: how }
+          : removal.outcome === 'kept'
+            ? { ...base, ...submoduleVerdict(removal.why) }
+            : { ...base, verdict: 'error', detail: removal.result.message ?? 'git worktree remove failed' },
+      )
+    } finally {
+      removalHold.release()
     }
-    record(
-      removal.outcome === 'removed'
-        ? { ...base, verdict: 'removed', detail: how }
-        : removal.outcome === 'kept'
-          ? { ...base, ...submoduleVerdict(removal.why) }
-          : { ...base, verdict: 'error', detail: removal.result.message ?? 'git worktree remove failed' },
-    )
   }
 
   if (pool) {

@@ -200,7 +200,7 @@ export function createWorktreePoolTools(deps: WorktreePoolToolsDeps): McpToolReg
             return toolSuccess({
               released: false,
               branch: lease.branch,
-              note: 'Something still runs in the worktree (a terminal in it?); it is still yours.',
+              note: 'Something is running or starting in the worktree; it is still yours.',
             })
           default:
             return toolError('unavailable', 'The worktree is busy; try again in a moment.')
