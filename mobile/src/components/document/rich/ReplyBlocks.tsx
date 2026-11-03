@@ -8,6 +8,7 @@ import { SourceBlock, WellHeader } from "../SourceBlock";
 import { diagramNote, diagramRefusal, diagramTheme, mathNote } from "./diagramSource";
 import { fenceKind, replyBlockReady } from "./replyMarkup";
 import { fitDrawing, renderKey, richRenderer, type RenderJob, type RenderResult } from "./richRenderer";
+import { VisualBlock } from "./VisualBlock";
 
 /**
  * Set by `MarkdownDocument` around an agent's reply, and only there: a
@@ -40,13 +41,14 @@ function useDrawing(job: RenderJob | null): RenderResult | undefined {
   return drawn;
 }
 
-/** A reply's fence: a diagram or a formula where it asks for one, else the code it is. */
+/** A reply's fence: a diagram, a formula or a visual where it asks for one, else the code it is. */
 export function ReplyFence({ content, info, meta }: { content: string; info: string; meta: unknown }) {
   const reply = useContext(ReplyContext);
   const language = info.trim().split(/\s+/)[0];
   const kind = reply ? fenceKind(language) : "code";
   if (reply && kind === "diagram") return <DiagramBlock ready={replyBlockReady(meta, reply.streaming)} source={content} language={language} />;
   if (reply && kind === "math") return <DisplayMath ready={replyBlockReady(meta, reply.streaming)} tex={content} />;
+  if (reply && kind === "visual") return <VisualBlock language={language} ready={replyBlockReady(meta, reply.streaming)} source={content} />;
   // Copy waits for the fence to close while the reply streams: until then it
   // would take half the code.
   return (

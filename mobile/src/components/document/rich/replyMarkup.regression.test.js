@@ -63,7 +63,7 @@ test("math is never read inside code", () => {
   assert.equal(fences("```sh\necho $$\n\\[1\\]\n```")[0].content, "echo $$\n\\[1\\]\n");
 });
 
-test("```latex, ```tex and ```katex stay code; ```math typesets; ```mermaid draws", () => {
+test("```latex, ```tex and ```katex stay code; ```math typesets; ```mermaid and ```visual draw", () => {
   assert.equal(fenceKind("latex"), "code");
   assert.equal(fenceKind("tex"), "code");
   assert.equal(fenceKind("katex"), "code");
@@ -73,6 +73,11 @@ test("```latex, ```tex and ```katex stay code; ```math typesets; ```mermaid draw
   assert.equal(fenceKind("mmd {theme}"), "diagram");
   assert.equal(fenceKind(""), "code");
   assert.equal(fenceKind(undefined), "code");
+  assert.equal(fenceKind("visual"), "visual");
+  assert.equal(fenceKind("Studio-Visual"), "visual");
+  // Markup being shown stays the code it is, as on the desktop.
+  assert.equal(fenceKind("html"), "code");
+  assert.equal(fenceKind("svg"), "code");
   // A whole document in a latex fence is not taken for a formula either.
   assert.deepEqual(formulas("```latex\n\\documentclass{article}\n\\[ x \\]\n```"), []);
 });
