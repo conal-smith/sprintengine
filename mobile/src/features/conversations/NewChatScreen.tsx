@@ -50,7 +50,7 @@ import {
   type PickedImage,
 } from "./composerOptions";
 import { chatLaunchAvailability, chatOpenedKey } from "./conversationListLogic";
-import { pickChatImage } from "./pickChatImage";
+import { pickChatImages } from "./pickChatImage";
 import { pickChatFile } from "./pickChatFile";
 import { rememberSentFile } from "./chatFiles";
 import { launchWithPhotos, type ChatOpening, type PhotoLaunchProgress } from "./photoLaunch";
@@ -503,13 +503,25 @@ export function NewChatScreen({
     if (picking || images.length >= CONVERSATION_MAX_IMAGES) return;
     setPicking(true);
     try {
-      const image =
+      // The library hands back as many as the tray has room for; each is
+      // uploaded once the chat has started (photoLaunch.ts).
+      const picked =
         source === "file"
-          ? await pickChatFile().then((file) => (file ? { ...file, file: true as const } : null))
-          : await pickChatImage(source === "camera", chatImageMaxBytes(!!session && declaresImageDownscale(session)));
-      if (!image) return;
-      setImages((current) => [...current, image].slice(0, CONVERSATION_MAX_IMAGES));
-      if (state.status === "error") setState({ status: "editing" });
+          ? await pickChatFile().then((file) => (file ? { images: [{ ...file, file: true as const }], problem: null } : null))
+          : await pickChatImages(
+              source === "camera",
+              chatImageMaxBytes(!!session && declaresImageDownscale(session)),
+              CONVERSATION_MAX_IMAGES - images.length,
+            );
+      if (!picked) return;
+      setImages((current) =>
+        [...current, ...picked.images.filter((image) => !current.some((held) => held.uri === image.uri))].slice(
+          0,
+          CONVERSATION_MAX_IMAGES,
+        ),
+      );
+      if (picked.problem) setState({ status: "error", message: picked.problem });
+      else if (state.status === "error") setState({ status: "editing" });
     } catch (error) {
       setState({
         status: "error",
