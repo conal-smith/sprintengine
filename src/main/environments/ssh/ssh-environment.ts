@@ -373,7 +373,8 @@ export class SshEnvironment {
     // A machine shown Disconnected is tried again without saying so, so its row
     // does not flicker to Reconnecting every few minutes; it says Connected if
     // the try succeeds. An attempt the supervisor dropped says nothing at all.
-    const quiet = attempt.reconnecting && this.view.state === 'disconnected'
+    // A wake starts the count over, so the try it makes says Reconnecting again.
+    const quiet = attempt.reconnecting && this.supervisor.state().retryingForMs >= this.timing.giveUpMs
     const shows = (): boolean => attempt.current() && !quiet
     const steps: Array<{ step: string; ms: number }> = []
     const timed = async <T>(step: string, run: () => Promise<T>): Promise<T> => {

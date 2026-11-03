@@ -372,9 +372,14 @@ test('a wake tries again: time asleep is not counted, a machine shown Disconnect
   await assert.rejects(machine.env.connect({ interactive: false }), /Disconnected from build-box/u)
   // The network comes back: the online check wakes it, and it reconnects on its own.
   refuse = false
+  const beforeWake = machine.changes.length
   machine.env.wake()
   assert.ok(await until(() => machine.env.summary().state === 'connected', 30_000), machine.changes.join('\n'))
   assert.equal(machine.spawned.at(-1)!.interactive, false, 'a reconnect after a wake never prompts')
+  assert.ok(
+    machine.changes.slice(beforeWake).some((line) => line.startsWith('reconnecting')),
+    'the try a wake makes says so',
+  )
 
   // Disconnected is not a give-up: with no wake at all, it keeps trying, more
   // slowly and without its row flickering back to Reconnecting, and comes back.
