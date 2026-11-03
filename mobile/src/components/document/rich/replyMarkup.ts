@@ -1,5 +1,5 @@
 // What an agent's reply reads beyond Markdown, as the desktop reads it:
-// display math and the fences that draw (```math, ```mermaid).
+// display math and the fences that draw (```math, ```mermaid, ```visual).
 //
 // The risk is not missing a formula but finding one that is not there.
 // Agents write prices ("between $5 and $10") and shell variables (`$HOME`) in
@@ -64,13 +64,19 @@ export const MAX_DISPLAY_MATH = 16_384;
 /** Inline math longer than this is left as the text it is. */
 export const MAX_INLINE_MATH = 4_096;
 
-export type FenceKind = "math" | "diagram" | "code";
+export type FenceKind = "math" | "diagram" | "visual" | "code";
 
-/** What a fence's info string asks for: only ```math typesets, ```mermaid (```mmd) draws. */
+/**
+ * What a fence's info string asks for: only ```math typesets, ```mermaid
+ * (```mmd) draws, and ```visual (```studio-visual) is drawn as the HTML and
+ * SVG it holds. ```html and ```svg stay code, as on the desktop: those are as
+ * often source being shown, and drawing them would hide what was asked for.
+ */
 export function fenceKind(info: string | undefined): FenceKind {
   const language = (info ?? "").trim().split(/\s+/)[0].toLowerCase();
   if (language === "math") return "math";
   if (language === "mermaid" || language === "mmd") return "diagram";
+  if (language === "visual" || language === "studio-visual") return "visual";
   return "code";
 }
 
