@@ -218,6 +218,7 @@ export const WEB_TUNNEL_ACCESS: { readonly [C in ServerIpcChannelName | WebTunne
   'tailnet:offer-pairing': desktopOnly(ACCESS_ADMIN),
   'tailnet:revoke-device': desktopOnly(ACCESS_ADMIN),
   'tailnet:set-enabled': desktopOnly(ACCESS_ADMIN),
+  'tailnet:set-https': desktopOnly(ACCESS_ADMIN),
   'tailnet:share-port': desktopOnly(ACCESS_ADMIN),
   'tailnet:share-status': desktopOnly(ACCESS_ADMIN),
   'tailnet:unshare-port': desktopOnly(ACCESS_ADMIN),
