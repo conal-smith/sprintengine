@@ -143,6 +143,7 @@ import { parsePromptCacheReading } from '../shared/prompt-cache'
 import { noteStatusLineRateLimits } from './usage-limits/store'
 import { broadcastToAllWindows } from './window-broadcast'
 import { readTerminalOutputTail, type TerminalOutputTail } from './terminal-output-tail'
+import { worktreeLeases, type WorktreeLeases } from './worktree-leases'
 
 type TerminalRuntimeOptions = {
   diagnosticsEnabled: boolean
@@ -276,6 +277,11 @@ type TerminalRuntimeOptions = {
   // above.
   onObservedCheckoutResolved?(session: TerminalSession, resolution: { fresh: boolean }): void
   onAgentToolCall?(session: TerminalSession, toolCall: NonNullable<AgentStateFrame['toolCall']>): void
+  // The holds on worktree paths (worktree-leases.ts): a terminal starting in a
+  // folder holds it shared until it is attached and live, so the pool and the
+  // agent worktree cleanup never return or remove the folder under its launch.
+  // The process's own unless given.
+  worktreeLeases?: WorktreeLeases
 }
 
 type TerminalIpcHandlers = {
@@ -368,6 +374,7 @@ let onAgentFileEdit: TerminalRuntimeOptions['onAgentFileEdit']
 let onObservedCheckoutResolved: TerminalRuntimeOptions['onObservedCheckoutResolved']
 let onAgentToolCall: TerminalRuntimeOptions['onAgentToolCall']
 let onAgentSessionExit: TerminalRuntimeOptions['onAgentSessionExit']
+let leases: WorktreeLeases = worktreeLeases
 
 // Whether a CLI can report authoritative agent state: true exactly when its
 // plugin manifest declares an `agentStateSpec` (the capability that also drives
@@ -416,6 +423,7 @@ export function createTerminalRuntime(options: TerminalRuntimeOptions): Terminal
   onObservedCheckoutResolved = options.onObservedCheckoutResolved
   onAgentToolCall = options.onAgentToolCall
   onAgentSessionExit = options.onAgentSessionExit
+  leases = options.worktreeLeases ?? worktreeLeases
   reapSkipLogState.clear()
   logMainPerfEvent = options.logMainPerfEvent
   terminalDiagnostics = createTerminalDiagnostics({
@@ -3025,7 +3033,28 @@ function attachTerminalSession(
   }
 }
 
-async function spawnTerminalFromIpc(
+/**
+ * Spawn (or reattach) a terminal. A fresh launch in a folder holds the folder
+ * shared from before anything is written there (the MCP config, hooks, skills)
+ * until the session is attached and shows among the live terminals
+ * (`listLiveTerminalSessions`): a return or removal of the folder that looked
+ * in between would find it idle (worktree-leases.ts). One under way is waited
+ * for, up to the lease's limit, and the launch is refused with its reason
+ * after that. A reattach starts nothing and holds nothing.
+ */
+async function spawnTerminalFromIpc(sender: WebContents, payload: TerminalSpawnPayload): Promise<TerminalSpawnResult> {
+  const existing = terminals.get(payload.sessionId)
+  if ((existing && !existing.isDisposed) || !payload.cwd) return spawnTerminalNow(sender, payload)
+  const folderHold = await leases.acquireShared(payload.cwd, { reason: 'a terminal is starting in it' })
+  if ('busy' in folderHold) return { ok: false, sessionId: payload.sessionId, message: folderHold.busy, exitCode: 1 }
+  try {
+    return await spawnTerminalNow(sender, payload)
+  } finally {
+    folderHold.release()
+  }
+}
+
+async function spawnTerminalNow(
   sender: WebContents,
   {
     sessionId,

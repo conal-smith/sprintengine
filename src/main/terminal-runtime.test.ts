@@ -10,6 +10,7 @@ import { createTerminalSnapshotSidecarStore } from './terminal-snapshot-sidecar'
 import { createAgentPromptStore } from './agent-prompt-store'
 import { createAgentLaunchService } from './agent-launch-service'
 import { emptyAgentLaunchSettings } from '../shared/launch-settings'
+import { createWorktreeLeases } from './worktree-leases'
 import { test } from 'vitest'
 
 test('terminal-runtime', async () => {
@@ -138,6 +139,7 @@ test('terminal-runtime', async () => {
       await assertUserLockHoldsReaperAndSuspendedRevealIsIdempotent(runtimeModule)
       await assertStandardAgentSpawnKeepsEnabledOptionalMcpSettings(runtimeModule)
       await assertAgentSpawnReportsSyncFailureWithoutPtySpawn(runtimeModule)
+      await assertSpawnHoldsItsFolderUntilAttached(runtimeModule)
       await assertAgentSpawnExposesAgentIdentityEnv(runtimeModule)
       await assertIngestAgentStateFrameUpdatesSession(runtimeModule)
       await assertTurnEndIsHeldWhileBackgroundWorkIsOpen(runtimeModule)
@@ -4128,6 +4130,68 @@ test('terminal-runtime', async () => {
       assert.equal(mockPty.spawnCalls.length, 1)
     } finally {
       await runtime.shutdown()
+    }
+  }
+
+  // A launch holds its folder shared from before it writes anything there
+  // until the session is attached (worktree-leases.ts): the pool's return of a
+  // slot waits for it, and it waits for a return already under way.
+  async function assertSpawnHoldsItsFolderUntilAttached(runtimeModule: RuntimeModule): Promise<void> {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'sprintengine-terminal-runtime-folder-hold-'))
+    const leases = createWorktreeLeases()
+    const heldWhileSyncing: string[][] = []
+    let syncFails = false
+    mockPty.spawnCalls = []
+    mockSender.sent = []
+    const runtime = runtimeModule.createTerminalRuntime({
+      diagnosticsEnabled: false,
+      logMainPerfEvent: () => undefined,
+      worktreeLeases: leases,
+      syncMcpConfig: async (): Promise<SyncResult> => {
+        heldWhileSyncing.push((await leases.holders(workspaceRoot)).map((hold) => hold.reason))
+        return syncFails ? { ok: false, message: 'MCP sync failed.' } : { ok: true }
+      },
+    })
+    const spawn = (sessionId: string): Promise<TerminalSpawnResult> =>
+      runtime.ipcHandlers.spawnTerminal(mockSender as unknown as WebContents, {
+        sessionId,
+        cols: 120,
+        rows: 30,
+        cwd: workspaceRoot,
+        cli: 'claude-code',
+        kind: 'agent',
+        shellOnly: false,
+        mcpSettings: { syncEnabled: false, servers: {} } satisfies McpSettings,
+      })
+    try {
+      const started = await spawn('session_folder_hold')
+      assert.equal(started.ok, true, JSON.stringify(started))
+      assert.deepEqual(heldWhileSyncing, [['a terminal is starting in it']], 'held while the MCP config is written')
+      assert.deepEqual(await leases.holders(workspaceRoot), [], 'let go once attached')
+      assert.ok(
+        runtimeModule.listLiveTerminalSessions().some((session) => session.sessionId === 'session_folder_hold'),
+        'live by then',
+      )
+
+      const returning = await leases.tryExclusive(workspaceRoot, 'the pool is returning this worktree')
+      assert.ok(returning)
+      let done = false
+      const waiting = spawn('session_folder_wait').then((result) => {
+        done = true
+        return result
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.equal(done, false, 'waits while the return runs')
+      assert.equal(heldWhileSyncing.length, 1, 'writes nothing into the folder meanwhile')
+      returning.release()
+      assert.equal((await waiting).ok, true)
+
+      syncFails = true
+      assert.equal((await spawn('session_folder_refused')).ok, false)
+      assert.deepEqual(await leases.holders(workspaceRoot), [], 'let go when the launch fails')
+    } finally {
+      await runtime.shutdown()
+      await rm(workspaceRoot, { recursive: true, force: true })
     }
   }
 

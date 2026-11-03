@@ -13,6 +13,7 @@ import type { GitFileStage, GitRepoOperation, GitResetMode } from '../git'
 import type { AgentWorktreeCleanupInput, BranchStepSelection } from '../../shared/electron-api'
 import { cleanupAgentWorktreesOnce } from '../agent-worktree-cleanup'
 import { activeWorktreePool } from '../worktree-pool/active-pool'
+import { worktreeLeases } from '../worktree-leases'
 import { setAgentWorktreeLockProfile } from '../agent-worktree-lock'
 import { checkIgnoredPaths } from '../git-ignore'
 import { readFileHunks, stageGitHunk, unstageGitHunk } from '../git-hunks'
@@ -403,8 +404,21 @@ export function registerGitIpc(ipcMain: IpcMain, diagnostics: IpcDiagnostics, pa
     return withGitHost(scopedHost(input?.hostId), () => createGitWorktree({ ...input, dependencyInstall: 'wait' }))
   })
 
+  // A window bringing a chat's worktree back is a start like a turn's: held
+  // shared, so a return or removal of the path waits its turn rather than
+  // running under it (worktree-leases.ts). A turn's own restore runs under the
+  // turn's hold (chat-folder-guard.ts), not through here.
   ipcMain.handle('git:worktree:restore', async (_, input) => {
-    return withGitHost(scopedHost(input?.hostId), () => restoreGitWorktree(input))
+    const hold =
+      typeof input?.path === 'string'
+        ? await worktreeLeases.acquireShared(input.path, { reason: 'its chat is bringing it back' })
+        : null
+    if (hold && 'busy' in hold) return { ok: false, message: hold.busy }
+    try {
+      return await withGitHost(scopedHost(input?.hostId), () => restoreGitWorktree(input))
+    } finally {
+      hold?.release()
+    }
   })
 
   ipcMain.handle('git:worktree:remove', async (_, input) => {

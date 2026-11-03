@@ -98,6 +98,7 @@ import { resolveConversationMentions } from './conversation-mentions'
 import { attachedFilesContext } from './conversation-attached-files'
 import { noteUploadsSent } from './upload-references'
 import { parseConversationAttachedFiles, type ConversationAttachedFile } from '../shared/conversation/attachedFiles'
+import { worktreeLeases, type WorktreeHold, type WorktreeLeases } from './worktree-leases'
 import { ConversationCheckpoints } from './conversation-checkpoints'
 import { ConversationIndex } from './conversation-index'
 import type {
@@ -327,6 +328,12 @@ export type ConversationRuntimeOptions = {
   // Windows a `wsl:` host id means nothing (a WSL server is handed the
   // runtimes a Windows front door built), so it is dropped at the start.
   platform?: NodeJS.Platform
+  // The holds on worktree paths (worktree-leases.ts). A session start, a
+  // turn's start and a revert hold the chat's folder shared until the chat
+  // shows among the live folders (`liveConversationWorkspaceRoots`), so the
+  // pool and the agent worktree cleanup never return or remove it while it
+  // starts. The process's own unless given.
+  worktreeLeases?: WorktreeLeases
 }
 
 type ConversationRuntimeListener = (event: ConversationEvent) => void
@@ -469,6 +476,7 @@ export class ConversationRuntime {
   private readonly platform: NodeJS.Platform
   private readonly resolveSkills: ConversationSkillsResolver
   private readonly prepareChatFolder: NonNullable<ConversationRuntimeOptions['prepareChatFolder']>
+  private readonly worktreeLeases: WorktreeLeases
   private readonly checkpoints = new ConversationCheckpoints()
   private readonly approvalRules: ConversationApprovalRuleStore
   private readonly attachmentStore: ConversationAttachmentStore
@@ -583,6 +591,7 @@ export class ConversationRuntime {
     this.randomId = options.randomId ?? (() => Math.random().toString(36).slice(2, 10))
     this.resolveSkills = options.resolveSkills ?? createConversationSkillsResolver()
     this.prepareChatFolder = options.prepareChatFolder ?? (() => Promise.resolve({ ok: true }))
+    this.worktreeLeases = options.worktreeLeases ?? worktreeLeases
     this.approvalRules = options.approvalRules ?? new ConversationApprovalRuleStore()
     this.attachmentStore = options.attachmentStore ?? new ConversationAttachmentStore()
     this.uploadRoots = options.uploadRoots ?? []
@@ -697,19 +706,29 @@ export class ConversationRuntime {
     if (cliRuntimes !== input.cliRuntimes) input = { ...input, cliRuntimes }
     this.startingTranscripts.add(path)
     try {
-      // The chat's worktree, given back while it sat idle, is brought back
-      // before anything is spawned in it; a new chat's checkout is brought up
-      // to date before its agent reads it.
-      const folder = await this.prepareChatFolder({
-        workspaceId: input.workspaceId.trim(),
-        workspaceRoot: input.workspaceRoot,
-        fresh: !(await stat(path).then(
-          () => true,
-          () => false,
-        )),
+      // Held until the session is up: a return or removal of the folder waits
+      // for it, and one under way is waited for (worktree-leases.ts).
+      const folderHold = await this.worktreeLeases.acquireShared(input.workspaceRoot, {
+        reason: 'a chat is starting in it',
       })
-      if (!folder.ok) return { ok: false, message: folder.message }
-      return (await this.adoptLiveSession(input, path)) ?? (await this.startSessionNow(input))
+      if ('busy' in folderHold) return { ok: false, message: folderHold.busy }
+      try {
+        // The chat's worktree, given back while it sat idle, is brought back
+        // before anything is spawned in it; a new chat's checkout is brought up
+        // to date before its agent reads it.
+        const folder = await this.prepareChatFolder({
+          workspaceId: input.workspaceId.trim(),
+          workspaceRoot: input.workspaceRoot,
+          fresh: !(await stat(path).then(
+            () => true,
+            () => false,
+          )),
+        })
+        if (!folder.ok) return { ok: false, message: folder.message }
+        return (await this.adoptLiveSession(input, path)) ?? (await this.startSessionNow(input))
+      } finally {
+        folderHold.release()
+      }
     } finally {
       this.startingTranscripts.delete(path)
     }
@@ -1021,6 +1040,37 @@ export class ConversationRuntime {
     // A turn needs some payload: text, an image, a mention, a skill or a file.
     if (!message && attachments.length === 0 && !input.mentions?.length && !input.skills?.length && !files.length)
       return { ok: false, message: 'Conversation turn message is required.' }
+    // A resting session's folder is held from here until its turn is under
+    // way (`activeTurnId`, which puts it among the live folders): a return or
+    // removal of the folder waits for the start, and the start for one under
+    // way (worktree-leases.ts). Released on every way out, early or not. A
+    // busy session's turn already keeps its folder live.
+    const folderHold = isSessionBusy(session)
+      ? null
+      : await this.worktreeLeases.acquireShared(session.workspaceRoot, { reason: 'a turn is starting in it' })
+    if (folderHold && 'busy' in folderHold) return { ok: false, message: folderHold.busy }
+    try {
+      return await this.sendTurnInFolder(session, input, { message, attachments, files }, folderHold)
+    } finally {
+      folderHold?.release()
+    }
+  }
+
+  /** {@link sendTurn} once its checks have passed, under the folder's hold while the turn starts. */
+  private async sendTurnInFolder(
+    session: RuntimeSession,
+    input: ConversationSendTurnInput & { sourceCommandId?: string },
+    {
+      message,
+      attachments,
+      files,
+    }: {
+      message: string
+      attachments: NonNullable<ConversationSendTurnInput['attachments']>
+      files: ConversationAttachedFile[]
+    },
+    folderHold: WorktreeHold | null,
+  ): Promise<ConversationSessionActionResult> {
     // A resting session respawns in the chat's folder for this turn: one the
     // worktree pool gave back while the chat sat idle is brought back first,
     // whoever sent the message. A busy session is working in it, so it is there.
@@ -1137,6 +1187,9 @@ export class ConversationRuntime {
     const requestId = `approval_${this.randomId()}`
     const turnAbort = new AbortController()
     session.activeTurnId = turnId
+    // Live from here (`liveConversationWorkspaceRoots`): the folder's hold has
+    // done its part.
+    folderHold?.release()
     session.pendingRequestId = requestId
     session.turnLockRequestId = requestId
     session.activeTurnAbort = turnAbort
@@ -3848,7 +3901,16 @@ export class ConversationRuntime {
     if (sharingFiles.some((session) => isSessionBusy(session) || session.status === 'starting'))
       return { ok: false, message: 'Stop the running turn before reverting files.' }
     this.revertingScopes.add(scope)
+    let folderHold: WorktreeHold | null = null
     try {
+      // The chat's children are stopped below, so nothing shows the folder as
+      // live while its files are written: held for the whole revert, so the
+      // pool and the cleanup leave it alone (worktree-leases.ts).
+      const held = await this.worktreeLeases.acquireShared(input.key.workspaceRoot, {
+        reason: 'its chat is reverting files in it',
+      })
+      if ('busy' in held) return { ok: false, message: held.busy }
+      folderHold = held
       await this.initializeSequence(input.key)
       // Idle native children may produce background continuations. Resume their
       // durable cursors on the next send after the file transaction has finished.
@@ -3887,6 +3949,7 @@ export class ConversationRuntime {
       return result
     } finally {
       this.revertingScopes.delete(scope)
+      folderHold?.release()
     }
   }
 
