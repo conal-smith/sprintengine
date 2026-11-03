@@ -148,7 +148,7 @@ test('a click opens the repository', async () => {
   await mount()
   await act(async () => mark().click())
   assert.deepEqual(opened, [REPOSITORY_URL])
-  assert.equal(REPOSITORY_URL, 'https://github.com/slopsmith/sprintengine')
+  assert.equal(REPOSITORY_URL, 'https://github.com/sprintengine/sprintengine')
 })
 
 test('the tooltip copy for each channel the updater can report', () => {

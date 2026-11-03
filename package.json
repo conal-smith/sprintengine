@@ -9,10 +9,10 @@
   "homepage": "https://sprintengine.ai",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/slopsmith/sprintengine.git"
+    "url": "git+https://github.com/sprintengine/sprintengine.git"
   },
   "bugs": {
-    "url": "https://github.com/slopsmith/sprintengine/issues"
+    "url": "https://github.com/sprintengine/sprintengine/issues"
   },
   "engines": {
     "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
@@ -279,7 +279,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "slopsmith",
+      "owner": "sprintengine",
       "repo": "sprintengine",
       "releaseType": "release"
     },

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, test } from 'vitest'
+import { afterEach, test, vi } from 'vitest'
 
 import type { ScheduledAgentDraft, ScheduledAgentLastRun } from '../../shared/scheduled-agents'
 import { createScheduledAgentsScheduler } from './scheduler'
@@ -290,8 +290,12 @@ test('a pause of them all outlives a restart, and ends at its time though the ap
   await settle()
   assert.equal(after.service.pausedAll(), null)
   assert.equal(after.store.pausedAll(), null, 'cleared from the file at start')
-  const saved = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>
-  assert.equal('pausedAll' in saved, false)
+  // Letting go of it at start is not awaited by anything the test holds, and
+  // a few ticks are not always enough for the write on a busy machine.
+  await vi.waitFor(() => {
+    const saved = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>
+    assert.equal('pausedAll' in saved, false)
+  })
   assert.equal(after.service.get(id)?.nextRunAt, at13(1))
   assert.deepEqual(after.runs, [])
 })
