@@ -6,15 +6,18 @@
 // `-axo`; a minimal Ubuntu has no `xz`, `curl` or `wget`. So everything here
 // is written against plain POSIX `sh` and the tools every one of those has:
 //
-// - **The lock** is a directory, `mkdir "$base/.install.lock"`, which is
-//   atomic on every file system, NFS included, where `flock` semantics vary.
-//   The holder writes its pid inside; a lock whose pid is gone (`kill -0`), or
-//   one that never got a pid and is minutes old (its maker died between the
-//   `mkdir` and the write), or one older than half an hour (a pid reused by
-//   something else of the same user) is reclaimed. A lock is made and
-//   reclaimed only under a second directory, `.install.lock.guard`, so two
-//   waiters never reclaim and make at once. A waiter gives up after 120 s, in
-//   words.
+// - **The lock** is a directory, `mkdir "$base/.install.lock"` (no `flock`,
+//   whose semantics vary, NFS included). The holder writes its pid inside; a
+//   lock whose pid is gone (`kill -0`), or one that never got a pid and is
+//   minutes old (its maker died between the `mkdir` and the write), or one
+//   older than half an hour (a pid reused by something else of the same user)
+//   is reclaimed. A lock is made and reclaimed only under a guard,
+//   `.install.lock.guard`, so two waiters never reclaim and make at once. The
+//   guard is the one step that must be atomic, so it is a file the shell
+//   itself creates with `set -C` (an `O_EXCL` open), not a `mkdir`: the Rust
+//   coreutils `mkdir` (Ubuntu 26.04's) checks for the directory and then
+//   creates it, so two at once can both succeed. A waiter gives up after
+//   120 s, in words.
 // - **Liveness** (is a tree still in use?) reads `/proc/*/cmdline` where
 //   there is a `/proc`, and `ps`'s command lines elsewhere. The `ps` output is
 //   read into a variable first, so the `grep` looking for a path is never
@@ -102,25 +105,31 @@ export function posixInstallFunctions(): string[] {
     // Taking over by renaming the stale lock away could catch the lock another
     // waiter had just made, before it wrote its pid in it: that write then
     // failed, and the lock was put back with no pid, for everyone to wait on.
-    // A guard left by an install killed inside it is a minute old, and cleared.
+    // The guard is taken by the shell's own exclusive create (`set -C` opens
+    // with `O_EXCL` in dash, bash, busybox and zsh), never by `mkdir`: the
+    // Rust coreutils one (Ubuntu 26.04's) checks and then creates, so two
+    // waiters both got the guard, both made the lock, and the slower one's
+    // move into place failed. The lock is still a `mkdir`, made only under
+    // the guard. A guard left by an install killed inside it is a minute old,
+    // and cleared (`rm -rf`: an older version's guard is a directory).
     'lock_take() {',
     '  lk="$base/.install.lock"',
     '  waited=0',
     '  while :; do',
-    '    if mkdir "$lk.guard" 2>/dev/null; then',
+    '    if (set -C; : > "$lk.guard") 2>/dev/null; then',
     '      if mkdir "$lk" 2>/dev/null; then',
-    '        echo "$$" > "$lk/pid" || { rm -rf "$lk"; rmdir "$lk.guard"; return 1; }',
-    '        rmdir "$lk.guard"',
+    '        echo "$$" > "$lk/pid" || { rm -rf "$lk"; rm -f "$lk.guard"; return 1; }',
+    '        rm -f "$lk.guard"',
     '        return 0',
     '      fi',
     '      if lock_stale; then',
     '        rm -rf "$lk"',
-    '        rmdir "$lk.guard"',
+    '        rm -f "$lk.guard"',
     '        continue',
     '      fi',
-    '      rmdir "$lk.guard"',
+    '      rm -f "$lk.guard"',
     '    elif [ -n "$(find "$lk.guard" -prune -mmin +1 2>/dev/null)" ]; then',
-    '      rmdir "$lk.guard" 2>/dev/null',
+    '      rm -rf "$lk.guard"',
     '      continue',
     '    fi',
     `    [ "$waited" -ge ${INSTALL_LOCK_WAIT_S} ] && return 1`,
