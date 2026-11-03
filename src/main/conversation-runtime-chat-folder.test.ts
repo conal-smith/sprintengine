@@ -251,3 +251,54 @@ test('stopping a chat abandons its turn’s wait for the folder, and quitting ab
     await rm(workspaceRoot, { recursive: true, force: true })
   }
 })
+
+test('Stop abandons a message waiting for its folder, and deleting a chat abandons its start and revert', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'conversation-chat-folder-'))
+  const leases = createWorktreeLeases()
+  let asked = 0
+  const mock = createMockConversationProvider()
+  const runtime = new ConversationRuntime({
+    adapters: [{ ...mock, sendTurn: (input) => mock.sendTurn({ ...input, message: '/tools' }) }],
+    getProviderById: () => undefined,
+    worktreeLeases: leases,
+    prepareChatFolder: async () => {
+      asked += 1
+      return { ok: true }
+    },
+  })
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 20))
+  try {
+    const key = { workspaceRoot, workspaceId: 'workspace', agentId: 'agent' }
+    const started = await runtime.startSession({ ...key, providerId: 'mock-provider', modelId: 'mock-model' })
+    assert.ok(started.ok)
+    const returning = exclusive(await leases.tryExclusive(workspaceRoot, 'the pool is returning this worktree'))
+
+    const sending = runtime.sendTurn({ sessionId: started.session.sessionId, message: 'hello' })
+    await pause()
+    const interrupted = await runtime.interrupt({ sessionId: started.session.sessionId })
+    assert.equal(interrupted.ok, true, 'Stop answers as for a turn it stopped')
+    assert.equal((await sending).ok, false)
+    assert.equal(asked, 1, 'the abandoned message never asked for its folder')
+    assert.equal((await runtime.interrupt({ sessionId: started.session.sessionId })).ok, false, 'nothing left to stop')
+
+    const other = { ...key, agentId: 'other' }
+    const starting = runtime.startSession({ ...other, providerId: 'mock-provider', modelId: 'mock-model' })
+    await pause()
+    assert.equal((await runtime.deleteTranscript(other)).ok, true, 'the delete is not refused by the waiting start')
+    assert.equal((await starting).ok, false)
+
+    const reverting = runtime.revertToTurn({ key: other, turnSeq: 1 })
+    await pause()
+    assert.equal((await runtime.deleteTranscript(other)).ok, true, 'nor by the waiting revert')
+    assert.equal((await reverting).ok, false)
+    assert.deepEqual(
+      (await leases.holders(workspaceRoot)).map(({ waiting }) => waiting),
+      [false],
+      'only the return is left',
+    )
+    returning.release()
+  } finally {
+    await runtime.shutdown()
+    await rm(workspaceRoot, { recursive: true, force: true })
+  }
+})

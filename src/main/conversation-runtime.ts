@@ -337,6 +337,10 @@ export type ConversationRuntimeOptions = {
 }
 
 type ConversationRuntimeListener = (event: ConversationEvent) => void
+/** Where a session start's or a revert's wait for its folder is filed: by the chat's transcript. */
+function chatWaitKey(kind: 'start' | 'revert', transcriptPath: string): string {
+  return `${kind}:${transcriptPath}`
+}
 /** `lost`: highest sequence number published but not written; `recorded`: highest one on disk as such. */
 type NonDurableLog = { root: string; lost: number; recorded: number; recording: boolean }
 /** One running tool's preview cadence: when the last went out, what it showed, and the one waiting. */
@@ -477,8 +481,8 @@ export class ConversationRuntime {
   private readonly resolveSkills: ConversationSkillsResolver
   private readonly prepareChatFolder: NonNullable<ConversationRuntimeOptions['prepareChatFolder']>
   private readonly worktreeLeases: WorktreeLeases
-  // Starts waiting for their folder's hold, by session id ('' for a start
-  // with no session yet, and a revert): see `holdChatFolder`.
+  // Starts waiting for their folder's hold, by session id, or by chat for a
+  // session start or a revert (`chatWaitKey`): see `holdChatFolder`.
   private readonly folderWaits = new Map<string, Set<AbortController>>()
   private readonly checkpoints = new ConversationCheckpoints()
   private readonly approvalRules: ConversationApprovalRuleStore
@@ -711,7 +715,11 @@ export class ConversationRuntime {
     try {
       // Held until the session is up: a return or removal of the folder waits
       // for it, and one under way is waited for (worktree-leases.ts).
-      const folderHold = await this.holdChatFolder(null, input.workspaceRoot, 'a chat is starting in it')
+      const folderHold = await this.holdChatFolder(
+        chatWaitKey('start', path),
+        input.workspaceRoot,
+        'a chat is starting in it',
+      )
       if ('busy' in folderHold) return { ok: false, message: folderHold.busy }
       try {
         // The chat's worktree, given back while it sat idle, is brought back
@@ -1060,31 +1068,56 @@ export class ConversationRuntime {
 
   /**
    * The folder's shared hold for a start (worktree-leases.ts), waited for at
-   * most the lease's limit. Stopping the session (`waitKey` its id) or the
-   * runtime (any wait) abandons the wait, and the start with it.
+   * most the lease's limit. The wait is filed under `waitKey` (a turn's under
+   * its session id, a session start's and a revert's under their chat:
+   * {@link chatWaitKey}), and abandoning that key (Stop, stopping the session,
+   * deleting or rewinding the chat, quitting) abandons the start with it,
+   * even one granted the hold a moment before.
    */
   private async holdChatFolder(
-    waitKey: string | null,
+    waitKey: string,
     workspaceRoot: string,
     reason: string,
   ): Promise<WorktreeHold | WorktreeBusy> {
     const stop = new AbortController()
-    const key = waitKey ?? ''
-    let waits = this.folderWaits.get(key)
-    if (!waits) this.folderWaits.set(key, (waits = new Set()))
+    let waits = this.folderWaits.get(waitKey)
+    if (!waits) this.folderWaits.set(waitKey, (waits = new Set()))
     waits.add(stop)
     try {
-      return await this.worktreeLeases.acquireShared(workspaceRoot, { reason, signal: stop.signal })
+      const held = await this.worktreeLeases.acquireShared(workspaceRoot, { reason, signal: stop.signal })
+      if ('busy' in held || !stop.signal.aborted) return held
+      held.release()
+      return { busy: 'Stopped before the worktree was free.' }
     } finally {
       waits.delete(stop)
-      if (waits.size === 0 && this.folderWaits.get(key) === waits) this.folderWaits.delete(key)
+      if (waits.size === 0 && this.folderWaits.get(waitKey) === waits) this.folderWaits.delete(waitKey)
     }
   }
 
-  /** Abandon the folder waits of one session, or of every start when none is named. */
-  private abandonFolderWaits(sessionId?: string): void {
-    const keys = sessionId === undefined ? [...this.folderWaits.keys()] : [sessionId]
-    for (const key of keys) for (const stop of this.folderWaits.get(key) ?? []) stop.abort()
+  /**
+   * Abandon the folder waits filed under `waitKey`, or every one when none is
+   * named; how many there were. An abandoned start does nothing more than
+   * answer its caller, so whatever abandoned it may go ahead at once.
+   */
+  private abandonFolderWaits(waitKey?: string): number {
+    const keys = waitKey === undefined ? [...this.folderWaits.keys()] : [waitKey]
+    let abandoned = 0
+    for (const key of keys) {
+      for (const stop of this.folderWaits.get(key) ?? []) {
+        if (stop.signal.aborted) continue
+        stop.abort()
+        abandoned += 1
+      }
+    }
+    return abandoned
+  }
+
+  /** Abandon a session start and a revert of the chat at `transcriptPath` that wait for its folder; which there were. */
+  private abandonChatStarts(transcriptPath: string): { start: boolean; revert: boolean } {
+    return {
+      start: this.abandonFolderWaits(chatWaitKey('start', transcriptPath)) > 0,
+      revert: this.abandonFolderWaits(chatWaitKey('revert', transcriptPath)) > 0,
+    }
   }
 
   /** {@link sendTurn} once its checks have passed, under the folder's hold while the turn starts. */
@@ -1977,11 +2010,15 @@ export class ConversationRuntime {
     if (!session) return sessionNotFound()
     const adapter = this.getAdapterForProviderId(session.providerId)
     if (!session.activeTurnId) {
+      // A message still waiting for its folder is the turn Stop means: it is
+      // abandoned, and never starts.
+      const abandoned = this.abandonFolderWaits(session.sessionId) > 0
       // Between turns, Stop is for what the last turn left running: the
       // shells and monitors the chat names above its composer. Each reports
       // its own end, which takes it off that list.
       if (session.backgroundTasks && (await adapter?.stopBackgroundTasks?.(session.sessionId)))
         return { ok: true, session: this.toSummary(session) }
+      if (abandoned) return { ok: true, session: this.toSummary(session) }
       return { ok: false, message: 'Conversation session has no active turn.' }
     }
     if (!adapter) return { ok: false, message: 'Conversation provider is unavailable.' }
@@ -2107,8 +2144,11 @@ export class ConversationRuntime {
       )
     const session = this.sessions.get(input.sessionId)
     if (!session) return sessionNotFound()
-    // A turn still waiting for its folder is not started at all.
+    // A turn (or a start of the same chat) still waiting for its folder is not started at all.
     this.abandonFolderWaits(session.sessionId)
+    this.abandonFolderWaits(
+      chatWaitKey('start', this.transcriptPath(session.workspaceRoot, session.workspaceId, session.agentId)),
+    )
     const adapter = this.getAdapterForProviderId(session.providerId)
     if (!adapter) return { ok: false, message: 'Conversation provider is unavailable.' }
 
@@ -3431,8 +3471,11 @@ export class ConversationRuntime {
       return { ok: false, message: 'Conversation identity is required.' }
     const path = this.transcriptPath(input.workspaceRoot, input.workspaceId, input.agentId)
     const fileScope = await this.checkpoints.fileScope(input.workspaceRoot)
-    if (this.revertingScopes.has(fileScope)) return { ok: false, message: 'Workspace files are being reverted.' }
-    if (this.deletingTranscripts.has(path) || this.startingTranscripts.has(path))
+    // A start or revert of this chat still waiting for its folder gives way.
+    const { start, revert } = this.abandonChatStarts(path)
+    if (this.revertingScopes.has(fileScope) && !revert)
+      return { ok: false, message: 'Workspace files are being reverted.' }
+    if (this.deletingTranscripts.has(path) || (this.startingTranscripts.has(path) && !start))
       return { ok: false, message: 'Conversation lifecycle operation is already in progress.' }
     const matching = Array.from(this.sessions.values()).filter(
       (session) =>
@@ -3955,7 +3998,11 @@ export class ConversationRuntime {
       // The chat's children are stopped below, so nothing shows the folder as
       // live while its files are written: held for the whole revert, so the
       // pool and the cleanup leave it alone (worktree-leases.ts).
-      const held = await this.holdChatFolder(null, input.key.workspaceRoot, 'its chat is reverting files in it')
+      const held = await this.holdChatFolder(
+        chatWaitKey('revert', path),
+        input.key.workspaceRoot,
+        'its chat is reverting files in it',
+      )
       if ('busy' in held) return { ok: false, message: held.busy }
       folderHold = held
       await this.initializeSequence(input.key)
@@ -4017,10 +4064,12 @@ export class ConversationRuntime {
     if (!Number.isSafeInteger(turnSeq) || turnSeq < 1) return { ok: false, message: 'The message to edit is invalid.' }
     const path = this.transcriptPath(key.workspaceRoot, key.workspaceId, key.agentId)
     const scope = await this.checkpoints.fileScope(key.workspaceRoot)
+    // A start or revert of this chat still waiting for its folder gives way.
+    const abandoned = this.abandonChatStarts(path)
     if (
-      this.revertingScopes.has(scope) ||
+      (this.revertingScopes.has(scope) && !abandoned.revert) ||
       this.deletingTranscripts.has(path) ||
-      this.startingTranscripts.has(path) ||
+      (this.startingTranscripts.has(path) && !abandoned.start) ||
       this.rewindingTranscripts.has(path)
     )
       return { ok: false, message: 'A workspace lifecycle operation is already in progress.' }
@@ -4112,10 +4161,12 @@ export class ConversationRuntime {
       return { ok: false, message: 'Conversation identity is required.' }
     const path = this.transcriptPath(key.workspaceRoot, key.workspaceId, key.agentId)
     const scope = await this.checkpoints.fileScope(key.workspaceRoot)
+    // A start or revert of this chat still waiting for its folder gives way.
+    const abandoned = this.abandonChatStarts(path)
     if (
-      this.revertingScopes.has(scope) ||
+      (this.revertingScopes.has(scope) && !abandoned.revert) ||
       this.deletingTranscripts.has(path) ||
-      this.startingTranscripts.has(path) ||
+      (this.startingTranscripts.has(path) && !abandoned.start) ||
       this.rewindingTranscripts.has(path)
     )
       return { ok: false, message: 'A workspace lifecycle operation is already in progress.' }

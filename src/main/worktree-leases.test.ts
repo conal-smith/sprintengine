@@ -208,7 +208,7 @@ test('a start that meets a hold nothing should wait for is refused at once, with
   )
   const refused = await leases.acquireShared(join(slot, 'src'), { reason: 'a terminal is starting in it' })
   assert.ok('busy' in refused)
-  assert.match(refused.busy, /the pool is preparing this worktree for a new lease/)
+  assert.equal(refused.busy, 'This worktree is not free: the pool is preparing this worktree for a new lease.')
   assert.deepEqual(
     (await leases.holders(slot)).map(({ kind }) => kind),
     ['exclusive'],

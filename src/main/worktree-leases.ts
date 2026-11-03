@@ -223,7 +223,8 @@ export function createWorktreeLeases(
     if (signal?.aborted) return { busy: 'Stopped before the worktree was free.' }
     const over = exclusiveOver(key)
     if (!over) return grant(key, 'shared', reason)
-    if (over.refuseWaiters) return { busy: `This worktree is busy (${over.reason}). Try again in a moment.` }
+    // No "try again": once that step is done the tree is someone else's.
+    if (over.refuseWaiters) return { busy: `This worktree is not free: ${over.reason}.` }
     return new Promise((resolve) => {
       const settle = (): void => {
         waiting.delete(entry)
