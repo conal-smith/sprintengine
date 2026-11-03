@@ -396,6 +396,7 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
         requestId: request.id,
         deviceName: request.deviceName,
         peerNode: request.peerNode,
+        ...(request.oauth ? { oauth: true as const } : {}),
       })
     }
     for (const [id, entry] of [...announcedRequests]) {
@@ -459,7 +460,11 @@ export function createTailnetRemoteService(options: TailnetRemoteServiceOptions)
       tailnetAddress: boundAddress ?? resolveBindAddress(),
       lastError,
       notifications: current.notifications,
-      devices: devices.listDevices(),
+      devices: devices.listDevices().map((device) => {
+        if (device.origin.kind !== 'oauth') return device
+        const endsAt = oauth.grantExpiry(device.id)
+        return endsAt === null ? device : { ...device, signInEndsAt: new Date(endsAt).toISOString() }
+      }),
       pairing: devices.getPairingState(),
       pairRequests: devices.listPairRequests(),
       mcp: mcpAccess(),

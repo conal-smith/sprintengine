@@ -4,6 +4,7 @@ import { TAILNET_LEGACY_REQUEST_SCOPES, type TailnetPairRequest } from '../../..
 import { GhostButton, Input, PrimaryButton } from '../ui'
 import { shortMachineName } from './machineRowModel'
 import { usePairRequestAnswer } from './pairRequestAnswer'
+import { signInDefaultScopes } from './scopePickerModel'
 
 // Answering a pair request from the toast it arrives in (owner ruling
 // 2026-09-05, recorded in design-system/components/toast/component.md): the
@@ -30,7 +31,11 @@ export function PairRequestToastAccept({ request }: { request: TailnetPairReques
   // set every pairing path defaulted to before it existed — never a scope added
   // since, such as the conversation pair, which that build could not have
   // asked for. The same fallback the pair-request card and the store use.
-  const requested = [...(request.requestedScopes ?? TAILNET_LEGACY_REQUEST_SCOPES)]
+  const asked = [...(request.requestedScopes ?? TAILNET_LEGACY_REQUEST_SCOPES)]
+  // An MCP client signing in is allowed Read only from here; more is chosen on
+  // the card, where the scopes are shown.
+  const requested = request.oauth ? signInDefaultScopes(asked) : asked
+  const codeSource = request.oauth ? 'the sign-in page' : asker
 
   return (
     <div className="mt-1.5">
@@ -47,7 +52,7 @@ export function PairRequestToastAccept({ request }: { request: TailnetPairReques
           autoComplete="one-time-code"
           maxLength={6}
           placeholder="000000"
-          aria-label={`Code shown on ${asker}`}
+          aria-label={`Code shown on ${codeSource}`}
           aria-describedby={helpId}
           aria-invalid={codeError ? true : undefined}
           disabled={disabled}
@@ -70,7 +75,10 @@ export function PairRequestToastAccept({ request }: { request: TailnetPairReques
         id={helpId}
         className={`mt-1 text-micro ${codeError ? 'text-[color:var(--tone-error)]' : 'text-[color:var(--text-subtle)]'}`}
       >
-        {codeError ?? 'Type the code it is showing.'}
+        {codeError ??
+          (request.oauth
+            ? 'Type the code its sign-in page shows. Allows read only; choose more from the Remote glyph.'
+            : 'Type the code it is showing.')}
       </p>
     </div>
   )

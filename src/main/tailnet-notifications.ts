@@ -74,6 +74,13 @@ export function tailnetNotice(payload: TailnetPushPayload): TailnetNotice | null
   const event = payload.event
   if (event.kind !== 'pair-request' || event.phase !== 'received') return null
   const who = event.peerNode ?? event.deviceName
+  if (event.oauth) {
+    return {
+      key: `pair-request:${event.requestId}`,
+      title: `${event.deviceName} wants access to Studio`,
+      body: 'An MCP client is signing in. Open Studio and enter the code its sign-in page shows to allow it.',
+    }
+  }
   return {
     key: `pair-request:${event.requestId}`,
     title: `Pair request from ${who}`,

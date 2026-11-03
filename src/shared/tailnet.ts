@@ -136,6 +136,12 @@ export type TailnetDevice = {
   /** Tailscale node name resolved at the last request; null when whois was unavailable. */
   lastPeerNode: string | null
   origin: TailnetDeviceOrigin
+  /**
+   * When an MCP client's OAuth sign-in ends (origin `oauth`): 30 days after it
+   * was approved. Absent for every other device, which does not lapse, and for
+   * an OAuth client still between approval and its first token.
+   */
+  signInEndsAt?: string
 }
 
 /** An outstanding pairing offer — what it grants and when it lapses, never the code. */
@@ -440,6 +446,8 @@ type TailnetLiveEvent =
       requestId: string
       deviceName: string
       peerNode: string | null
+      /** An MCP client signing in with OAuth rather than a machine asking to pair. */
+      oauth?: true
     }
   | { kind: 'device-connection'; deviceId: string; deviceName: string; connected: boolean }
   | { kind: 'devices-changed' }

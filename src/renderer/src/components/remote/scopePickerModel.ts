@@ -148,3 +148,21 @@ export function conversationGapNote(scopes: readonly TailnetScope[]): string | n
   if (held.has('conversation:read')) return 'It can read chats here but not send to them.'
   return "It can't see chats here."
 }
+
+/**
+ * What an MCP client signing in is offered, ticked: Read only, within what it
+ * asked for. A client asks for every scope it might ever use (it reads them
+ * off the server's own list), so starting from its ask would make "everything"
+ * the one-click answer; starting from Read only makes changing something the
+ * thing a person has to choose to do.
+ */
+export function signInDefaultScopes(requested: readonly TailnetScope[]): TailnetScope[] {
+  const asked = new Set(requested)
+  return READ_ONLY_SCOPES.filter((scope) => asked.has(scope))
+}
+
+/** A sign-in is granted at most what it asked for: the rows it did not ask for stay unticked. */
+export function clampToRequested(scopes: readonly TailnetScope[], requested: readonly TailnetScope[]): TailnetScope[] {
+  const asked = new Set(requested)
+  return scopes.filter((scope) => asked.has(scope))
+}
