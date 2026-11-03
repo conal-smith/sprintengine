@@ -14,6 +14,8 @@
     "packages/conversation-view/test/**/*.tsx",
     "packages/studio-protocol/src/**/*.ts",
     "packages/studio-protocol/test/**/*.ts",
+    "packages/connection-supervisor/src/**/*.ts",
+    "packages/connection-supervisor/test/**/*.ts",
     "packages/agent-sdk/src/**/*.ts",
     "packages/agent-sdk/test/**/*.ts",
     "tests/**/*.ts",

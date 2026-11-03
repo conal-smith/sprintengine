@@ -1,0 +1,8 @@
+{
+  "name": "@sprintengine/connection-supervisor",
+  "version": "0.0.0",
+  "private": true,
+  "description": "One owner for a connection that has to stay up: backoff, liveness on wake, and the states a view shows. No Node, DOM or React.",
+  "license": "MIT",
+  "type": "module"
+}
