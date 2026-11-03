@@ -735,6 +735,9 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       ...(options.endWorkspaceTerminals ? { end: options.endWorkspaceTerminals } : {}),
     },
     lifecycle: conversationLifecycle,
+    recordTurnEnd: (workspaceId, at) => {
+      workspaceSyncService.updateWorkspaceFields(workspaceId, { lastTurnEndedAt: at }, 'system')
+    },
     onResume: (listener) => powerActivity.onResume(listener),
     log: (message) => {
       void writeDiagnosticLog({ level: 'info', source: 'workspace', title: 'Rest sweep', message })

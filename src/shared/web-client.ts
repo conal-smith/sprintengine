@@ -114,6 +114,11 @@ const WEB_TUNNEL_EXCLUDED = new Set([
   'conversation:providers:sign-in',
   // A chat handed to a terminal: there are none on the web (ruling a).
   'conversation:sessions:terminal-handoff',
+  // What main's rest sweep reads that only a desktop window can say: its
+  // Settled chats settings and its modules' run states. A tab's would be
+  // defaults and blanks (it loads no third-party module).
+  'workspace-sync:set-settled-chats-settings',
+  'workspace-sync:set-module-run-states',
 ])
 const WEB_TUNNEL_SINGLE = new Set([
   'credential:secrets:status',
@@ -128,8 +133,9 @@ const WEB_TUNNEL_SINGLE = new Set([
 export function webTunnelAllows(channel: string): boolean {
   if (Object.hasOwn(WEB_TUNNEL_CHANNELS, channel)) return true
   if (WEB_TUNNEL_SINGLE.has(channel)) return true
+  if (WEB_TUNNEL_EXCLUDED.has(channel)) return false
   const domain = channel.split(':')[0]
-  if (domain === 'conversation') return !WEB_TUNNEL_EXCLUDED.has(channel)
+  if (domain === 'conversation') return true
   return WEB_TUNNEL_DOMAINS.has(domain)
 }
 

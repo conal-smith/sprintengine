@@ -1078,6 +1078,16 @@ function WorkspaceSidebar({
   // refused — the chat changed meanwhile, or an agent there began working —
   // has put the row back, leaves the person where they are with its agents
   // running, and says why. The successor is still chosen before the row moves.
+  //
+  // The yes can come late (main a beat behind, a retry): by then the person
+  // may have moved on, or put the row back, and is handed on only from a chat
+  // they are still in and that is still put away (`stillLeaving`).
+  const stillLeaving = useStableCallback((id: WorkspaceId, putAway: (workspace: Workspace) => boolean) => {
+    if (id !== activeWorkspaceId) return false
+    // A row the store does not hold (one gone meanwhile) has nothing to check.
+    const workspace = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === id)
+    return workspace === undefined || putAway(workspace)
+  })
   const settleWorkspaceById = useCallback(
     (id: WorkspaceId) => {
       if (rowIsWorking(id)) return
@@ -1085,12 +1095,12 @@ function WorkspaceSidebar({
       void followRestAnswer(setWorkspaceSettled(id, true), {
         agreed: () => {
           quietSettledWorkspace(id)
-          handOff()
+          if (stillLeaving(id, isSettledWorkspace)) handOff()
         },
         refused: (answer) => showToast(restRefusalToast(rowName(id), 'settle', answer)),
       })
     },
-    [rowIsWorking, handOffFrom, setWorkspaceSettled, quietSettledWorkspace, rowName],
+    [rowIsWorking, handOffFrom, setWorkspaceSettled, quietSettledWorkspace, rowName, stillLeaving],
   )
 
   // The second half of a Snooze: PAUSE the chat's ptys once the record has
@@ -1150,12 +1160,12 @@ function WorkspaceSidebar({
       void followRestAnswer(setWorkspaceSnoozed(id, wakeAt), {
         agreed: () => {
           quietSnoozedWorkspace(id, wakeAt)
-          handOff()
+          if (stillLeaving(id, (workspace) => workspace.snoozedUntil === wakeAt)) handOff()
         },
         refused: (answer) => showToast(restRefusalToast(rowName(id), 'snooze', answer)),
       })
     },
-    [rowIsWorking, handOffFrom, setWorkspaceSnoozed, quietSnoozedWorkspace, rowName],
+    [rowIsWorking, handOffFrom, setWorkspaceSnoozed, quietSnoozedWorkspace, rowName, stillLeaving],
   )
 
   // A Settle made somewhere else — a paired phone or desktop

@@ -786,14 +786,16 @@ export function createAppServices(
   const terminalSessionsListeners = new Set<() => void>()
   /**
    * End the terminals of a chat main's rest sweep settled: every pty the
-   * runtime attributes to the workspace, but an agent mid-turn, which keeps
-   * running (the sweep settles no chat at work, and one that began since is
-   * news the sweep will hear and wake the chat for).
+   * runtime attributes to the workspace, but an agent mid-turn or stopped on
+   * a question, which keeps running. The sweep settles no chat in either
+   * state, but out of process it decides on the list the shell last pushed,
+   * so one that began since is news the sweep will hear and wake the chat for.
    */
   const endWorkspaceTerminals = (workspaceId: string): void => {
     for (const session of terminalRuntime.ipcHandlers.listTerminals()) {
       if (session.workspaceId !== workspaceId) continue
       if (session.kind === 'agent' && terminalAgentWorking(session)) continue
+      if (session.kind === 'agent' && session.processAlive && session.agentState?.phase === 'awaiting_input') continue
       terminalRuntime.ipcHandlers.killTerminal(session.sessionId)
     }
   }

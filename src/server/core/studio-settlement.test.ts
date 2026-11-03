@@ -45,6 +45,7 @@ function harness(
   let listed = options.listed ?? true
   const suspended: string[] = []
   const ended: string[] = []
+  const turnEnds: Array<[string, number]> = []
 
   const lifecycle = createConversationLifecycle({
     getRecord: (workspaceId) => store.get(workspaceId) ?? null,
@@ -106,6 +107,10 @@ function harness(
       end: (workspaceId) => ended.push(workspaceId),
     },
     lifecycle,
+    recordTurnEnd: (workspaceId, at) => {
+      turnEnds.push([workspaceId, at])
+      store.get(workspaceId)!.lastTurnEndedAt = at
+    },
     onResume: () => () => undefined,
     now: () => clock,
     // Every timer runs on the next `flush`, whatever its delay: the minute's
@@ -132,6 +137,7 @@ function harness(
     state,
     suspended,
     ended,
+    turnEnds,
     setChats: (next: Array<Partial<ConversationSessionSummary>>) => {
       chats = next as ConversationSessionSummary[]
     },
@@ -258,4 +264,25 @@ test('a module chat settles on the run state a window pushed, and never on a gue
   assert.equal(h.row('module-running').settledAt ?? null, null, 'a run in flight is pinned')
   assert.equal(typeof h.row('module-quiet').settledAt, 'number', 'a type with no run signal settles as any chat')
   assert.equal(h.row('module-unknown').settledAt ?? null, null, 'a state that is not one is not taken')
+})
+
+test('an agent terminal’s turn end the record has not heard is kept on the record, once', async () => {
+  const h = harness([{ id: 'ran', lastTurnEndedAt: BORN }])
+  h.settlement.start()
+  const pty = (lastTurnEndedAt: number) => ({
+    sessionId: 'pty',
+    kind: 'agent',
+    workspaceId: 'ran',
+    processAlive: true,
+    activity: { kind: 'idle' },
+    lastTurnEndedAt,
+  })
+  h.setTerminals([pty(BORN + DAY)])
+  assert.deepEqual(h.turnEnds, [['ran', BORN + DAY]], 'written while the terminal still holds it')
+  h.setTerminals([pty(BORN + DAY)])
+  assert.equal(h.turnEnds.length, 1, 'a turn end the record has is not written again')
+  // The terminal exits: the record keeps what it said.
+  h.setTerminals([])
+  await h.flush()
+  assert.equal(h.row('ran').lastTurnEndedAt, BORN + DAY)
 })

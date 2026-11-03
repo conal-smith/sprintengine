@@ -74,6 +74,12 @@ export type StudioSettlementDeps = {
     end?(workspaceId: string): void
   }
   lifecycle: { applySweepDecision(decision: SweepDecision): SweepDecisionResult }
+  /**
+   * Write an agent terminal's turn end to the chat's record. A window writes
+   * the turn ends it sees; one main alone saw (no window open) would otherwise
+   * go with the terminal when it exits, and the chat read as quiet and seen.
+   */
+  recordTurnEnd?(workspaceId: string, at: number): void
   onResume(listener: () => void): () => void
   now?: () => number
   schedule?: (job: () => void, ms: number) => () => void
@@ -161,6 +167,22 @@ export function createStudioSettlement(deps: StudioSettlementDeps) {
     ...(deps.log ? { log: deps.log } : {}),
   })
 
+  // A terminal's turn end the record has not heard, kept on the record: the
+  // clock only moves forward, so a turn end already there writes nothing.
+  function keepTurnEnds(): void {
+    if (!deps.recordTurnEnd) return
+    const latest = new Map<string, number>()
+    for (const session of deps.terminals.list()) {
+      const at = session.lastTurnEndedAt
+      if (session.kind !== 'agent' || !session.workspaceId || typeof at !== 'number' || !Number.isFinite(at)) continue
+      if (at > (latest.get(session.workspaceId) ?? -1)) latest.set(session.workspaceId, at)
+    }
+    for (const [workspaceId, at] of latest) {
+      const record = deps.registry.getRecord(workspaceId)
+      if (record && at > (record.lastTurnEndedAt ?? -1)) deps.recordTurnEnd(workspaceId, at)
+    }
+  }
+
   const stops: Array<() => void> = []
   let wasReady = false
   // The first moment both are known asks for every chat, rather than leaving
@@ -220,6 +242,7 @@ export function createStudioSettlement(deps: StudioSettlementDeps) {
         stops.push(
           deps.terminals.onChanged(() => {
             noteReady()
+            keepTurnEnds()
             sweep.noteTerminalsChanged(deps.terminals.list())
           }),
         )
@@ -236,6 +259,7 @@ export function createStudioSettlement(deps: StudioSettlementDeps) {
           )
         },
       )
+      keepTurnEnds()
       sweep.start()
       wasReady = deps.terminals.listed() && deps.settings.known()
     },

@@ -1,5 +1,9 @@
 import type { ElectronApi } from '../../../shared/electron-api'
-import type { WorkspaceLifecycleRequest, WorkspaceLifecycleResult } from '../../../shared/workspace-lifecycle'
+import type {
+  WorkspaceLifecycleRequest,
+  WorkspaceLifecycleResult,
+  WorkspaceLifecycleSnapshot,
+} from '../../../shared/workspace-lifecycle'
 import type {
   WindowPlacement,
   WorkspaceFieldsPatch,
@@ -167,6 +171,8 @@ export type WorkspaceSyncClientDependencies = {
    */
   applyRegistrySnapshot: (snapshot: WorkspaceSyncSnapshot) => void
   logDiagnostic?: (diagnostic: WorkspaceSyncDiagnostic) => void
+  /** How long a gesture on a chat's rest waits for main's answer; `LIFECYCLE_ANSWER_MS` when absent. */
+  lifecycleAnswerMs?: number
 }
 
 export type WorkspaceSyncClient = {
@@ -228,6 +234,39 @@ export type WorkspaceSyncClient = {
   dispatchLifecycleIntent: (request: WorkspaceLifecycleRequest) => Promise<WorkspaceLifecycleResult>
   /** Stop listeners and reset sequence/diagnostic state (used by tests). */
   reset: () => void
+}
+
+/** How long a gesture on a chat's rest waits for main's answer before it is asked again. */
+const LIFECYCLE_ANSWER_MS = 4_000
+
+function withinMs<T>(answer: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer in ${ms} ms`)), ms)
+    answer.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
+/** Whether a chat's rest as main has it is what the gesture asked for. */
+function intentStands(request: WorkspaceLifecycleRequest, rest: WorkspaceLifecycleSnapshot): boolean {
+  switch (request.intent.kind) {
+    case 'settle':
+      return rest.settledAt !== null && rest.settledOverride === 'settled'
+    case 'unsettle':
+      return rest.settledAt === null
+    case 'snooze':
+      return rest.snoozedUntil === request.intent.until
+    case 'wake':
+      return rest.snoozedUntil === null
+  }
 }
 
 export function createWorkspaceSyncClient(deps: WorkspaceSyncClientDependencies): WorkspaceSyncClient {
@@ -630,9 +669,15 @@ export function createWorkspaceSyncClient(deps: WorkspaceSyncClientDependencies)
   // included, as a sync event.
   //
   // A call that throws reached nobody (out of process, the server may be
-  // restarting under the window): it is asked once more, and then answered
-  // `unreachable`, which is a no, never `unavailable`, which is a window with
-  // no main to ask at all.
+  // restarting under the window), and one with no answer within
+  // `LIFECYCLE_ANSWER_MS` is taken as one that did: it is asked once more, and
+  // then answered `unreachable`, which is a no, never `unavailable`, which is
+  // a window with no main to ask at all. Without the limit, a call that never
+  // answers would hold every later gesture on the chat behind it.
+  //
+  // The second ask carries the first's reading, so if the first did land and
+  // only its answer was lost, main calls the second stale. A stale answer
+  // whose chat already stands as the gesture asked is that lost yes.
   const dispatchLifecycleIntent = async (request: WorkspaceLifecycleRequest): Promise<WorkspaceLifecycleResult> => {
     const api = deps.getApi()
     if (!api?.workspaceLifecycle) {
@@ -643,10 +688,14 @@ export function createWorkspaceSyncClient(deps: WorkspaceSyncClientDependencies)
       })
       return { ok: false, code: 'unavailable', message: 'This window has no main process to ask.' }
     }
+    const answerMs = deps.lifecycleAnswerMs ?? LIFECYCLE_ANSWER_MS
     let lastError: unknown = null
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const result = await api.workspaceLifecycle(request)
+        const result = await withinMs(api.workspaceLifecycle(request), answerMs)
+        if (!result.ok && attempt > 0 && result.code === 'stale' && result.current)
+          if (intentStands(request, result.current))
+            return { ok: true, workspaceId: request.workspaceId, committed: result.current }
         if (!result.ok)
           log({
             phase: 'dispatch',
@@ -661,7 +710,7 @@ export function createWorkspaceSyncClient(deps: WorkspaceSyncClientDependencies)
     log({
       phase: 'dispatch',
       reason: 'dispatch_threw',
-      message: `A ${request.intent.kind} threw: ${lastError instanceof Error ? lastError.message : 'unknown error'}.`,
+      message: `A ${request.intent.kind} got no answer: ${lastError instanceof Error ? lastError.message : 'unknown error'}.`,
     })
     return { ok: false, code: 'unreachable', message: 'Studio could not be reached. Try again in a moment.' }
   }
