@@ -66,6 +66,7 @@ function legacyLocalOnly(toolName: string): boolean {
     toolName === 'artifacts.update' ||
     toolName === 'artifacts.delete' ||
     toolName.startsWith('extension.') ||
+    toolName.startsWith('plugin.') ||
     toolName.startsWith('worktree.') ||
     LEGACY_CHAT_TO_CHAT_TOOLS.has(toolName) ||
     toolName.startsWith('visual.') ||

@@ -174,6 +174,7 @@ export const WEB_TUNNEL_ACCESS: { readonly [C in ServerIpcChannelName | WebTunne
   'mesh:revoke-approval-rule': desktopOnly(BEYOND),
   'mesh:scheduled-agents': desktopOnly(BEYOND),
   'mesh:scheduled-agent-action': desktopOnly(BEYOND),
+  'mesh:update-scheduled-agent': desktopOnly(BEYOND),
   'mesh:create-scheduled-agent': desktopOnly(BEYOND),
   'mesh:create-conversation': desktopOnly(BEYOND),
   'mesh:forget': desktopOnly(BEYOND),
