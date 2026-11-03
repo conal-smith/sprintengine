@@ -194,6 +194,18 @@ picture over 5 MB is refused before it is uploaded, since the desktop would
 refuse it; one that advertises `conversation-image-downscale` scales pictures
 down itself and takes them up to 20 MB, and the phone lets them through there.
 
+**Choose photos** opens the library for several at once, on New and in a chat:
+as many as the message still has room for (sixteen uploads a send, photos and
+files together, as the desktop takes them), numbered on iOS in the order they
+are tapped and added in that order. Room for one opens it for one. Each photo
+is read and held to the size limit on its own (`photoPicks.ts`): one that
+cannot go, a HEIC or one too large, is left out with the reason and the rest
+are added. In a chat each uploads in turn and joins the tray the moment the
+desktop has it, so one that fails part way leaves the others there and its
+name is said; on New they upload once the chat has started, as one photo
+always has. **Take a photo** takes one. Multiple selection turns the picker's
+cropping off, which the phone never asked for.
+
 A desktop that advertises `conversation-message-files` takes files of any
 type too, so the "+" adds **Choose a file** after the photo rows, on New and
 in a chat (in a chat even where its agent reads no pictures, since any agent

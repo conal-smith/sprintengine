@@ -29,7 +29,7 @@ const phone = { offered: PHONE_START_AS, selected: "conversation" };
 test("without a schedule asked for, the phone's + holds the two picture rows and nothing else", () => {
   const rows = composerOptions({ startAs: phone, attach: { held: 0, max: 4, busy: false } });
   assert.deepEqual(rows, [
-    { kind: "attach", source: "library", label: "Choose a photo", disabledReason: null },
+    { kind: "attach", source: "library", label: "Choose photos", disabledReason: null },
     { kind: "attach", source: "camera", label: "Take a photo", disabledReason: null },
   ]);
   assert.deepEqual(PHONE_START_AS, ["conversation"]);
@@ -41,7 +41,7 @@ test("without a schedule asked for, the phone's + holds the two picture rows and
       `${banned} is not offered`,
     );
   }
-  assert.deepEqual(ATTACH_LABELS, { library: "Choose a photo", camera: "Take a photo", file: "Choose a file" });
+  assert.deepEqual(ATTACH_LABELS, { library: "Choose photos", camera: "Take a photo", file: "Choose a file" });
 });
 
 test("a desktop that takes files adds a File row after the photo rows", () => {
@@ -49,7 +49,7 @@ test("a desktop that takes files adds a File row after the photo rows", () => {
   assert.deepEqual(
     rows.map((row) => [row.source, row.label]),
     [
-      ["library", "Choose a photo"],
+      ["library", "Choose photos"],
       ["camera", "Take a photo"],
       ["file", "Choose a file"],
     ],
