@@ -5,6 +5,10 @@ import { hostname } from 'os'
 
 import { backoffDelayMs } from '../../../shared/exponentialBackoff'
 import {
+  ConnectionSupervisor,
+  type ConnectionAttempt,
+} from '../../../../packages/connection-supervisor/src/connectionSupervisor'
+import {
   normalizeTailnetScopes,
   tailnetScopeGrantsAccess,
   type TailnetDevice,
@@ -100,7 +104,7 @@ import {
   type TailnetEndpoint,
   parseTailnetEndpoint,
   readRemoteIdentity,
-  type RemoteJsonSocket,
+  type RemoteEventsSocket,
   uploadRemoteConversationImage,
   readRemoteConversationComposer,
 } from './tailnet-remote-client'
@@ -133,10 +137,17 @@ const WATCH_RETRY_BASE_MS = 500
 /** A watch on a machine that is away re-dials this slowly at most; the reachability probe is the other beat. */
 const WATCH_RETRY_MAX_MS = 60_000
 /**
- * A watch that has failed this many dials in a row stops dialling and waits
- * for the machine to come back (see "Machines that stopped answering").
+ * A watch that has failed this many dials in a row (the first and four quick
+ * retries) stops dialling and waits for the machine to come back (see
+ * "Machines that stopped answering").
  */
-const WATCH_AWAY_AFTER_ATTEMPTS = 4
+const WATCH_AWAY_AFTER_FAILURES = 5
+/**
+ * How long a wake gives a watch that looks open to answer a ping before it is
+ * taken for dead and dialled again. A tailnet hop over a relay answers well
+ * inside it; a socket dropped while the machine slept never does.
+ */
+const WATCH_PING_TIMEOUT_MS = 5_000
 /**
  * How often a machine that stopped answering is asked again while someone can
  * see a window: one small identity read, which, when it answers, re-dials
@@ -1143,16 +1154,15 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
   // Remote band re-reads on the event it produces, which is what let its
   // 30-second timer go: on a machine holding many sessions every one of
   // those timed reads was seconds of the other machine's main thread.
+  //
+  // When to dial, how long to wait and what a wake does are the connection
+  // supervisor's, as for every other reconnecting connection in the app: a
+  // watch backs off from half a second to a minute (four on battery), parks
+  // after a few failures until something says the machine is back, and on a
+  // wake pings an open socket rather than drop it.
   type Watch = {
     connectionId: string
-    socket: RemoteJsonSocket | null
-    retryTimer: ReturnType<typeof setTimeout> | null
-    attempts: number
-    released: boolean
-    /** Between a dial's ticket and its socket; a second dial then would orphan a socket. */
-    dialing: boolean
-    /** Stopped dialling after failing long enough; waits for the machine to come back. */
-    parked: boolean
+    supervisor: ConnectionSupervisor<RemoteEventsSocket>
     /**
      * The revision of each kind of change as the far end last reported it,
      * or null before the first `hello`. A reconnect whose `hello` names a
@@ -1218,36 +1228,50 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     if (watches.has(connectionId)) return
     const watch: Watch = {
       connectionId,
-      socket: null,
-      retryTimer: null,
-      attempts: 0,
-      released: false,
-      dialing: false,
-      parked: false,
       revisions: null,
+      supervisor: new ConnectionSupervisor<RemoteEventsSocket>({
+        connect: (attempt) => dialWatch(watch, attempt),
+        close: (socket, reason) => socket.close(reason),
+        // A watch that looks open across a sleep may be talking to nobody: the
+        // far end, or a middlebox, dropped it while this machine could not
+        // hear, and an idle feed carries nothing that would say so. A ping
+        // does; one the socket answers keeps it, so a wake costs no re-dial.
+        ping: (socket) => socket.ping(),
+        pingTimeoutMs: WATCH_PING_TIMEOUT_MS,
+        backoff: { baseMs: WATCH_RETRY_BASE_MS, maxMs: () => WATCH_RETRY_MAX_MS * stretch() },
+        // Away: stop dialling on a timer of its own. It used to re-dial every
+        // minute for as long as the machine was paired — from a tray with no
+        // window, on battery, all night. The machine's re-check (or a wake, or
+        // any other answer from it) brings the watch back.
+        parkAfterFailures: WATCH_AWAY_AFTER_FAILURES,
+        // The ticket and the upgrade carry their own deadlines.
+        connectTimeoutMs: null,
+      }),
     }
+    watch.supervisor.subscribe((state) => {
+      if (state.phase === 'waiting-for-wake' && watches.get(connectionId) === watch) noteMachineAway(connectionId)
+    })
     watches.set(connectionId, watch)
-    void dialWatch(watch)
+    watch.supervisor.start()
   }
 
   function stopWatch(connectionId: string): void {
     const watch = watches.get(connectionId)
     if (!watch) return
-    watch.released = true
-    if (watch.retryTimer) clearTimeout(watch.retryTimer)
-    watch.retryTimer = null
-    watch.socket?.close('Stopped watching.')
-    watch.socket = null
     watches.delete(connectionId)
+    watch.supervisor.stop('Stopped watching.')
   }
 
-  async function dialWatch(watch: Watch): Promise<void> {
-    if (watch.released || watch.dialing || watch.socket?.isOpen()) return
-    watch.parked = false
+  function watchParked(connectionId: string): boolean {
+    return watches.get(connectionId)?.supervisor.state().phase === 'waiting-for-wake'
+  }
+
+  /** One dial of a watch, for its supervisor: the open socket, or why there is none. */
+  async function dialWatch(watch: Watch, attempt: ConnectionAttempt<undefined>): Promise<RemoteEventsSocket> {
     const connection = store.find(watch.connectionId)
     if (!connection) {
       stopWatch(watch.connectionId)
-      return
+      throw new Error('That machine is no longer paired.')
     }
     // The change feed is a capability, not a version: a machine that published a
     // list without `events` has no route to upgrade and would answer every dial
@@ -1263,89 +1287,51 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     const published = peerCapabilities.get(watch.connectionId)
     if (published && !tailnetPeerSupports(published, 'events')) {
       stopWatch(watch.connectionId)
-      return
+      throw new Error(`${connection.machineName} has no change feed.`)
     }
-    let socket: RemoteJsonSocket | null = null
-    watch.dialing = true
-    let opened: Awaited<ReturnType<typeof openRemoteEventsSocket>>
-    try {
-      opened = await openRemoteEventsSocket({
-        endpoint: endpointOf(connection),
-        token: connection.deviceToken,
-        handlers: {
-          // The first frame (`hello`) can arrive with the handshake, before the
-          // socket is handed back, so frames are judged by the watch alone.
-          onFrame: (frame) => {
-            if (!watch.released && (!socket || watch.socket === socket)) handleWatchFrame(watch, frame)
-          },
-          onClosed: ({ code, reason }) => {
-            // A socket this watch already let go of (recycled on a wake) is not news.
-            if (!socket || watch.socket !== socket) return
-            watch.socket = null
-            if (watch.released) return
-            // Revoked over there: a decision, not a blip. The watch ends; the
-            // reachability record says why, and a re-pair starts a new one.
-            if (code === 4401) {
-              const revoked = store.find(watch.connectionId)
-              if (revoked) recordReachability(revoked, { reachable: false, unauthorized: true, detail: reason })
-              stopWatch(watch.connectionId)
-              return
-            }
-            scheduleWatchRetry(watch)
-          },
+    const opened = await openRemoteEventsSocket({
+      endpoint: endpointOf(connection),
+      token: connection.deviceToken,
+      handlers: {
+        // The first frame (`hello`) can arrive with the handshake, before the
+        // socket is handed back, so frames are judged by the attempt alone: a
+        // socket this watch let go of (recycled on a wake) is not news.
+        onFrame: (frame) => {
+          if (attempt.current()) handleWatchFrame(watch, frame)
         },
-      })
-    } finally {
-      watch.dialing = false
-    }
-    if (watch.released) {
-      if (opened.ok) opened.value.close('Stopped watching.')
-      return
-    }
+        onClosed: ({ code, reason }) => {
+          if (!attempt.current()) return
+          // Revoked over there: a decision, not a blip. The watch ends; the
+          // reachability record says why, and a re-pair starts a new one.
+          if (code === 4401) {
+            const revoked = store.find(watch.connectionId)
+            if (revoked) recordReachability(revoked, { reachable: false, unauthorized: true, detail: reason })
+            stopWatch(watch.connectionId)
+            return
+          }
+          attempt.lost(new Error(reason))
+        },
+      },
+    })
     if (!opened.ok) {
-      if (opened.code === 'unauthorized') {
+      if (opened.code === 'unauthorized' && attempt.current()) {
         recordReachability(connection, { reachable: false, unauthorized: true, detail: opened.message })
         stopWatch(watch.connectionId)
-        return
       }
-      scheduleWatchRetry(watch)
-      return
+      throw new Error(opened.message)
     }
-    socket = opened.value
-    if (!socket.isOpen()) {
-      // Closed before it was handed back (its first bytes carried the close):
-      // a failed dial, not an open watch.
-      scheduleWatchRetry(watch)
-      return
-    }
-    watch.socket = socket
-    watch.attempts = 0
+    const socket = opened.value
+    // Closed before it was handed back (its first bytes carried the close): a
+    // failed dial, not an open watch.
+    if (!socket.isOpen()) throw new Error('The change feed closed as it opened.')
+    // Let go of meanwhile (stopped, forgotten): the supervisor closes it.
+    if (!attempt.current()) return socket
     // It answered, so it is reachable — the same record a browse would land.
     if (!reachabilityFor(connection).reachable) {
       recordReachability(connection, { reachable: true, unauthorized: false, detail: null })
     }
     machineBack(connection.id)
-  }
-
-  function scheduleWatchRetry(watch: Watch): void {
-    if (watch.released || watch.retryTimer || watch.parked) return
-    if (watch.attempts >= WATCH_AWAY_AFTER_ATTEMPTS) {
-      // Away: stop dialling on a timer of its own. It used to re-dial every
-      // minute for as long as the machine was paired — from a tray with no
-      // window, on battery, all night. The machine's re-check (or a wake, or
-      // any other answer from it) brings the watch back.
-      watch.parked = true
-      noteMachineAway(watch.connectionId)
-      return
-    }
-    const maxMs = WATCH_RETRY_MAX_MS * stretch()
-    const delayMs = backoffDelayMs(watch.attempts, { baseMs: WATCH_RETRY_BASE_MS, maxMs }) ?? maxMs
-    watch.attempts += 1
-    watch.retryTimer = setTimeout(() => {
-      watch.retryTimer = null
-      void dialWatch(watch)
-    }, delayMs)
-    watch.retryTimer.unref?.()
+    return socket
   }
 
   function handleWatchFrame(watch: Watch, frame: Record<string, unknown>): void {
@@ -1427,7 +1413,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     }
     // Nothing is waiting on it any more (the pane closed, the watch ended):
     // there is no one to tell, so no one to ask for.
-    if (!remoteConversations.parkedOn(connectionId) && watches.get(connectionId)?.parked !== true) {
+    if (!remoteConversations.parkedOn(connectionId) && !watchParked(connectionId)) {
       forgetAway(connectionId)
       return
     }
@@ -1452,8 +1438,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
   /** Dial everything parked on one machine, now. */
   function resumeMachine(connectionId: string): void {
     remoteConversations.resume(connectionId)
-    const watch = watches.get(connectionId)
-    if (watch?.parked) void dialWatch(watch)
+    if (watchParked(connectionId)) watches.get(connectionId)?.supervisor.retryNow()
   }
 
   function forgetAway(connectionId: string): void {
@@ -1546,22 +1531,10 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
       if (away.timer) clearTimeout(away.timer)
       away.timer = null
     }
-    for (const watch of watches.values()) {
-      if (watch.released || watch.dialing) continue
-      if (watch.socket) {
-        // A watch that looks open across a sleep may be talking to nobody:
-        // the far end, or a middlebox, dropped it while this machine could
-        // not hear, and nothing flows on it until something changes, so
-        // nothing would ever say so. One cheap dial per machine, only on a
-        // wake; its `hello` reports whatever changed meanwhile.
-        const stale = watch.socket
-        watch.socket = null
-        stale.close('Reconnecting after a wake.')
-      }
-      if (watch.retryTimer) clearTimeout(watch.retryTimer)
-      watch.retryTimer = null
-      void dialWatch(watch)
-    }
+    // A watch waiting out a backoff or parked dials now; one that looks open
+    // is pinged, and dialled again only if it does not answer. Its `hello`
+    // reports whatever changed meanwhile.
+    for (const watch of watches.values()) watch.supervisor.wake()
   }
 
   function browse(connectionId: unknown): Promise<MeshBrowse> {

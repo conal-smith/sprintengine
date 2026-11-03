@@ -32,6 +32,7 @@ import {
   computeWebSocketAcceptKey,
   createWebSocketFrameDecoder,
   encodeMaskedCloseFrame,
+  encodeMaskedPingFrame,
   encodeMaskedPongFrame,
   encodeMaskedTextFrame,
   enableTcpKeepAlive,
@@ -738,6 +739,17 @@ export type RemoteJsonSocket = {
   isOpen(): boolean
 }
 
+/**
+ * The change feed's socket, which also answers whether it is still there: a
+ * ping the peer's pong answers. An idle feed carries nothing until something
+ * changes, so after a sleep only a ping can tell a live socket from one a
+ * middlebox dropped meanwhile.
+ */
+export type RemoteEventsSocket = RemoteJsonSocket & {
+  /** Resolves on the peer's next pong; rejects once the socket is closed. No deadline of its own. */
+  ping(): Promise<void>
+}
+
 export type RemoteJsonSocketHandlers = {
   /** One decoded server frame, as a plain object. */
   onFrame(frame: Record<string, unknown>): void
@@ -758,7 +770,7 @@ export async function openRemoteEventsSocket(input: {
   endpoint: TailnetEndpoint
   token: string
   handlers: RemoteJsonSocketHandlers
-}): Promise<RemoteCallOutcome<RemoteJsonSocket>> {
+}): Promise<RemoteCallOutcome<RemoteEventsSocket>> {
   const ticket = await requestSocketTicket(input.endpoint, input.token, 'a change feed')
   if (!ticket.ok) return ticket
   const upgraded = await upgradeSocket(input.endpoint, ticket.value, TAILNET_EVENTS_PATH)
@@ -924,7 +936,7 @@ function driveJsonSocket(
   leftover: Buffer,
   handlers: RemoteJsonSocketHandlers,
   options: { livenessTimeoutMs?: number; unreadable?: string } = {},
-): RemoteJsonSocket {
+): RemoteEventsSocket {
   const decoder = createWebSocketFrameDecoder(MAX_WEBSOCKET_MESSAGE_BYTES, 'client')
   let closed = false
   let closeCode: number | null = null
@@ -956,12 +968,18 @@ function driveJsonSocket(
     heartbeat.unref?.()
   }
 
+  // Pings this end sent, answered together by the next pong.
+  let pongWaiters: Array<{ resolve(): void; reject(error: Error): void }> = []
+
   const finish = (): void => {
     if (closed) return
     closed = true
     if (heartbeat) clearTimeout(heartbeat)
     heartbeat = null
     socket.destroy()
+    const waiting = pongWaiters
+    pongWaiters = []
+    for (const waiter of waiting) waiter.reject(new Error(closeReason))
     handlers.onClosed({ code: closeCode, reason: closeReason })
   }
 
@@ -983,6 +1001,12 @@ function driveJsonSocket(
       }
       if (frame.kind === 'ping') {
         if (!socket.destroyed) socket.write(encodeMaskedPongFrame(frame.payload))
+        continue
+      }
+      if (frame.kind === 'pong') {
+        const waiting = pongWaiters
+        pongWaiters = []
+        for (const waiter of waiting) waiter.resolve()
         continue
       }
       if (frame.kind !== 'text') continue
@@ -1034,6 +1058,13 @@ function driveJsonSocket(
       finish()
     },
     isOpen: () => !closed && !socket.destroyed,
+    ping(): Promise<void> {
+      if (closed || socket.destroyed) return Promise.reject(new Error(closeReason))
+      return new Promise<void>((resolve, reject) => {
+        pongWaiters.push({ resolve, reject })
+        socket.write(encodeMaskedPingFrame())
+      })
+    },
   }
 }
 

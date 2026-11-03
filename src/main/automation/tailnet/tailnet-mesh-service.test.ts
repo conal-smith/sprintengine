@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test, vi } from 'vitest'
 
 import type { MeshConnection, MeshEvent } from '../../../shared/tailnet-mesh'
 import { createPowerActivity, type PowerActivity } from '../../power-activity'
-import type { RemoteJsonSocket, RemoteJsonSocketHandlers } from './tailnet-remote-client'
+import type { RemoteEventsSocket, RemoteJsonSocketHandlers } from './tailnet-remote-client'
 import { createTailnetMeshService, type TailnetMeshService } from './tailnet-mesh-service'
 import type { StoredMeshConnection, TailnetMeshStore } from './tailnet-mesh-store'
 
@@ -72,17 +72,25 @@ const identity = {
   },
 }
 
-/** A watch socket the test drives: frames in through the handlers, and whether this end closed it. */
+/**
+ * A watch socket the test drives: frames in through the handlers, whether this
+ * end closed it, and whether it answers a ping (a socket that died asleep does not).
+ */
 function watchSocket(handlers: RemoteJsonSocketHandlers) {
   let open = true
-  const socket: RemoteJsonSocket = {
+  const state = { answers: true, pings: 0 }
+  const socket: RemoteEventsSocket = {
     send: () => undefined,
     close: () => {
       open = false
     },
     isOpen: () => open,
+    ping: () => {
+      state.pings += 1
+      return state.answers ? Promise.resolve() : new Promise<void>(() => undefined)
+    },
   }
-  return { socket, handlers, isOpen: () => open }
+  return { socket, handlers, isOpen: () => open, state }
 }
 
 type Harness = {
@@ -206,7 +214,7 @@ test('on battery the re-checks of an absent machine stretch', async () => {
   assert.equal(wire.readRemoteIdentity.mock.calls.length, checks + 1)
 })
 
-test('a wake recycles a watch that looks open, and its hello reports what changed meanwhile', async () => {
+test('a wake keeps a watch that answers its ping, and recycles one that does not, whose hello reports what changed', async () => {
   wire.readRemoteIdentity.mockResolvedValue(identity)
   const sockets: Array<ReturnType<typeof watchSocket>> = []
   wire.openRemoteEventsSocket.mockImplementation(async (input: { handlers: RemoteJsonSocketHandlers }) => {
@@ -222,8 +230,19 @@ test('a wake recycles a watch that looks open, and its hello reports what change
   const changes = () => h.events.filter((event) => event.kind === 'remote-changed')
   assert.equal(changes().length, 0, 'the first hello is where things stand, not a change')
 
+  // A screen unlocked with the socket still there: it answers, and is kept.
   h.mesh.onWake()
-  await vi.advanceTimersByTimeAsync(0)
+  await vi.advanceTimersByTimeAsync(10_000)
+  assert.equal(sockets[0].state.pings, 1, 'the wake asks the socket')
+  assert.equal(sockets[0].isOpen(), true, 'a socket that answers is kept')
+  assert.equal(sockets.length, 1, 'and nothing is dialled')
+
+  // A sleep that a middlebox dropped the socket during: no answer, so it is recycled.
+  sockets[0].state.answers = false
+  h.mesh.onWake()
+  await vi.advanceTimersByTimeAsync(4_999)
+  assert.equal(sockets.length, 1, 'the ping gets its time')
+  await vi.advanceTimersByTimeAsync(1)
   assert.equal(sockets[0].isOpen(), false, 'the old socket is closed from this end')
   assert.equal(sockets.length, 2, 'and a new one dialled')
   // The recycled socket's close arrives late; it is not a drop of the new one.
