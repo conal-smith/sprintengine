@@ -104,6 +104,11 @@ export type QueuedBubble =
  *
  * Skills never come into it: the phone sends none, and the contract would
  * refuse them beside `queue` too.
+ *
+ * The stream applies the same rule to what it knows and the screen may not
+ * yet (`tailnetConversations.ts`): a plain send made while it sees the chat
+ * busy, or still waiting in its outbox when a redial finds a turn running, is
+ * handed over there too.
  */
 export function holdsOnDesktop(input: {
   declared: boolean;
