@@ -19,6 +19,7 @@ import {
   visualThemeFor,
   visualThemeScript,
   visualTitle,
+  waitsForHeight,
 } from "./visualFrame";
 
 /**
@@ -90,13 +91,20 @@ function VisualPage({ source, onFail }: { source: string; onFail: (note: string)
     if (refused) onFail(refused);
   }, [refused, onFail]);
 
-  // A page that never says how tall it is has not drawn.
-  const drawn = reported !== null;
+  // A page that has loaded and still not said how tall it is has not drawn.
+  // The clock starts at the page's load, not at mount: on Android every
+  // WebView in the app shares one renderer, so a page can wait seconds to
+  // start (a cold WebView, the diagram renderer busy with a chat's drawings)
+  // and a clock from mount gave up on visuals that were about to draw. The
+  // load ends only once the frame inside it has loaded, by which time its
+  // height has been sent.
+  const [loaded, setLoaded] = useState(false);
+  const waiting = waitsForHeight({ loaded, reported, refused: refused !== null });
   useEffect(() => {
-    if (drawn || refused) return;
+    if (!waiting) return;
     const timer = setTimeout(() => onFail(VISUAL_DID_NOT_DRAW), VISUAL_DRAW_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [drawn, refused, onFail]);
+  }, [waiting, onFail]);
 
   // The page keeps the latest theme it is handed and passes it on once the
   // visual is listening, so a switch while it loads is not lost.
@@ -165,7 +173,10 @@ function VisualPage({ source, onFail }: { source: string; onFail: (note: string)
       nestedScrollEnabled={scrolls}
       onContentProcessDidTerminate={() => onFail(VISUAL_DID_NOT_DRAW)}
       onError={() => onFail(VISUAL_DID_NOT_DRAW)}
-      onLoadEnd={injectTheme}
+      onLoadEnd={() => {
+        setLoaded(true);
+        injectTheme();
+      }}
       onLoadStart={() => {
         if (gate.noteLoadStart() === "unauthorized") webViewRef.current?.stopLoading();
       }}

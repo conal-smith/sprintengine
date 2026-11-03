@@ -223,3 +223,11 @@ test("a visual is named by its title or first heading", () => {
   assert.equal(visual.visualTitle('<h3 class="t">Revenue &amp; costs</h3>'), "Revenue & costs");
   assert.equal(visual.visualTitle("<svg><rect/></svg>"), "Visual");
 });
+
+test("a visual is given up on only once its page has loaded and still not reported", () => {
+  // Not from mount: a page waiting on a busy shared renderer has not failed.
+  assert.equal(visual.waitsForHeight({ loaded: false, reported: null, refused: false }), false);
+  assert.equal(visual.waitsForHeight({ loaded: true, reported: null, refused: false }), true);
+  assert.equal(visual.waitsForHeight({ loaded: true, reported: 240, refused: false }), false);
+  assert.equal(visual.waitsForHeight({ loaded: true, reported: null, refused: true }), false);
+});

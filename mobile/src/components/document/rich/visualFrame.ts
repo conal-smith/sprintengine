@@ -66,7 +66,7 @@ export { MAX_VISUAL_SOURCE, VISUAL_EMPTY, VISUAL_FRAME_MAX_HEIGHT, VISUAL_TOO_LA
 /** Shown, after "Shown as source: ", when a frame never says how tall it is. */
 export const VISUAL_DID_NOT_DRAW = "the visual did not draw";
 
-/** How long a frame has to report its height before its source is shown instead. */
+/** How long a page has, once it has loaded, to report its height before its source is shown instead. */
 export const VISUAL_DRAW_TIMEOUT_MS = 10_000;
 
 // The phone's own faces: its platform UI family (the app bundles no other) and
@@ -294,6 +294,16 @@ export function readVisualMessage(data: unknown): VisualMessage | null {
   }
   if (message.type === "empty") return { type: "empty" };
   return null;
+}
+
+/**
+ * Whether the "did not draw" clock should be running: only once the page has
+ * loaded, and only until it says how tall it is. Never from mount: on Android
+ * every WebView in the app shares one renderer, so a page can wait seconds to
+ * start, and a clock from mount gave up on visuals that were about to draw.
+ */
+export function waitsForHeight(state: { loaded: boolean; reported: number | null; refused: boolean }): boolean {
+  return state.loaded && state.reported === null && !state.refused;
 }
 
 /** The height the visual's WebView takes for a reported one: none for nothing, and never past the desktop's cap. */
