@@ -110,11 +110,14 @@ test('"Delete the older nightly releases" never selects the phone release, howev
 
 test('the nightly gate and a stable promotion read the newest nightly, not the phone release', () => {
   const releases = [
-    { tag_name: MOBILE_TAG, draft: false, published_at: '2026-11-04T12:00:00Z', body: 'phone' },
-    { tag_name: NIGHTLY, draft: false, published_at: '2026-11-04T01:00:00Z', body: `<!-- source-sha: ${SHA} -->` },
+    // Seven hours old: were the gate to read it as the last nightly, it would
+    // open (past the six-hour interval) rather than stay shut.
+    { tag_name: MOBILE_TAG, draft: false, published_at: '2026-11-04T06:00:00Z', body: 'phone' },
+    { tag_name: NIGHTLY, draft: false, published_at: '2026-11-04T10:00:00Z', body: `<!-- source-sha: ${SHA} -->` },
   ]
   assert.equal(lastNightly(releases).tag_name, NIGHTLY)
-  const gate = nightlyGate({ releases, comparison: { status: 'identical' }, now: new Date('2026-11-04T13:00:00Z') })
+  // main has new commits; only the three-hour-old nightly keeps the gate shut.
+  const gate = nightlyGate({ releases, comparison: { status: 'ahead' }, now: new Date('2026-11-04T13:00:00Z') })
   assert.equal(gate.publish, false)
 })
 

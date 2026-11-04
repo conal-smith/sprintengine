@@ -129,6 +129,8 @@ jobs:
           name: android-unsigned
           path: mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
+          # A re-run of this run uploads under the same name.
+          overwrite: true
           retention-days: 1
 
   sign:
@@ -190,6 +192,7 @@ jobs:
           name: SprintEngine-mobile-android-release-${{ github.sha }}
           path: signed/app-release.apk
           if-no-files-found: error
+          overwrite: true
           retention-days: 14
 
   publish:
@@ -287,6 +290,10 @@ jobs:
           assets="$(gh api --paginate "repos/${REPO}/releases/${release_id}/assets?per_page=100" --jq '.[] | [.id, .name] | @tsv')"
           new_id="$(awk -F'\t' -v n="android-update-${VERSION_CODE}.json" '$2 == n {print $1}' <<<"$assets")"
           old_id="$(awk -F'\t' '$2 == "android-update.json" {print $1}' <<<"$assets")"
+          if [ -z "$new_id" ]; then
+            echo "The uploaded android-update-${VERSION_CODE}.json is not listed on ${TAG}; leaving the old manifest in place." >&2
+            exit 1
+          fi
           if [ -n "$old_id" ]; then gh api -X DELETE "repos/${REPO}/releases/assets/${old_id}"; fi
           gh api -X PATCH "repos/${REPO}/releases/assets/${new_id}" -f name=android-update.json >/dev/null
 
