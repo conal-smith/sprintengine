@@ -170,7 +170,8 @@ export function SettingRow({
           </div>
         )}
         {help ? (
-          <div id={helpId} className="mt-0.5 text-body leading-5 text-[color:var(--text-muted)]">
+          // One step under the label, balanced (setting-row component.css).
+          <div id={helpId} className="mt-0.5 text-meta leading-[1.4] text-balance text-[color:var(--text-muted)]">
             {help}
           </div>
         ) : null}

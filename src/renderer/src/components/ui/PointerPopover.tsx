@@ -154,7 +154,7 @@ export function PointerPopover({
       style={{ position: 'fixed', left: pos.left, top: pos.top, zIndex: 'var(--z-menu)' }}
       className={[
         // Clickable over a window-drag region; see OVERLAY_SURFACE_CLASS.
-        'app-no-drag rounded-[7px] border border-[color:var(--border-strong)]',
+        'app-no-drag rounded-md border border-[color:var(--border-strong)]',
         // design-tokens-allow: canonical popover elevation shared by anchored app-shell surfaces (matches Popover)
         // One ground per surface, written as one class each: `surface-glass`
         // sets `background` and the raised arm sets `background-color`, so

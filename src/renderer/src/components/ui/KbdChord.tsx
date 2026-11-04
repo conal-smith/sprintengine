@@ -29,7 +29,8 @@ export function KbdChord({ keys, chord, platform, separator, ariaLabel, classNam
   // another stroke, so it renders as two adjacent keys with no "then" between.
   const tapChord = chord ? isModifierTapChord(chord) : false
   const label = ariaLabel ?? displayStrokes.map((stroke) => stroke.join(' ')).join(tapChord ? ' ' : ' then ')
-  const sep = separator ?? '+'
+  // Mac glyphs sit together ("⌘ K", no plus), as the menu bar draws them.
+  const sep = separator ?? (platform === 'darwin' ? null : '+')
   return (
     <span role="img" aria-label={label} className={['inline-flex items-center gap-1', className ?? ''].join(' ')}>
       {displayStrokes.map((stroke, strokeIndex) => (
@@ -41,12 +42,12 @@ export function KbdChord({ keys, chord, platform, separator, ariaLabel, classNam
           ) : null}
           {stroke.map((key, index) => (
             <React.Fragment key={`${strokeIndex}-${index}-${key}`}>
-              {index > 0 ? (
+              {index > 0 && sep !== null ? (
                 <span aria-hidden="true" className="font-mono text-micro text-[color:var(--text-disabled)]">
                   {sep}
                 </span>
               ) : null}
-              <kbd className="font-mono inline-flex h-4 min-w-[16px] items-center justify-center rounded-[3px] border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] px-1 text-micro text-[color:var(--text-muted)]">
+              <kbd className="font-mono inline-flex h-4 min-w-[16px] items-center justify-center rounded-xs border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] px-1 text-micro text-[color:var(--text-muted)]">
                 {key}
               </kbd>
             </React.Fragment>

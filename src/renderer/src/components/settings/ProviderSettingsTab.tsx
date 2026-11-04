@@ -23,7 +23,7 @@ import {
   Spinner,
 } from '../ui'
 import { useConfirmDialog } from '../ui/ConfirmDialog'
-import { SettingCard, SettingsPageHeader, SettingsSectionTitle } from './SettingsAtoms'
+import { SettingCard, SettingsPageHeader } from './SettingsAtoms'
 import {
   type ConversationProviderListEntry,
   type ProviderSecretView,
@@ -215,8 +215,12 @@ export function ProviderSettingsTab() {
 
       {tabState.kind === 'empty' ? <EmptyState density="list" title="No providers installed." /> : null}
 
-      {tabState.kind === 'ready'
-        ? tabState.providers.map((provider) => (
+      {/* One list card, one row a provider (2026-11-04). It was a section title
+          and a card of its own for each, so a page of providers that need no
+          key repeated "No API key needed." under seven headings. */}
+      {tabState.kind === 'ready' ? (
+        <SettingCard as="ul" ariaLabel="Conversation providers">
+          {tabState.providers.map((provider) => (
             <ProviderRow
               key={provider.id}
               provider={provider}
@@ -228,8 +232,9 @@ export function ProviderSettingsTab() {
               onSave={() => void saveKey(provider)}
               onClear={() => void clearKey(provider)}
             />
-          ))
-        : null}
+          ))}
+        </SettingCard>
+      ) : null}
     </div>
   )
 }
@@ -259,22 +264,27 @@ function ProviderRow({
   const configured = secretView?.kind === 'configured'
   const canClear = canClearProviderSecret(secretView)
 
+  // The name, and what the provider needs, on one line; a key's field under it.
+  const status =
+    secretView === undefined
+      ? // A remembered row whose key main has not answered for yet: an input
+        // here would ask for a key the provider may already have.
+        'Checking the key…'
+      : secretView.kind === 'none-required'
+        ? 'No API key needed'
+        : null
   return (
-    // No rule between providers: each one's card draws its own edge, and the
-    // border-t was a second boundary right beside it.
-    <section aria-labelledby={headingId} className="space-y-2">
-      <SettingsSectionTitle id={headingId}>{provider.displayName}</SettingsSectionTitle>
-
-      <SettingCard>
-        <div className="px-3 py-2.5">
-          {secretView === undefined ? (
-            // A remembered row whose key main has not answered for yet: an
-            // input here would ask for a key the provider may already have.
-            <p className="text-body leading-5 text-[color:var(--text-muted)]">Checking the key…</p>
-          ) : secretView.kind === 'error' ? (
+    <li aria-labelledby={headingId} className="px-3 py-2.5">
+      <div className="flex min-h-control-sm items-center justify-between gap-4">
+        <h3 id={headingId} className="min-w-0 truncate text-body font-medium text-[color:var(--text-strong)]">
+          {provider.displayName}
+        </h3>
+        {status ? <span className="shrink-0 text-meta text-[color:var(--text-muted)]">{status}</span> : null}
+      </div>
+      {status !== null ? null : (
+        <div className="mt-2">
+          {secretView?.kind === 'error' ? (
             <InlineNotice tone="error">{secretView.message}</InlineNotice>
-          ) : secretView?.kind === 'none-required' ? (
-            <p className="text-body leading-5 text-[color:var(--text-muted)]">No API key needed.</p>
           ) : configured ? (
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
@@ -329,15 +339,12 @@ function ProviderRow({
             </div>
           )}
         </div>
-        {/* `empty:hidden` matters more inside a card: the card draws a hairline
-            before every child after the first, so a live region with nothing
-            in it would show as a rule under an otherwise single-row card.
-            `ActionResultMessage` returns null with no message, so the div is
-            genuinely `:empty` and the variant fires. */}
-        <div aria-live="polite" className="px-3 py-2.5 empty:hidden">
-          <ActionResultMessage message={message} />
-        </div>
-      </SettingCard>
-    </section>
+      )}
+      {/* `ActionResultMessage` returns null with no message, so the div is
+          genuinely `:empty` and takes no room under the row. */}
+      <div aria-live="polite" className="mt-1.5 empty:hidden">
+        <ActionResultMessage message={message} />
+      </div>
+    </li>
   )
 }

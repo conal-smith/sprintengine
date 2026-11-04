@@ -14,8 +14,8 @@ type ButtonBase = React.ButtonHTMLAttributes<HTMLButtonElement>
 // the chip radius cannot add one — it has to be the only one written.
 // `justify-*` left for the same reason (see ALIGN below), and the cursor with
 // it (see CURSOR).
-const SHARED =
-  'interactive inline-flex items-center gap-1.5 font-medium ' + 'disabled:opacity-45 aria-disabled:opacity-45'
+const SHARED_LAYOUT = 'interactive inline-flex items-center gap-1.5 font-medium'
+const SHARED = `${SHARED_LAYOUT} disabled:opacity-45 aria-disabled:opacity-45`
 
 /**
  * The disabled treatment for a control that must STAY FOCUSABLE — the
@@ -192,7 +192,11 @@ export const PrimaryButton = React.forwardRef<HTMLButtonElement, SizedButtonProp
       aria-busy={busy || undefined}
       {...rest}
       className={[
-        SHARED,
+        // The layout without the shared dimming: an unavailable primary is a
+        // neutral well, like the composer's send (2026-11-04). At 45% the
+        // accent read as a primary still loading, and a form with nothing
+        // typed yet showed its loudest colour on the one thing it could not do.
+        SHARED_LAYOUT,
         SIZE[size],
         ALIGN[align],
         cursorClass(busy),
@@ -204,8 +208,10 @@ export const PrimaryButton = React.forwardRef<HTMLButtonElement, SizedButtonProp
         'control-raised',
         'bg-[color:var(--accent-primary)] text-[color:var(--text-on-accent)]',
         'hover:bg-[color:var(--accent-primary-hover)]',
-        'disabled:hover:bg-[color:var(--accent-primary)]',
         FOCUS_RING_CLASS,
+        'disabled:bg-[color:var(--bg-active)] disabled:text-[color:var(--text-subtle)]',
+        'aria-disabled:bg-[color:var(--bg-active)] aria-disabled:text-[color:var(--text-subtle)]',
+        'disabled:hover:bg-[color:var(--bg-active)]',
         className ?? '',
       ].join(' ')}
     />
@@ -238,15 +244,21 @@ export const SendButton = React.forwardRef<HTMLButtonElement, SizedButtonProps>(
       aria-busy={busy || undefined}
       {...rest}
       className={[
-        SHARED,
+        // The layout without the shared dimming: with nothing to send it is a
+        // neutral disc, not a faded accent one (2026-11-04). A 45% green on the
+        // composer read as a primary that was loading, and it was the one
+        // coloured thing in an empty box.
+        SHARED_LAYOUT,
         ROUND_SIZE[size],
         ALIGN[align],
         cursorClass(busy),
         'control-raised',
         'bg-[color:var(--accent-primary)] text-[color:var(--text-on-accent)]',
         'hover:bg-[color:var(--accent-primary-hover)]',
-        'disabled:hover:bg-[color:var(--accent-primary)]',
         FOCUS_RING_CLASS,
+        'disabled:bg-[color:var(--bg-active)] disabled:text-[color:var(--text-subtle)]',
+        'aria-disabled:bg-[color:var(--bg-active)] aria-disabled:text-[color:var(--text-subtle)]',
+        'disabled:hover:bg-[color:var(--bg-active)]',
         className ?? '',
       ].join(' ')}
     />

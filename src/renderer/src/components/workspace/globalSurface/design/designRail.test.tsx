@@ -232,7 +232,7 @@ test('designRail', async () => {
   run('the identity chip is a rounded square in the system’s own accent', () => {
     const html = railMarkup([entry()])
     // The 6px dot is the status idiom; identity gets a rounded square.
-    assert.match(html, /rounded-\[3px\]/, 'rounded square')
+    assert.match(html, /(^|\s)rounded-xs(\s|")/, 'rounded square')
     assert.ok(!/rounded-full/.test(html), 'never the status circle')
     // Dark mode was asked for, so the bundle's dark accent is what paints.
     // design-tokens-allow: asserting the fixture bundle's own colour reached the chip.

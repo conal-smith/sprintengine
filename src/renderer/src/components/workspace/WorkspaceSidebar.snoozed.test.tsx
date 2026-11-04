@@ -259,7 +259,13 @@ test('WorkspaceSidebar.snoozed', async () => {
         /group-focus-visible\/shelf:text-\[color:var\(--text-default\)\]/,
         'and on keyboard focus',
       )
-      assert.match(shelfCount.className, /(^|\s)text-\[color:var\(--text-disabled\)\]/, 'the count a step further down')
+      // The count shares the word's ink: in the disabled step it read as an
+      // unavailable control rather than as the size of a shelf that opens.
+      assert.match(
+        shelfCount.className,
+        /(^|\s)text-\[color:var\(--text-subtle\)\]/,
+        'the count in the word\u2019s ink',
+      )
 
       act(() => {
         shelf.click()

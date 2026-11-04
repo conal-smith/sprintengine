@@ -184,25 +184,23 @@
   /* A tint of the ink, not a solid, so it reads the same on every theme's
      surface: the groove of a segmented control, the ground of a code well. */
   --bg-well: var(--sem-color-bg-well);
-  /* The selection EDGE: the 2px accent border worn by the selected row of the
-     pane the keyboard is driving (design-system/patterns/selection.html, owner
-     ruling 2026-09-05). The neutral fill alone could not be found on a rail
-     where other rows carry status tints — a whole-row wash in a hue beats one
-     step of grey every time — and the row that had "finished while you were
-     away" read as the row you were in. The fill is now WHAT HAPPENED and the
-     edge is WHERE YOU ARE; no status state draws an edge any more.
+  /* The selection EDGE: the 2px inset edge worn by the selected row of the
+     pane the keyboard is driving (design-system/patterns/selection.html). The
+     fill says WHAT HAPPENED and the edge says WHERE YOU ARE; no status state
+     draws an edge.
 
-     It is the same 2px accent the focused terminal wears (`terminal-focus-ring`
-     below), on purpose: the row in the rail and the terminal it drives carry
-     one mark between them, which is the question the treatment exists to
-     answer.
+     A hairline in the theme's own subtle border, not the accent (2026-11-04).
+     In the accent it was the loudest mark on every surface that has a selected
+     row — the chat list, the settings tabs, the theme tiles — and it put a
+     green outline round whatever you were reading, which read as a focus ring
+     or a warning more often than as "you are here". The neutral fill one rung
+     up carries the selection; the hairline keeps the row's shape against a
+     neighbour's status tint.
 
-     Declared once here and resolved against each theme's own --accent-primary
-     through the cascade, so a theme that re-tints the accent re-tints the edge
-     with it. The resting tier rebinds it to `transparent` near the end of this
-     file, exactly as it rebinds the fill and the ink — so a pane that is not
-     holding focus keeps its remembered choice and gives up the edge. */
-  --selection-edge: var(--accent-primary);
+     The resting tier rebinds it to `transparent` near the end of this file,
+     exactly as it rebinds the fill and the ink — so a pane that is not holding
+     focus keeps its remembered choice and gives up the edge. */
+  --selection-edge: var(--border-subtle);
   /* Agent conversation panel canvas — and the new chat page, so starting a chat
      does not change the ground under the composer. The brightest paper the
      theme has: the conversation is the thing being read, so it is the one
@@ -2046,6 +2044,11 @@ samp,
   /* And the floating pill's hover, one shade under the white rather than over
      it (see --composer-surface-hover in :root). */
   --composer-surface-hover: var(--bg-hover);
+  /* The user's bubble, halfway from the hover rung to the press rung (see
+     --agent-inset in :root). The hover rung alone is a shade off white, and
+     on a light theme's near-white paper a sent message read as a faint box
+     rather than as a turn standing off the page (2026-11-04). */
+  --agent-inset: color-mix(in oklab, var(--bg-hover) 50%, var(--bg-active));
   --git-lane-0: color-mix(in oklab, var(--text-strong) 35%, #5c7cff);
   --git-lane-1: color-mix(in oklab, var(--text-strong) 35%, #a78bfa);
   --git-lane-2: color-mix(in oklab, var(--text-strong) 35%, #30d158);

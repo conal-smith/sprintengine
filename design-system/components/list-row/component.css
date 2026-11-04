@@ -72,7 +72,7 @@
  * Still ruled out, unchanged: an accent fill, a left bar, a glow. */
 .ds-list-row--selected {
   background: var(--sem-color-bg-selected);
-  box-shadow: inset 0 0 0 2px var(--sem-color-accent-primary);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-subtle);
   color: var(--sem-color-text-primary);
 }
 

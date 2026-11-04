@@ -53,7 +53,7 @@ export function OutboundPairRequestCard({
   }
   const frame =
     variant === 'card'
-      ? 'mx-2.5 my-1.5 rounded-[7px] border border-[color:var(--border-default)] p-2.5'
+      ? 'mx-2.5 my-1.5 rounded-md border border-[color:var(--border-default)] p-2.5'
       : // A row inside a card: the card owns the hairline, so the row owns only
         // its padding — and it pads its sides too, since the card is full-bleed.
         'px-3 py-2.5'
@@ -65,7 +65,7 @@ export function OutboundPairRequestCard({
           Waiting for {request.machineName}
         </span>
       </div>
-      <div className="my-2 rounded-[7px] border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface)] py-1.5 text-center">
+      <div className="my-2 rounded-md border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface)] py-1.5 text-center">
         <div
           className="font-mono text-title tracking-[0.3em] text-[color:var(--text-strong)]"
           aria-label={`Code ${request.comparisonCode}`}

@@ -34,7 +34,14 @@ export type RowAccent = {
 // rules in assets/index.css rebind it to `transparent` on a pane that is not
 // holding focus, the same way they rebind the fill and the ink lift. Naming the
 // accent here would opt the sidebar out of tiering.
-export const SELECTION_EDGE_CLASS = 'ring-2 ring-inset ring-[color:var(--selection-edge)]'
+//
+// An inset OUTLINE, not an inset ring (2026-11-04). A row keeps a 4px
+// transparent left border for its highlight rail, and an inset ring is drawn
+// inside the border, so the fill showed for 4px outside the edge on the left —
+// a double line down the open row. The outline is drawn round the border box,
+// rail included, and follows the row's corners. Keyboard focus draws its own
+// outline over it, which is right: focus is the stronger "where you are".
+export const SELECTION_EDGE_CLASS = 'outline-2 -outline-offset-2 outline-[color:var(--selection-edge)]'
 
 // No `glyph` member either, and no per-mode entry left to hold one: the row
 // carries no icon since 2026-09-02 (the logo moved to the folder header, the

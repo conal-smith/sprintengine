@@ -366,7 +366,7 @@ export default function WorktreeManager({
   const runWorktreeAction = async (label: string, action: () => Promise<void>) => {
     if (busy) return
     setBusy(label)
-    setMessage({ tone: 'neutral', text: `${label}...` })
+    setMessage({ tone: 'neutral', text: `${label}…` })
     try {
       await action()
     } catch (error) {

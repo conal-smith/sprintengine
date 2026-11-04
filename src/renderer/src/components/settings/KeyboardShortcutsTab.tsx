@@ -16,6 +16,7 @@ import {
   keyFromEvent,
   normalizeKeybinding,
   renderKeybinding,
+  keybindingSearchText,
   type CommandCategory,
   type CommandContribution,
   type CommandScope,
@@ -176,7 +177,7 @@ export function conflictTone(conflicts: readonly KeybindingConflict[]): 'error' 
 export function rowMatchesQuery(row: ShortcutRow, query: string, platform: KeybindingPlatform): boolean {
   const trimmed = query.trim().toLowerCase()
   if (!trimmed) return true
-  const rendered = [...row.effective, ...row.defaults].map((chord) => renderKeybinding(chord, platform))
+  const rendered = [...row.effective, ...row.defaults].map((chord) => keybindingSearchText(chord, platform))
   const haystack = [row.title, categoryLabel(row.category), ...row.effective, ...row.defaults, ...rendered]
     .join(' ')
     .toLowerCase()

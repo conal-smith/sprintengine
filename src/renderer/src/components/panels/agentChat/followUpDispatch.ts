@@ -104,10 +104,9 @@ export function followUpSendPresentation(input: {
 }
 
 /**
- * The platform's Primary key as a click modifier, in the words the app's
- * shortcut labels use for it (`renderKeybinding`), so "Cmd-click or
- * Cmd+Enter" names the key one way.
+ * The platform's Primary key as a click modifier, as the app's shortcut labels
+ * draw it (`renderKeybinding`), so "⌘-click or ⌘↩" names the key one way.
  */
 export function primaryClickModifier(platform: string | undefined): string {
-  return platform === 'darwin' ? 'Cmd' : 'Ctrl'
+  return platform === 'darwin' ? '⌘' : 'Ctrl'
 }

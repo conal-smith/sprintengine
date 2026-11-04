@@ -164,7 +164,7 @@ export function CheckboxBox({
     <span
       aria-hidden="true"
       className={[
-        'inline-flex size-icon-sm items-center justify-center rounded-[3px] border transition-colors',
+        'inline-flex size-icon-sm items-center justify-center rounded-xs border transition-colors',
         // The input is the tab stop; this box is what a person sees, so the
         // shared treatment lands here on the input's focus. An outline's gap
         // needs no `ring-offset-color`, so it is right on every surface.

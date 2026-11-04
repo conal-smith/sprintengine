@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react'
 
 import { distroOfHostId } from '../../../../../shared/execution-host'
+import { displayBranchName } from '../../../utils/branchLabel'
 import type { MachineRef } from '../../../../../shared/machine-identity'
 import { isPathOrChild } from '../../../../../shared/paths'
 import { useGitBranch } from '../../../hooks/useGitBranch'
@@ -118,9 +119,13 @@ export function useConversationStripFacts({
   // branch in its list, and there is no explorer here to open it in.
   const branch: ConversationStripBranch | null =
     checkout && branchName
-      ? { name: branchName, worktree: inWorktree, onOpen: filesEnabled && folderPath ? openFiles : null }
+      ? {
+          name: displayBranchName(branchName),
+          worktree: inWorktree,
+          onOpen: filesEnabled && folderPath ? openFiles : null,
+        }
       : transport.kind === 'remote' && listed?.branch
-        ? { name: listed.branch, worktree: listed.worktree, onOpen: null }
+        ? { name: displayBranchName(listed.branch), worktree: listed.worktree, onOpen: null }
         : null
 
   const counts = useCheckoutChanges(checkout, NO_PULL_REQUESTS, 'conversation-strip')

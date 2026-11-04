@@ -736,6 +736,8 @@ export default function SettingsPanel({
   const setAppearanceAgentCharacters = useWorkspaceStore((s) => s.setAppearanceAgentCharacters)
   const usageLimits = useWorkspaceStore((s) => s.appSettings.appearance.usageLimits)
   const setAppearanceUsageLimits = useWorkspaceStore((s) => s.setAppearanceUsageLimits)
+  const projectIconColors = useWorkspaceStore((s) => s.appSettings.appearance.projectIconColors)
+  const setAppearanceProjectIconColors = useWorkspaceStore((s) => s.setAppearanceProjectIconColors)
   const isMac = window.api.platform === 'darwin'
   const chatListView = useWorkspaceStore((s) => s.chatListView)
   const sidebarWorkingSection = useWorkspaceStore((s) => s.appSettings.sidebarWorkingSection)
@@ -1339,6 +1341,12 @@ export default function SettingsPanel({
                 enabled={usageLimits}
                 onChange={setAppearanceUsageLimits}
               />
+              <SettingToggle
+                label="Colored project icons"
+                description="Keep each project's colour on its folder icon in the chat list. Off, the icons rest gray and colour in on the chat you point at or open."
+                enabled={projectIconColors}
+                onChange={setAppearanceProjectIconColors}
+              />
             </SettingCard>
           </section>
           <section className="space-y-3">
@@ -1534,6 +1542,10 @@ export default function SettingsPanel({
           {/* One switch for every machine: main compares each machine's
               installed CLIs against the registry, and this turns all of it
               off. */}
+          {/* Two cards where there were five (2026-11-04): a card per row read
+              as five unrelated settings, and the page had no groups. The CLI
+              updates — the switch, then every outdated CLI in one press — and
+              how chats behave. */}
           <SettingCard>
             <SettingToggle
               label="Check for CLI updates"
@@ -1541,19 +1553,20 @@ export default function SettingsPanel({
               enabled={checkCliVersions}
               onChange={setCheckCliVersions}
             />
+            <UpdateEverythingCard />
           </SettingCard>
           {/* First-run agent-config adoption. It runs silently at the first
               workspace creation — the user is never asked — so this line is the
               only place it is ever reported. Renders nothing unless an adoption
               actually ran this session, and says so plainly when it failed. */}
           <AgentConfigAdoptionStatus adoption={agentConfigAdoptionResult} />
-          <ConversationImportSettings />
-          {/* A chat a usage limit stopped, carried on when the limit resets. */}
-          <UsageLimitResumeSettings />
-          {/* What Enter does while a chat's agent works: queue, or steer. */}
-          <FollowUpBehaviorSetting />
-          {/* Every outdated CLI on every machine here, in one press. */}
-          <UpdateEverythingCard />
+          <SettingCard>
+            <ConversationImportSettings />
+            {/* A chat a usage limit stopped, carried on when the limit resets. */}
+            <UsageLimitResumeSettings />
+            {/* What Enter does while a chat's agent works: queue, or steer. */}
+            <FollowUpBehaviorSetting />
+          </SettingCard>
           <AgentClisSection
             runs={agentCliRuns}
             machine={agentsMachine}
@@ -1874,7 +1887,9 @@ const SettingsTabButton = React.forwardRef<
     >
       {Icon ? (
         <Icon
-          className={`icon-sm shrink-0 ${active ? 'text-[color:var(--text-strong)]' : 'text-[color:var(--text-subtle)]'}`}
+          // Muted at rest, not subtle: the glyph is how a long list of tabs is
+          // scanned, and at the subtle step it read as a disabled row.
+          className={`icon-sm shrink-0 ${active ? 'text-[color:var(--text-strong)]' : 'text-[color:var(--text-muted)]'}`}
         />
       ) : null}
       <span className="min-w-0 truncate">{tab.label}</span>

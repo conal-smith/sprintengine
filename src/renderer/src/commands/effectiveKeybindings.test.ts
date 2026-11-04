@@ -24,7 +24,7 @@ test('effectiveKeybindings', async () => {
       },
       'darwin',
     ),
-    'Cmd+Shift+H',
+    '⌘⇧H',
   )
   assert.equal(
     getElectronAccelerator('panel.git.toggle', {
@@ -64,7 +64,7 @@ test('effectiveKeybindings', async () => {
       { overrides: { 'commandPalette.open': ['Shift Shift'] }, disabled: {} },
       'darwin',
     ),
-    'Shift Shift',
+    '⇧ ⇧',
   )
   // A hand-edited one-stroke `Shift` override does not parse, so it can never
   // reach the menu as the invalid Electron accelerator "shift".

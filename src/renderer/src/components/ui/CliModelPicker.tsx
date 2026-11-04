@@ -737,7 +737,7 @@ function ModelRowView({
         <span className="shrink-0 whitespace-nowrap text-micro text-[color:var(--text-muted)]">{row.note}</span>
       ) : null}
       {chord ? (
-        <kbd className="shrink-0 rounded-[3px] bg-[color:var(--bg-active)] px-1 font-mono text-micro tracking-wide text-[color:var(--text-subtle)]">
+        <kbd className="shrink-0 rounded-xs bg-[color:var(--bg-active)] px-1 font-mono text-micro tracking-wide text-[color:var(--text-subtle)]">
           {chordModifier}
           {chord}
         </kbd>
@@ -763,7 +763,7 @@ function ModelRowView({
           onLeaveStar()
         }}
         className={[
-          'interactive grid size-5 shrink-0 place-items-center rounded-[3px]',
+          'interactive grid size-5 shrink-0 place-items-center rounded-xs',
           'text-[color:var(--text-disabled)] hover:text-[color:var(--text-default)]',
           // Revealed on hover, on the keyboard HIGHLIGHT, and on its own focus —
           // hover-only is a bug. The highlight earns a reveal because ArrowRight

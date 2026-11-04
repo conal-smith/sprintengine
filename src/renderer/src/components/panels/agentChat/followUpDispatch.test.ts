@@ -101,8 +101,8 @@ test('with no choice to make now, the button says the message queues and why', (
 })
 
 test('the click modifier is the platform’s Primary key, named as its shortcut labels name it', () => {
-  assert.equal(primaryClickModifier('darwin'), 'Cmd')
-  assert.ok(renderKeybinding('Primary+Enter', 'darwin').startsWith(`${primaryClickModifier('darwin')}+`))
+  assert.equal(primaryClickModifier('darwin'), '⌘')
+  assert.equal(renderKeybinding('Primary+Enter', 'darwin'), `${primaryClickModifier('darwin')}↩`)
   assert.ok(renderKeybinding('Primary+Enter', 'windows').startsWith(`${primaryClickModifier('win32')}+`))
   assert.equal(primaryClickModifier('win32'), 'Ctrl')
   assert.equal(primaryClickModifier('linux'), 'Ctrl')

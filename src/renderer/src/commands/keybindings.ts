@@ -224,18 +224,46 @@ export function collapseDuplicateKeybindings(keybindings: readonly string[]): st
   return collapsed
 }
 
+// On macOS a shortcut is drawn in the keyboard's own glyphs, as the menu bar
+// and every Mac app draw it: "⌘⇧F", not "Cmd+Shift+F" (2026-11-04). The worded
+// form read as a Windows label on a Mac, and the model picker beside it already
+// drew "⌘1", so one product spelled the same key two ways.
+const DARWIN_MODIFIER: Record<KeybindingModifier, string> = {
+  primary: '⌘',
+  meta: '⌘',
+  ctrl: '⌃',
+  alt: '⌥',
+  shift: '⇧',
+}
+
 function renderModifier(modifier: KeybindingModifier, platform: KeybindingPlatform): string {
-  if (modifier === 'primary') return platform === 'darwin' ? 'Cmd' : 'Ctrl'
-  if (modifier === 'alt' && platform === 'darwin') return 'Option'
+  if (platform === 'darwin') return DARWIN_MODIFIER[modifier]
+  if (modifier === 'primary') return 'Ctrl'
   return DISPLAY_MODIFIER[modifier]
+}
+
+// The keys a Mac draws as glyphs too. Escape and Space keep their words: their
+// glyphs (⎋, ␣) are ones most people do not recognise.
+const DARWIN_KEY: Record<string, string> = {
+  arrowleft: '←',
+  arrowright: '→',
+  arrowup: '↑',
+  arrowdown: '↓',
+  backspace: '⌫',
+  delete: '⌦',
+  // design-tokens-allow: a keyboard glyph, not an emoji — ↩ is Return in every Mac menu
+  enter: '↩',
+  tab: '⇥',
 }
 
 function renderStrokeKeys(stroke: KeybindingStroke, platform: KeybindingPlatform): string[] {
   // A modifier standing as the key wears the modifier's own label ("Shift",
-  // "Option"), not the raw token uppercased ("SHIFT").
+  // "⇧"), not the raw token uppercased ("SHIFT").
   const keyLabel = isModifierKeyToken(stroke.key)
     ? renderModifier(stroke.key as KeybindingModifier, platform)
-    : (DISPLAY_KEY[stroke.key] ?? stroke.key.toUpperCase())
+    : ((platform === 'darwin' ? DARWIN_KEY[stroke.key] : undefined) ??
+      DISPLAY_KEY[stroke.key] ??
+      stroke.key.toUpperCase())
   return [...stroke.modifiers.map((modifier) => renderModifier(modifier, platform)), keyLabel]
 }
 
@@ -256,9 +284,36 @@ export function isModifierTapChord(input: string | KeybindingChord): boolean {
 export function renderKeybinding(input: string | KeybindingChord, platform: KeybindingPlatform = 'linux'): string {
   const chord = typeof input === 'string' ? parseKeybinding(input) : { ok: true as const, chord: input }
   if (!chord.ok) return input as string
+  // Glyphs sit together on a Mac ("⌘⇧F"); words need the "+" between them.
   return chord.chord.strokes
-    .map((stroke) => renderStrokeKeys(stroke, platform).join('+'))
+    .map((stroke) => renderStrokeKeys(stroke, platform).join(platform === 'darwin' ? '' : '+'))
     .join(isModifierTapChord(chord.chord) ? ' ' : ' then ')
+}
+
+const GLYPH_WORDS: Record<string, string> = {
+  '⌘': 'cmd command',
+  '⌃': 'ctrl control',
+  '⌥': 'option alt',
+  '⇧': 'shift',
+  // design-tokens-allow: a keyboard glyph, not an emoji — ↩ is Return in every Mac menu
+  '↩': 'enter return',
+  '⌫': 'backspace',
+  '⌦': 'delete',
+  '⇥': 'tab',
+  '←': 'left',
+  '→': 'right',
+  '↑': 'up',
+  '↓': 'down',
+}
+
+/**
+ * A rendered shortcut with its glyphs also spelled out, for search: a person
+ * looking for every Command shortcut types "cmd", not "⌘".
+ */
+export function keybindingSearchText(input: string | KeybindingChord, platform: KeybindingPlatform = 'linux'): string {
+  const rendered = renderKeybinding(input, platform)
+  const words = [...rendered].map((char) => GLYPH_WORDS[char]).filter(Boolean)
+  return words.length > 0 ? `${rendered} ${words.join(' ')}` : rendered
 }
 
 export function keybindingToKbdKeys(

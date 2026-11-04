@@ -3173,7 +3173,7 @@ function WorkspaceSidebar({
     // The local rows' hover-and-focus-revealed actions, in the same place:
     // "More actions", then Settle, which waits while the agent works.
     const actions = (
-      <span className="pointer-events-none absolute inset-y-0 right-0 inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+      <span className="pointer-events-none absolute inset-y-0 right-0 inline-flex items-center gap-0.5 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
         <Tooltip content="More actions">
           <IconButton
             onClick={(event) => {
@@ -3237,7 +3237,7 @@ function WorkspaceSidebar({
     const idleText = !working && idleSince !== null ? formatRelativeMs(idleSince, now) : ''
     const flatSeat = (
       <span className="relative ml-auto flex h-5 min-w-[44px] shrink-0 items-center justify-end pl-2">
-        <span className="inline-flex items-center gap-1 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+        <span className="inline-flex items-center gap-1 group-hover:opacity-0 group-focus-within:opacity-0">
           {asleepUntil !== null ? (
             <RowTooltip
               content={`Wakes ${relativeFromNow(asleepUntil, now)} (${new Date(asleepUntil).toLocaleString()})`}
@@ -5188,7 +5188,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
           (list-row's `data-actions` rule), so revealing never reflows — and
           reserving it here rather than on line 1 is the whole point of the
           move. */}
-      <span className="pointer-events-none absolute inset-y-0 right-0 inline-flex items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-[settle-flourish]:pointer-events-auto group-data-[settle-flourish]:opacity-100">
+      <span className="pointer-events-none absolute inset-y-0 right-0 inline-flex items-center gap-0.5 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-[settle-flourish]:pointer-events-auto group-data-[settle-flourish]:opacity-100">
         <Tooltip content="More actions">
           <IconButton
             onClick={(event) => {
@@ -5317,7 +5317,9 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
   )
   const statusSeat = (
     <span className="relative ml-auto flex h-5 min-w-[44px] shrink-0 items-center justify-end pl-2">
-      <span className="inline-flex items-center gap-1 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 group-data-[settle-flourish]:opacity-0">
+      {/* The status and the row actions swap in one frame: a cross-fade drew
+          the clock and the actions over each other for its whole length. */}
+      <span className="inline-flex items-center gap-1 group-hover:opacity-0 group-focus-within:opacity-0 group-data-[settle-flourish]:opacity-0">
         {runGlyph && runGlyphLabel ? (
           <RowTooltip content={runGlyphLabel}>
             <LifecycleGlyph state={runGlyph.state} live={runGlyph.live} label={runGlyphLabel} />
@@ -5380,7 +5382,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
           >
             <span
               className={`text-meta tabular-nums ${
-                emphasis === 'quiet' ? 'text-[color:var(--text-disabled)]' : 'text-[color:var(--text-subtle)]'
+                emphasis === 'quiet' ? 'text-[color:var(--text-subtle)]' : 'text-[color:var(--text-muted)]'
               }`}
             >
               <span aria-hidden="true">{idleRecencyText}</span>
@@ -5436,12 +5438,13 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
     // warn colour the row is wearing.
     emphasis === 'active' ? 'font-semibold' : ''
   } ${
-    // The background tier, and deliberately a step below list-row's Rest:
-    // `text.muted` still read as foreground on this near-black rail, so a
-    // chat nobody is using sits at `text.subtle` and lifts to `text.default`
-    // on hover — reaching for one is never reading dim text. Selection's own
-    // ink lift never reaches here: a selected row is `active`.
-    emphasis === 'quiet' ? 'text-[color:var(--text-subtle)] group-hover:text-[color:var(--text-default)]' : ''
+    // The background tier: a chat nobody is using sits at `text.muted` and
+    // lifts to `text.default` on hover — reaching for one is never reading dim
+    // text. It sat at `text.subtle` until 2026-11-04, which put a whole column
+    // of titles a person scans for at the faintest step the rail has; a step
+    // brighter still recedes behind the rows in use. Selection's own ink lift
+    // never reaches here: a selected row is `active`.
+    emphasis === 'quiet' ? 'text-[color:var(--text-muted)] group-hover:text-[color:var(--text-default)]' : ''
   }`
   const titleClusterContent = (
     <>
@@ -5701,7 +5704,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
         // where every other seat sits.
         <div
           className={`flex h-5 min-w-0 items-center gap-2 overflow-hidden text-meta ${
-            emphasis === 'quiet' ? 'text-[color:var(--text-disabled)]' : 'text-[color:var(--text-subtle)]'
+            emphasis === 'quiet' ? 'text-[color:var(--text-subtle)]' : 'text-[color:var(--text-muted)]'
           }`}
         >
           {parkedWorktreeBranch ? (
@@ -5774,7 +5777,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
           <div
             key={session.sessionId}
             data-peek-session={session.sessionId}
-            className={`flex h-5 min-w-0 items-center gap-2 overflow-hidden text-meta ${emphasis === 'quiet' ? 'text-[color:var(--text-disabled)]' : 'text-[color:var(--text-subtle)]'}`}
+            className={`flex h-5 min-w-0 items-center gap-2 overflow-hidden text-meta ${emphasis === 'quiet' ? 'text-[color:var(--text-subtle)]' : 'text-[color:var(--text-muted)]'}`}
           >
             <Tooltip content={mark.tooltip} placement="bottom" wrapperClassName="flex shrink-0 items-center">
               {/* The same ringed provider mark a terminal line wears
@@ -5841,7 +5844,7 @@ const WorkspaceRow = React.memo(function WorkspaceRow({
       {rowLines.overflow > 0 ? (
         <div
           className={`flex h-5 items-center text-micro ${
-            emphasis === 'quiet' ? 'text-[color:var(--text-disabled)]' : 'text-[color:var(--text-subtle)]'
+            emphasis === 'quiet' ? 'text-[color:var(--text-subtle)]' : 'text-[color:var(--text-muted)]'
           }`}
         >
           +{rowLines.overflow} more {rowLines.overflow === 1 ? 'terminal' : 'terminals'}

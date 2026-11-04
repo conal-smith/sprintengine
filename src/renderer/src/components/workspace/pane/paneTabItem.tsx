@@ -51,7 +51,7 @@ export function paneTabItem(
     icon: poppedOut ? (
       <OpenInWindowGlyph className="size-icon-xs shrink-0" />
     ) : tab.faviconUrl ? (
-      <img src={tab.faviconUrl} alt="" className="size-icon-xs shrink-0 rounded-[3px]" />
+      <img src={tab.faviconUrl} alt="" className="size-icon-xs shrink-0 rounded-xs" />
     ) : tourOffered ? (
       <TourGlyph className="size-icon-xs shrink-0 text-[color:var(--accent-primary)]" />
     ) : (

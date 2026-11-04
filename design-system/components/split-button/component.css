@@ -142,6 +142,15 @@
 
 .ds-split-button--quiet .ds-split-button__chevron {
   padding: 0 var(--sem-space-3xs);
+  /* The hairline rests transparent and shows while the pair is in use, so a
+     resting meta line is not boxed by a divider (2026-11-04). */
+  border-left-color: transparent;
+}
+
+.ds-split-button--quiet:hover .ds-split-button__chevron,
+.ds-split-button--quiet:focus-within .ds-split-button__chevron,
+.ds-split-button--quiet .ds-split-button__chevron[aria-expanded='true'] {
+  border-left-color: var(--sem-color-border-subtle);
 }
 
 /* Size step for surfaces on the md control row (overlay footers, forms). */

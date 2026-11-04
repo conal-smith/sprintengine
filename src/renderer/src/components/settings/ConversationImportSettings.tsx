@@ -1,28 +1,32 @@
 import { useId, useState } from 'react'
 
-import { GhostButton } from '../ui'
+import { OutlineButton } from '../ui'
 import { Modal, ModalBody, ModalButton, ModalFooter, ModalHeader } from '../ui/Modal'
 import { ConversationImportPicker, useConversationImportSelection } from '../onboarding/ConversationImportPicker'
 import { useConversationImportScan, type ConversationImportScan } from '../onboarding/useConversationImportScan'
-import { SettingCard, SettingsRow } from './SettingsAtoms'
+import { SettingsRow } from './SettingsAtoms'
 
 // Settings → Agents' way into the import the first-run card offers once: the
 // sessions run in Claude Code or Codex, brought in as chats at any time. Each
 // opening scans again, so a session run since the last import is listed.
 export function ConversationImportSettings() {
   const [open, setOpen] = useState(false)
+  // A row (and its dialog); Settings ▸ Agents sets it in the card of chat
+  // behaviour.
   return (
-    <SettingCard>
+    <>
       <SettingsRow
         label="Import conversations"
         help="Bring in sessions you ran in Claude Code or Codex. Each becomes a chat that carries on the same session."
       >
-        <GhostButton size="sm" onClick={() => setOpen(true)}>
+        {/* The row's action as the outline button every Settings row action
+            is, so it does not read as a stray label beside the next card's. */}
+        <OutlineButton size="sm" onClick={() => setOpen(true)}>
           Choose sessions…
-        </GhostButton>
+        </OutlineButton>
       </SettingsRow>
       {open ? <ConversationImportDialog onClose={() => setOpen(false)} /> : null}
-    </SettingCard>
+    </>
   )
 }
 

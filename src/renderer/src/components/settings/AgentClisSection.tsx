@@ -487,7 +487,6 @@ export function AgentClisSection({
                       // The outline secondary, not the primary: nine accent
                       // Installs down the bottom of the list pulled the eye to
                       // exactly the rows the list recedes (owner, 2026-09-24).
-                      // The accent stays for Update, on a CLI that is here.
                       <OutlineButton size="xs" onClick={() => openRow(plugin.id, true)}>
                         Install
                       </OutlineButton>
@@ -500,7 +499,11 @@ export function AgentClisSection({
                             ariaLabel={`${plugin.displayName} — update available: ${advisory.latestVersion}`}
                           />
                         ) : null}
-                        <PrimaryButton
+                        {/* Outline too (2026-11-04): beside the count, an accent
+                            Update said "new" twice in the loudest colour on the
+                            page, once per outdated CLI. The count carries the
+                            news; "Update everything" above is the one press. */}
+                        <OutlineButton
                           size="xs"
                           disabled={updateRun?.running === true}
                           onClick={() => {
@@ -517,7 +520,7 @@ export function AgentClisSection({
                         >
                           {updateRun?.running ? <Spinner className="icon-sm" /> : null}
                           Update
-                        </PrimaryButton>
+                        </OutlineButton>
                       </span>
                     ) : null
                   }

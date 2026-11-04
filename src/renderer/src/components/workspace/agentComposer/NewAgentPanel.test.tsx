@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { JSDOM } from 'jsdom'
+import { CHAT_COMPOSER_PLACEHOLDER } from './composerPlaceholder'
 import { standInImageDecoding } from '../../../../../../tests/image-decoding'
 import { bundledPermissionModes } from '../../../../../../tests/permission-modes'
 import {
@@ -1058,12 +1059,12 @@ test('NewAgentPanel', async () => {
       view.unmount()
     })
 
-    // 5. Skills are offered by the picker whatever the CLI can type; the
-    //    inline `/` route stays but is no longer the placeholder's job.
-    await check('the picker is there for every CLI and the placeholder stops advertising the trigger', async () => {
+    // 5. Skills are offered by the picker whatever the CLI can type, and a
+    //    chat says the one line every chat composer says, whatever the CLI.
+    await check('the picker is there for every CLI and a chat says the shared placeholder', async () => {
       seedStore()
       const withPrefix = await render({ initialSelection: { kind: 'conversation' } })
-      assert.equal(composerPlaceholder(composerField(withPrefix.container)), 'Describe the task…')
+      assert.equal(composerPlaceholder(composerField(withPrefix.container)), CHAT_COMPOSER_PLACEHOLDER)
       assert.ok(await skillsOffered(withPrefix), 'a claude runtime gets the picker')
       withPrefix.unmount()
 
@@ -1087,7 +1088,7 @@ test('NewAgentPanel', async () => {
         ],
       })
       const noPrefix = await render({ initialSelection: { kind: 'conversation' } })
-      assert.equal(composerPlaceholder(composerField(noPrefix.container)), 'Describe the task…')
+      assert.equal(composerPlaceholder(composerField(noPrefix.container)), CHAT_COMPOSER_PLACEHOLDER)
       assert.ok(await skillsOffered(noPrefix), 'and so does a CLI with no typed form')
       noPrefix.unmount()
     })

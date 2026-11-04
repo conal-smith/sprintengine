@@ -109,7 +109,7 @@ export function BoardLane({
 
   const sectionClass = [
     'flex h-full flex-1 flex-col transition-colors',
-    surface ? 'rounded-[7px] border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface)]' : '',
+    surface ? 'rounded-md border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface)]' : '',
     state === 'legal-drop-target' ? 'ring-1 ring-[color:var(--accent-primary)]' : '',
     state === 'dimmed' ? 'opacity-40' : '',
   ]

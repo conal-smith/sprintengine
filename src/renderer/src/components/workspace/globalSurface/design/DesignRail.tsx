@@ -33,7 +33,7 @@ function DesignSystemChip({ accent }: { accent: string | null }): JSX.Element {
       // Decorative: the row's own tooltip already names the system, and a title
       // on an aria-hidden node is unreachable anyway.
       aria-hidden="true"
-      className={`size-3 shrink-0 rounded-[3px] ${
+      className={`size-3 shrink-0 rounded-xs ${
         accent ? '' : 'border border-dashed border-[color:var(--border-default)]'
       }`}
       // The previewed system's own colour is CONTENT, not our accent budget, so

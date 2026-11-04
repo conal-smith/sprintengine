@@ -165,7 +165,7 @@ test('WorkspaceSidebar.rowEmphasis', async () => {
     }
 
     const bold = (name: string): boolean => titleOf(name).className.includes('font-semibold')
-    const dim = (name: string): boolean => titleOf(name).className.includes('--text-subtle')
+    const dim = (name: string): boolean => titleOf(name).className.includes('text-[color:var(--text-muted)]')
 
     try {
       act(() => {
