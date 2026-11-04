@@ -522,8 +522,9 @@ export type ChipProps = {
 export const Chip: (props: ChipProps) => React.ReactElement = hostProvided()
 
 /** `ghost` (default, no edge), `outline` (findable on a busy surface),
- *  `overlay` (floating over content), `raised` (a control in a toolbar row). */
-export type ChipVariant = 'ghost' | 'outline' | 'overlay' | 'raised'
+ *  `overlay` (floating over content), `raised` (a control in a toolbar row),
+ *  `pill` (one of a line of filters over a gallery, resting on the well). */
+export type ChipVariant = 'ghost' | 'outline' | 'overlay' | 'raised' | 'pill'
 
 /** The chip's ink at rest: `subtle` (default), `neutral` (one step up), or a
  *  standing `warn` / `error` the chip itself carries. */

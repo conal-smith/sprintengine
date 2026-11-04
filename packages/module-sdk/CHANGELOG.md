@@ -121,7 +121,8 @@ for the tokens.
 - `DateTimeInput` (the native `datetime-local` / `date` / `time` control in the
   `Input` box) and `Toggle` (the app's switch).
 - `Chip` (the static fact chip) and `ChipButton` (a pill that toggles, filters
-  or wears an identity `tint`).
+  or wears an identity `tint`). `ChipButton` takes `variant: 'pill'` for a line
+  of filters over a gallery: a control-height, fully rounded pill on the well.
 - `SafeMarkdown`: agent Markdown drawn like a chat reply, with raw HTML shown
   as text, http(s)-only links (`links: 'open' | 'copy' | 'none'`) and no
   fetched images.
