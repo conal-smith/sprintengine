@@ -15,6 +15,7 @@ import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
 import { type ProjectColor } from '../../../utils/projectColor'
 import { formatElapsedMs } from '../../../utils/relativeTime'
 import { useRelativeNow } from '../../../hooks/useRelativeNow'
+import { useWorkspaceStore } from '../../../store/workspaceStore'
 
 // A shelf's fold row (settled-chats, 2026-09-07): the one line a folder shows
 // for a group of parked chats — its name, and how many — collapsed by default,
@@ -77,7 +78,7 @@ export function ShelfFoldRow({
           viewBox="0 0 16 16"
           fill="none"
           aria-hidden="true"
-          className={`icon-xs shrink-0 text-[color:var(--text-disabled)] transition-transform group-hover/shelf:text-[color:var(--text-subtle)] group-focus-visible/shelf:text-[color:var(--text-subtle)] ${
+          className={`icon-xs shrink-0 text-[color:var(--text-subtle)] transition-transform group-hover/shelf:text-[color:var(--text-default)] group-focus-visible/shelf:text-[color:var(--text-default)] ${
             expanded ? '' : '-rotate-90'
           }`}
         >
@@ -92,7 +93,9 @@ export function ShelfFoldRow({
         <span className="truncate text-[color:var(--text-subtle)] group-hover/shelf:text-[color:var(--text-default)] group-focus-visible/shelf:text-[color:var(--text-default)]">
           {label}
         </span>
-        <span className="tabular-nums text-[color:var(--text-disabled)] group-hover/shelf:text-[color:var(--text-subtle)] group-focus-visible/shelf:text-[color:var(--text-subtle)]">
+        {/* The count and chevron in the label's own ink: in the disabled step they
+            read as an unavailable control rather than as a shelf that opens. */}
+        <span className="tabular-nums text-[color:var(--text-subtle)] group-hover/shelf:text-[color:var(--text-default)] group-focus-visible/shelf:text-[color:var(--text-default)]">
           {count}
         </span>
       </RowButton>
@@ -273,10 +276,20 @@ export function ProjectLine({
   /** The row's status seat, which rides this line's trailing edge. */
   children?: React.ReactNode
 }) {
+  const projectIconColors = useWorkspaceStore((s) => s.appSettings.appearance.projectIconColors)
+  // The same hue down every row of a project outshouted the titles it sat
+  // beside (2026-11-04). The glyph rests gray and takes its hue on the row the
+  // pointer is on, the row in keyboard focus and the open row, which is where
+  // telling projects apart is the question. Settings ▸ Appearance keeps it.
+  const markClass = projectIconColors
+    ? 'icon-xs shrink-0'
+    : 'icon-xs shrink-0 opacity-70 grayscale group-hover:opacity-100 group-hover:grayscale-0 group-focus-visible:opacity-100 group-focus-visible:grayscale-0 group-aria-[current=true]:opacity-100 group-aria-[current=true]:grayscale-0'
   return (
     <div
+      // One step under the title it files: muted under a row in use, subtle
+      // under a quiet one. The disabled step read as a control that was off.
       className={`flex h-5 min-w-0 items-center gap-1.5 text-meta ${
-        dim ? 'text-[color:var(--text-disabled)]' : 'text-[color:var(--text-subtle)]'
+        dim ? 'text-[color:var(--text-subtle)]' : 'text-[color:var(--text-muted)]'
       }`}
     >
       {/* THE glyph the project's colour lives on in the flat stream
@@ -286,7 +299,7 @@ export function ProjectLine({
       {isProjectlessChatsRoot(project.folderPath) ? (
         <NoProjectGlyph className="icon-xs shrink-0" />
       ) : (
-        <FolderTypeIcon className="icon-xs shrink-0" color={project.color} unfiled={project.unfiled} />
+        <FolderTypeIcon className={markClass} color={project.color} unfiled={project.unfiled} />
       )}
       <span className="min-w-0 truncate">{project.name}</span>
       <MachineRowGlyph machine={machine} />

@@ -125,6 +125,7 @@ export function defaultAppearanceSettings(): AppearanceSettings {
     replyStreaming: DEFAULT_REPLY_STREAMING,
     agentCharacters: true,
     usageLimits: true,
+    projectIconColors: false,
     interfaceFont: '',
     codeFont: '',
   }
@@ -151,6 +152,8 @@ export function normalizeAppearanceSettings(value: unknown): AppearanceSettings 
     agentCharacters:
       typeof candidate.agentCharacters === 'boolean' ? candidate.agentCharacters : defaults.agentCharacters,
     usageLimits: typeof candidate.usageLimits === 'boolean' ? candidate.usageLimits : defaults.usageLimits,
+    projectIconColors:
+      typeof candidate.projectIconColors === 'boolean' ? candidate.projectIconColors : defaults.projectIconColors,
     // Absent before the font settings existed, which reads as the bundled faces.
     interfaceFont: normalizeFontFamilyPreference(candidate.interfaceFont),
     codeFont: normalizeFontFamilyPreference(candidate.codeFont),
@@ -1170,6 +1173,7 @@ export interface SettingsSliceActions {
   setAppearanceReplyStreaming: (mode: ReplyStreaming) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
+  setAppearanceProjectIconColors: (enabled: boolean) => void
   /** A family name (or comma-separated list); empty restores the bundled face. */
   setAppearanceInterfaceFont: (family: string) => void
   setAppearanceCodeFont: (family: string) => void
@@ -1963,6 +1967,14 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         state.appSettings.appearance = normalizeAppearanceSettings({
           ...state.appSettings.appearance,
           usageLimits: enabled,
+        })
+      }),
+
+    setAppearanceProjectIconColors: (enabled) =>
+      set((state) => {
+        state.appSettings.appearance = normalizeAppearanceSettings({
+          ...state.appSettings.appearance,
+          projectIconColors: enabled,
         })
       }),
 

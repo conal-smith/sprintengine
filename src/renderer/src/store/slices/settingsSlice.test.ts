@@ -872,6 +872,7 @@ test('settingsSlice', async () => {
     replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
+    projectIconColors: false,
     interfaceFont: '',
     codeFont: '',
   })
@@ -887,6 +888,7 @@ test('settingsSlice', async () => {
     replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
+    projectIconColors: false,
     interfaceFont: '',
     codeFont: '',
   })
@@ -903,6 +905,7 @@ test('settingsSlice', async () => {
       replyStreaming: 'live',
       agentCharacters: true,
       usageLimits: true,
+      projectIconColors: false,
       interfaceFont: '',
       codeFont: '',
     },
@@ -921,6 +924,7 @@ test('settingsSlice', async () => {
       replyStreaming: 'live',
       agentCharacters: true,
       usageLimits: true,
+      projectIconColors: false,
       interfaceFont: '',
       codeFont: '',
     },
@@ -1448,6 +1452,7 @@ test('a stored appearance from before the chat settings hydrates to the chat as 
     replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
+    projectIconColors: false,
     interfaceFont: '',
     codeFont: '',
   })

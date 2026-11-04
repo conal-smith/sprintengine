@@ -736,6 +736,8 @@ export default function SettingsPanel({
   const setAppearanceAgentCharacters = useWorkspaceStore((s) => s.setAppearanceAgentCharacters)
   const usageLimits = useWorkspaceStore((s) => s.appSettings.appearance.usageLimits)
   const setAppearanceUsageLimits = useWorkspaceStore((s) => s.setAppearanceUsageLimits)
+  const projectIconColors = useWorkspaceStore((s) => s.appSettings.appearance.projectIconColors)
+  const setAppearanceProjectIconColors = useWorkspaceStore((s) => s.setAppearanceProjectIconColors)
   const isMac = window.api.platform === 'darwin'
   const chatListView = useWorkspaceStore((s) => s.chatListView)
   const sidebarWorkingSection = useWorkspaceStore((s) => s.appSettings.sidebarWorkingSection)
@@ -1338,6 +1340,12 @@ export default function SettingsPanel({
                 description="A small bar on a Claude or Codex chat's composer for how much of your plan's five-hour and weekly limits you have used, read from what the agent reports. Never shown for an API key."
                 enabled={usageLimits}
                 onChange={setAppearanceUsageLimits}
+              />
+              <SettingToggle
+                label="Colored project icons"
+                description="Keep each project's colour on its folder icon in the chat list. Off, the icons rest gray and colour in on the chat you point at or open."
+                enabled={projectIconColors}
+                onChange={setAppearanceProjectIconColors}
               />
             </SettingCard>
           </section>
