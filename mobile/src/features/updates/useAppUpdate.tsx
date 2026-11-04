@@ -12,7 +12,7 @@ import {
   installOutcome,
   PACKAGE_NAME,
   parseUpdateManifest,
-  REINSTALL_MESSAGE,
+  reinstallMessage,
   shouldCheck,
   updateOffered,
   updateProblemMessage,
@@ -145,7 +145,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   }, [check]);
 
   const explainReinstall = useCallback((manifest: UpdateManifest) => {
-    Alert.alert("Reinstall once to get updates", REINSTALL_MESSAGE, [
+    Alert.alert("Reinstall once to get updates", reinstallMessage(manifest), [
       { text: "Not now", style: "cancel" },
       { text: "Open download", onPress: () => void Linking.openURL(manifest.url) },
     ]);
@@ -189,6 +189,23 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
       set({ ...ready, phase: "installing" });
       try {
+        // Checked again right before the hand-over: the file may have sat in
+        // the cache since it was verified (a trip to Settings, a relaunch).
+        const sha256 = await native.sha256File(fileUri);
+        const archive = await native.archiveInfo(fileUri);
+        const verdict = verifyDownload({
+          manifest,
+          size: info.size,
+          sha256,
+          archive,
+          installedSigners: native.installedApp().signers,
+        });
+        if (!verdict.ok) {
+          await removeQuietly(fileUri);
+          set({ ...NONE, phase: "available", manifest });
+          problem(verdict.failure);
+          return;
+        }
         const contentUri = await LegacyFileSystem.getContentUriAsync(fileUri);
         const result = await IntentLauncher.startActivityAsync("android.intent.action.INSTALL_PACKAGE", {
           data: contentUri,

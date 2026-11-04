@@ -1,6 +1,6 @@
 // node --test scripts/release/mobile-release.test.mjs  (npm run test:release)
 //
-// The phone app's Android build is published by ci.yml's android-publish job
+// The phone app's Android build is published by .github/workflows/mobile-android.yml
 // as the assets of one prerelease, tag `mobile-android`, on the same repository
 // the desktop publishes to. These pin that it stays invisible to everything on
 // the desktop's side: the installed app's updater (the real electron-updater

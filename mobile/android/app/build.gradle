@@ -83,8 +83,9 @@ def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 /**
  * Version. A local build is versionCode 1, so a phone running one is always
- * offered the build main published. CI on a push to main passes the workflow
- * run number (always increasing) and a name that carries the commit, through
+ * offered the build main published. CI on a push to main passes an always
+ * increasing code (an offset plus the run number, mobile-android.yml) and a
+ * name that carries the commit, through
  * SPRINTENGINE_VERSION_CODE / SPRINTENGINE_VERSION_NAME (or the Gradle
  * properties of the same name in lower camel case).
  */
@@ -102,9 +103,10 @@ if (sprintengineVersionCode < 1 || sprintengineVersionCode > 2100000000) {
  * Release signing. With all four of these set, release builds are signed with
  * the release key; with none, they fall back to the committed debug keystore,
  * which is what local builds and pull request CI builds use (no secret ever
- * reaches pull request code). Only CI's publish path on a push to main sets
- * them (.github/workflows/ci.yml). A partial set fails the build rather than
- * quietly shipping a debug-signed "release".
+ * reaches pull request code). CI never sets them: main's build is left
+ * unsigned and signed in a job of its own (.github/workflows/mobile-android.yml).
+ * They are for signing a local build with the release key. A partial set fails
+ * the build rather than quietly shipping a debug-signed "release".
  *
  *   SPRINTENGINE_RELEASE_STORE_FILE      path to the PKCS12 keystore
  *   SPRINTENGINE_RELEASE_STORE_PASSWORD
@@ -143,10 +145,18 @@ if (releaseSigningSet != 0 && releaseSigningSet != releaseSigning.size()) {
     throw new GradleException("Release signing is half-configured (${releaseSigningSet} of ${releaseSigning.size()} values set). Set all of them, or none for a debug-signed build.")
 }
 def useReleaseKey = releaseSigningSet == releaseSigning.size()
+// SPRINTENGINE_UNSIGNED_RELEASE=1 leaves the release APK unsigned
+// (app-release-unsigned.apk): CI's main build does this, and a separate job
+// that holds the key and runs none of this build signs it.
+def unsignedRelease = envOrProperty('SPRINTENGINE_UNSIGNED_RELEASE', 'sprintengineUnsignedRelease') == '1'
+if (unsignedRelease && useReleaseKey) {
+    throw new GradleException("SPRINTENGINE_UNSIGNED_RELEASE and release signing are both set; pick one.")
+}
 if (useReleaseKey && !file(releaseSigning.storeFile).isFile()) {
     throw new GradleException("The release keystore is missing: ${releaseSigning.storeFile}")
 }
-logger.lifecycle("Sprint Engine ${sprintengineVersionName} (${sprintengineVersionCode}); release builds signed with the ${useReleaseKey ? 'release' : 'debug'} key")
+logger.lifecycle("Sprint Engine ${sprintengineVersionName} (${sprintengineVersionCode}); release builds " +
+    (unsignedRelease ? "left unsigned" : "signed with the ${useReleaseKey ? 'release' : 'debug'} key"))
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -189,7 +199,7 @@ android {
             // keystore: a debug-signed APK cannot install over a release-signed
             // one, which is what keeps pull request builds off the phone's
             // update path.
-            signingConfig useReleaseKey ? signingConfigs.release : signingConfigs.debug
+            signingConfig useReleaseKey ? signingConfigs.release : (unsignedRelease ? null : signingConfigs.debug)
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

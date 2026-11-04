@@ -371,7 +371,7 @@ test('nightly and the preview bridge are separate trains in the feed', async () 
 })
 
 test("the phone's mobile-android release on top of the feed takes nothing from either train", async () => {
-  // ci.yml's android-publish job keeps the phone build on that one tag.
+  // .github/workflows/mobile-android.yml keeps the phone build on that one tag.
   const nightly = published('0.4.1-nightly.20260911.3', {
     feed: ['mobile-android', 'v0.4.1-nightly.20260911.3', 'v0.4.0'],
     latest: 'v0.4.0',

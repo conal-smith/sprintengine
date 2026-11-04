@@ -7,6 +7,7 @@ const {
   isTrustedApkUrl,
   normalizeCertSha256,
   parseUpdateManifest,
+  reinstallMessage,
   RELEASE_CERT_SHA256,
   shouldCheck,
   UPDATE_DOWNLOAD_PREFIX,
@@ -217,4 +218,13 @@ test("the glyph is there only while there is something to take, and says what a 
   assert.equal(appUpdateView({ ...base, phase: "ready" }).pressable, true);
   assert.equal(appUpdateView({ ...base, phase: "installing" }).pressable, false);
   assert.equal(appUpdateView({ ...base, phase: "reinstall" }).pressable, true);
+});
+
+test("the reinstall message says to pair again and what to check a hand-installed APK against", () => {
+  const message = reinstallMessage(manifestOf());
+  assert.match(message, /Uninstall Sprint Engine once/);
+  assert.match(message, /pair with your desktop again/);
+  assert.match(message, /mobile-android release on github\.com\/sprintengine\/sprintengine/);
+  assert.match(message, /commit 0123abc/);
+  assert.match(message, /SHA-256 starting aaaaaaaaaaaa/);
 });

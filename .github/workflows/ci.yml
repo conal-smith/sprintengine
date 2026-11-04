@@ -199,15 +199,9 @@ jobs:
 
   # The phone app's release APK, uploaded as a workflow artifact so a phone can
   # be given the build of a pull request or of main without building it on a
-  # Mac. Skipped under the release gate, like the job above.
-  #
-  # A pull request's build is signed with the committed debug keystore, like a
-  # local release build (mobile/README.md), and keeps versionCode 1: no secret
-  # reaches pull request code, and a debug-signed APK cannot install over the
-  # release-signed build phones update to. A push to main signs with the release
-  # key and numbers the build with the run number, and android-publish below
-  # puts it where the app's updater looks. The release key's secrets appear in
-  # exactly two steps, both gated on a push to main.
+  # Mac. Signed with the committed debug keystore, like a local release build
+  # (mobile/README.md), so it installs over one with `adb install -r` and keeps
+  # its pairings. Skipped under the release gate, like the job above.
   android:
     name: Android APK (ubuntu-latest)
     if: ${{ !inputs.release_gate && (github.event_name == 'workflow_dispatch' || github.event.repository.private == false) }}
@@ -216,10 +210,6 @@ jobs:
     defaults:
       run:
         working-directory: mobile
-    env:
-      # The release certificate's SHA-256, as apksigner prints it. Pinned in the
-      # app too (mobile/src/features/updates/apkUpdateLogic.ts).
-      RELEASE_CERT_SHA256: ed4401c2e8b6753e25338435526ece0ea6945904d2b153fe9f1f5c2b404ea7d7
 
     steps:
       - name: Checkout
@@ -246,55 +236,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build the release APK (debug-signed)
-        if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      - name: Build the release APK
         working-directory: mobile/android
         run: ./gradlew assembleRelease --console=plain
-
-      # The keystore is written outside the checkout and removed after the build.
-      - name: Build the release APK (release-signed, main only)
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        working-directory: mobile/android
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
-          SPRINTENGINE_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          SPRINTENGINE_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          SPRINTENGINE_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
-          RUN_NUMBER: ${{ github.run_number }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "ANDROID_RELEASE_KEYSTORE_BASE64 is not set; main's APK must be release-signed." >&2
-            exit 1
-          fi
-          export SPRINTENGINE_RELEASE_STORE_FILE="$RUNNER_TEMP/sprintengine-release.keystore"
-          trap 'rm -f "$SPRINTENGINE_RELEASE_STORE_FILE"' EXIT
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$SPRINTENGINE_RELEASE_STORE_FILE"
-          unset KEYSTORE_BASE64
-          # The run number only grows, so every main build installs over the
-          # last; a local build is 1. The name says which commit it is.
-          base_version="$(node -p "require('../package.json').version")"
-          export SPRINTENGINE_VERSION_CODE="$RUN_NUMBER"
-          export SPRINTENGINE_VERSION_NAME="${base_version}-main.${RUN_NUMBER}+${SHA::7}"
-          ./gradlew assembleRelease --console=plain
-
-      # A main build that is not signed with the release key alone never leaves
-      # this job.
-      - name: Check the release signature (main only)
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        run: |
-          set -euo pipefail
-          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          certs="$("$build_tools/apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk)"
-          echo "$certs"
-          # apksigner prints a line per signing scheme ("Signer #1 …" or "V2
-          # Signer: …" depending on its version); one distinct digest is one key.
-          digests="$(printf '%s\n' "$certs" | grep -oE 'certificate SHA-256 digest: [0-9a-f]{64}' | awk '{print $4}' | sort -u)"
-          if [ "$digests" != "$RELEASE_CERT_SHA256" ]; then
-            echo "The APK is signed with ${digests:-nothing}, not the release key ${RELEASE_CERT_SHA256}." >&2
-            exit 1
-          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
@@ -303,157 +247,6 @@ jobs:
           path: mobile/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
-
-  # Puts main's release-signed APK where the phone's in-app updater looks
-  # (mobile/src/features/updates/apkUpdateLogic.ts): the assets of ONE release,
-  # tag `mobile-android`, on this repository, which is also where the desktop
-  # publishes (package.json build.publish). The tag is created once and never
-  # moved; each run replaces the release's assets: the APK under a name that
-  # carries its versionCode, then android-update.json, the manifest the app
-  # reads (versionCode, versionName, commit, sha256, size, url).
-  #
-  # Why this cannot touch desktop updates:
-  #   - It is a prerelease created with --latest=false, and GitHub never makes a
-  #     prerelease "latest". An installed stable desktop build resolves its
-  #     update through /releases/latest (electron-updater's GitHubProvider with
-  #     allowPrerelease off), so it can never be pointed here.
-  #   - An installed nightly build sets channel=nightly with allowPrerelease
-  #     (src/main/update-service.ts) and walks the releases feed, skipping every
-  #     tag that is not valid semver; `mobile-android` is not.
-  #   - release.yml's scripts (scripts/release/) only ever look at tags that
-  #     parse as vX.Y.Z[-nightly...]; anything else falls out of the nightly
-  #     gate, promotion, version resolution and "Delete the older nightly
-  #     releases" (nightliesToPrune keeps only the nightly train). Its tag
-  #     trigger is `v*`, and a tag made with this job's token starts no workflow.
-  #   - The release's date is its tag's commit date, and the tag never moves,
-  #     so it does not sit at the top of the feed above newer desktop releases.
-  #
-  # Pull requests never get here, and neither does the release gate. Assets are
-  # replaced APK first, manifest second, so the manifest never names an APK that
-  # is not there yet, and a run never replaces a newer build's manifest.
-  android-publish:
-    name: Publish Android APK (main)
-    needs: android
-    if: ${{ !inputs.release_gate && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      # To create the mobile-android release and replace its assets.
-      contents: write
-    concurrency:
-      group: mobile-android-publish
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REPO: ${{ github.repository }}
-      TAG: mobile-android
-      SHA: ${{ github.sha }}
-      VERSION_CODE: ${{ github.run_number }}
-      RELEASE_CERT_SHA256: ed4401c2e8b6753e25338435526ece0ea6945904d2b153fe9f1f5c2b404ea7d7
-
-    steps:
-      - name: Download APK
-        uses: actions/download-artifact@v8
-        with:
-          name: SprintEngine-mobile-android-${{ github.sha }}
-          path: apk
-
-      - name: Write the manifest
-        run: |
-          set -euo pipefail
-          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          digests="$("$build_tools/apksigner" verify --print-certs apk/app-release.apk \
-            | grep -oE 'certificate SHA-256 digest: [0-9a-f]{64}' | awk '{print $4}' | sort -u)"
-          if [ "$digests" != "$RELEASE_CERT_SHA256" ]; then
-            echo "Refusing to publish an APK signed with ${digests:-nothing}." >&2
-            exit 1
-          fi
-          # Whole output first: `| head` would SIGPIPE aapt2 under pipefail.
-          badging="$("$build_tools/aapt2" dump badging apk/app-release.apk)"
-          badging="$(sed -n 1p <<<"$badging")"
-          echo "$badging"
-          package="$(sed -n "s/.*package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
-          code="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
-          name="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$badging")"
-          if [ "$package" != "ai.sprintengine.mobile" ] || [ "$code" != "$VERSION_CODE" ]; then
-            echo "The APK is ${package} ${code}, not ai.sprintengine.mobile ${VERSION_CODE}." >&2
-            exit 1
-          fi
-          mkdir dist
-          apk_name="sprintengine-mobile-${VERSION_CODE}.apk"
-          cp apk/app-release.apk "dist/${apk_name}"
-          jq -n \
-            --argjson versionCode "$VERSION_CODE" \
-            --arg versionName "$name" \
-            --arg commit "$SHA" \
-            --arg sha256 "$(sha256sum "dist/${apk_name}" | cut -d' ' -f1)" \
-            --argjson size "$(stat -c %s "dist/${apk_name}")" \
-            --arg url "https://github.com/${REPO}/releases/download/${TAG}/${apk_name}" \
-            --arg certSha256 "${RELEASE_CERT_SHA256^^}" \
-            --arg publishedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{schema: 1, packageName: "ai.sprintengine.mobile", versionCode: $versionCode, versionName: $versionName,
-              commit: $commit, sha256: $sha256, size: $size, url: $url, certSha256: $certSha256, publishedAt: $publishedAt}' \
-            > dist/android-update.json
-          cat dist/android-update.json
-          echo "APK_NAME=${apk_name}" >> "$GITHUB_ENV"
-
-      - name: Publish to the mobile-android release
-        run: |
-          set -euo pipefail
-          notes="The phone app's build of main, for its in-app updater. Not a desktop release: nothing in the desktop's update path reads it. Every push to main replaces the APK and android-update.json here; this tag is never moved, and android-update.json names the commit."
-          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release create "$TAG" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
-              --title "Sprint Engine for Android (main)" --notes "$notes"
-          fi
-          state="$(gh release view "$TAG" --repo "$REPO" --json isPrerelease,isDraft,tagName)"
-          if ! jq -e --arg tag "$TAG" '.isPrerelease == true and .isDraft == false and .tagName == $tag' <<<"$state" >/dev/null; then
-            echo "The ${TAG} release must be a published prerelease: ${state}" >&2
-            exit 1
-          fi
-
-          # Never replace a newer build: a run that lost a race to a later push.
-          published="$(curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/android-update.json" 2>/dev/null | jq -r '.versionCode // 0' 2>/dev/null || echo 0)"
-          if [ "${published:-0}" -gt "$VERSION_CODE" ]; then
-            echo "${TAG} already carries versionCode ${published}, newer than ${VERSION_CODE}; nothing to publish."
-            echo "SKIPPED=true" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          gh release upload "$TAG" "dist/${APK_NAME}" --repo "$REPO" --clobber
-          gh release upload "$TAG" dist/android-update.json --repo "$REPO" --clobber
-
-          # Keep this APK and the one before it (a phone may be mid-download of
-          # it); older ones are deleted.
-          gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' \
-            | { grep -E '^sprintengine-mobile-[0-9]+\.apk$' || true; } \
-            | sed -E 's/^sprintengine-mobile-([0-9]+)\.apk$/\1/' | sort -n | head -n -2 \
-            | while read -r old; do
-                gh release delete-asset "$TAG" "sprintengine-mobile-${old}.apk" --repo "$REPO" --yes
-              done
-
-      # Without credentials, as the phone reads it: the manifest is the one just
-      # written, the APK it names hashes to what it says, and /releases/latest
-      # is still a desktop release.
-      - name: Verify the published build, without credentials
-        if: env.SKIPPED != 'true'
-        run: |
-          set -euo pipefail
-          expected="$(jq -cS . dist/android-update.json)"
-          for attempt in 1 2 3 4 5 6; do
-            got="$(curl -fsSL -H 'Cache-Control: no-cache' "https://github.com/${REPO}/releases/download/${TAG}/android-update.json" | jq -cS . || true)"
-            [ "$got" = "$expected" ] && break
-            [ "$attempt" = 6 ] && { echo "The published manifest is ${got:-unreadable}, not ${expected}." >&2; exit 1; }
-            sleep 10
-          done
-          curl -fsSL -o downloaded.apk "$(jq -r .url dist/android-update.json)"
-          [ "$(sha256sum downloaded.apk | cut -d' ' -f1)" = "$(jq -r .sha256 dist/android-update.json)" ] \
-            || { echo "The published APK does not match the manifest's sha256." >&2; exit 1; }
-          latest="$(curl -fsSL -H 'Accept: application/json' "https://github.com/${REPO}/releases/latest" | jq -r '.tag_name // empty' || true)"
-          if [ "$latest" = "$TAG" ]; then
-            echo "/releases/latest resolves to ${TAG}: installed desktop builds would be pointed at it." >&2
-            exit 1
-          fi
-          echo "Published $(jq -r .versionName dist/android-update.json); /releases/latest is ${latest:-none}."
 
   # SSH machines against a real sshd (phase 8 spec, 9.3): a container with
   # forwarding turned off, the system ssh, the askpass shim, the pinned Node

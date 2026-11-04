@@ -1,6 +1,6 @@
 // The phone's in-app updater, Android only: every push to main publishes a
-// release-signed APK and a small manifest beside it (.github/workflows/ci.yml,
-// the `android-publish` job). The app reads the manifest when it opens and when
+// release-signed APK and a small manifest beside it
+// (.github/workflows/mobile-android.yml). The app reads the manifest when it opens and when
 // it comes back to the foreground, lights an update glyph on the chat list when
 // the build there is newer than this one, and one press downloads it, checks
 // it and hands it to Android's package installer, which always asks the person
@@ -26,13 +26,16 @@
 //   - It must be signed with the release key, whose certificate is pinned here
 //     (RELEASE_CERT_SHA256), not taken from the manifest. A manifest naming
 //     any other certificate is refused outright.
+//   - The file is hashed again just before it is handed to the installer, so
+//     nothing that changed it in the cache since it was checked gets through.
 //   - Android itself then refuses to install it over this app unless both are
 //     signed with the same key, which is the guarantee that matters once the
 //     phone runs a release-signed build. A debug-signed build (a local or pull
 //     request build) cannot take it: that is the `reinstall` state.
 //
 // Pure: no React, no native module, no network. The hook that drives it is
-// useAppUpdate.tsx; apkUpdateLogic.regression.test.js covers this file.
+// useAppUpdate.tsx; apkUpdateLogic.regression.test.js covers this file. The
+// publishing side is .github/workflows/mobile-android.yml.
 
 export const APP_NAME = "Sprint Engine";
 export const PACKAGE_NAME = "ai.sprintengine.mobile";
@@ -281,11 +284,20 @@ export function updateProblemMessage(problem: UpdateProblem): { title: string; d
 /** The one-line reason given before sending the person to Android's setting. */
 export const INSTALL_PERMISSION_MESSAGE = `To install updates, turn on "Allow from this source" for ${APP_NAME}.`;
 
-/** Why a build signed with another key cannot take the update, and what to do. */
-export const REINSTALL_MESSAGE =
-  `This copy of ${APP_NAME} was signed with a different key from the published build, so Android won't ` +
-  `install over it. Uninstall ${APP_NAME} once, then install the update from the browser. You'll need ` +
-  `to pair with your desktop again.`;
+/**
+ * Why a build signed with another key cannot take the update, and what to do.
+ * Installed by hand, the APK is not checked by the app, so the message names
+ * what to check it against: the release page lists each asset's SHA-256.
+ */
+export function reinstallMessage(manifest: Pick<UpdateManifest, "commit" | "sha256">): string {
+  return (
+    `This copy of ${APP_NAME} was signed with a different key from the published build, so Android won't ` +
+    `install over it. Uninstall ${APP_NAME} once, then install the update from the browser. You'll need ` +
+    `to pair with your desktop again.\n\nThe app can't check a download you install yourself: get it only ` +
+    `from the ${UPDATE_TAG} release on github.com/${UPDATE_REPOSITORY}, and check it is commit ` +
+    `${manifest.commit.slice(0, 7)} with a SHA-256 starting ${manifest.sha256.slice(0, 12)}.`
+  );
+}
 
 export type AppUpdatePhase = "none" | "available" | "downloading" | "verifying" | "ready" | "installing" | "reinstall";
 

@@ -18,13 +18,7 @@ name: Release
 #   dispatch preview            the one-off bridge that moves installs left on the
 #                               retired preview train over to stable
 #
-# A merge to main publishes no desktop release; CI (ci.yml) gates it as before.
-# CI does publish the phone's Android build on each push to main, as the assets
-# of one prerelease tagged `mobile-android` that is never latest and never
-# moves. Nothing here reads it or deletes it: every script below only looks at
-# vX.Y.Z tags (ci.yml's android-publish job, and
-# scripts/release/mobile-release.test.mjs, which runs the desktop's updater
-# against a feed with it on top).
+# A merge to main publishes nothing; CI (ci.yml) gates it as before.
 #
 # Nightlies are vX.Y.Z-nightly.YYYYMMDD.RUN, where X.Y.Z is the version the next
 # stable would take (Conventional Commits since the last stable tag), published
