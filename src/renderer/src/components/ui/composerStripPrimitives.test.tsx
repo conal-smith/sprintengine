@@ -145,7 +145,11 @@ test('the clickable diff pill is one named button, its halves the diff channel�
 test('front truncation keeps the end of the text, and a screen reader hears the whole', async () => {
   const { frontTruncate, FrontTruncatedText } = await import('./FrontTruncatedText')
   expect(frontTruncate('fix/cli-update-output', 18)).toBe('…cli-update-output')
-  expect(frontTruncate('fix/cli-update-output', 8, 4)).toBe('…-output')
+  // Cut inside a segment, the kept end starts on a word.
+  expect(frontTruncate('fix/cli-update-output', 8, 4)).toBe('…output')
+  expect(frontTruncate('dev/clone-repo-to-other-machine', 12, 4)).toBe('…machine')
+  // No break near the cut: the fixed tail.
+  expect(frontTruncate('feat/abcdefghijklmnopqrstuvwxyz', 11, 4)).toBe('…qrstuvwxyz')
   expect(frontTruncate('fix/cli-update-output', 3, 4)).toBeNull()
   // Unmeasured (jsdom): the whole text, once.
   const view = await mount(<FrontTruncatedText text="fix/cli-update-output" />)

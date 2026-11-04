@@ -12,6 +12,8 @@ test('a branch gives its front away by whole segments first, keeping the end', (
 test('only a last segment too long for the room is cut mid-word, still keeping its end', () => {
   expect(frontTruncateBranch('fix/cli-update-output', 14)).toBe('…update-output')
   expect(frontTruncateBranch('very-long-branch-name-without-slashes', 12)).toBe('…out-slashes')
+  // When a word starts near the cut and the floor allows it, the end opens on it.
+  expect(frontTruncateBranch('dev/clone-repo-to-other-machine', 16)).toBe('…other-machine')
 })
 
 test('below the minimum the branch leaves rather than reading as a stub', () => {

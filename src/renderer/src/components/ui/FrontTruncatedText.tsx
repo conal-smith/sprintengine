@@ -13,10 +13,12 @@ import React, { useLayoutEffect, useRef, useState } from 'react'
 /**
  * `text` cut from the front to at most `maxChars` characters, with a leading
  * "…". Whole leading `/` segments go first ("feat/a/b-c" → "…a/b-c" →
- * "…b-c"); only when the last segment alone does not fit is it cut mid-word,
- * still keeping its end. Null when that would keep fewer than `minChars`
- * characters (or the whole of a shorter text): the caller decides what a text
- * too long for its room becomes.
+ * "…b-c"); only when the last segment alone does not fit is it cut inside a
+ * segment, still keeping its end — and then at the next word when one is near
+ * ("…machine", not "…er-machine"), so the kept end never opens on half a word.
+ * Null when that would keep fewer than `minChars` characters (or the whole of
+ * a shorter text): the caller decides what a text too long for its room
+ * becomes.
  */
 export function frontTruncate(text: string, maxChars: number, minChars = 1): string | null {
   if (text.length <= maxChars) return text
@@ -28,8 +30,18 @@ export function frontTruncate(text: string, maxChars: number, minChars = 1): str
     const candidate = `…${tail}`
     if (candidate.length <= maxChars) return candidate
   }
-  return `…${text.slice(text.length - (maxChars - 1))}`
+  const cut = text.length - (maxChars - 1)
+  // A shorter tail that starts on a word reads; a longer one that starts
+  // mid-word does not. Never below a short word, nor below the caller's floor.
+  const shortest = Math.max(WORD_TAIL_MIN, minChars - 1)
+  for (let start = cut; text.length - start >= shortest; start++) {
+    if (WORD_BREAK.test(text[start - 1] ?? '')) return `…${text.slice(start)}`
+  }
+  return `…${text.slice(cut)}`
 }
+
+const WORD_BREAK = /[-_.]/
+const WORD_TAIL_MIN = 4
 
 /**
  * The text, front-truncated to the room its box has. The box takes the space
