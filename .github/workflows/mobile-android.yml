@@ -318,13 +318,17 @@ jobs:
         run: |
           set -euo pipefail
           expected="$(jq -cS . dist/android-update.json)"
-          for attempt in 1 2 3 4 5 6; do
-            got="$(curl -fsSL -H 'Cache-Control: no-cache' "https://github.com/${REPO}/releases/download/${TAG}/android-update.json" | jq -cS . || true)"
+          # A renamed asset can answer 404 to anonymous downloads for a minute
+          # or more (the first publish's did, for over 60 s), so poll for up to
+          # five minutes before calling it broken.
+          for attempt in $(seq 1 30); do
+            got="$(curl -fsSL -H 'Cache-Control: no-cache' "https://github.com/${REPO}/releases/download/${TAG}/android-update.json" 2>/dev/null | jq -cS . 2>/dev/null || true)"
             [ "$got" = "$expected" ] && break
-            [ "$attempt" = 6 ] && { echo "The published manifest is ${got:-unreadable}, not ${expected}." >&2; exit 1; }
+            [ "$attempt" = 30 ] && { echo "The published manifest is ${got:-unreadable}, not ${expected}." >&2; exit 1; }
             sleep 10
           done
-          curl -fsSL -o downloaded.apk "$(jq -r .url dist/android-update.json)"
+          echo "The manifest is served after ${attempt} attempt(s)."
+          curl -fsSL --retry 12 --retry-delay 10 --retry-all-errors -o downloaded.apk "$(jq -r .url dist/android-update.json)"
           [ "$(sha256sum downloaded.apk | cut -d' ' -f1)" = "$(jq -r .sha256 dist/android-update.json)" ] \
             || { echo "The published APK does not match the manifest's sha256." >&2; exit 1; }
           latest="$(curl -fsSL -H 'Accept: application/json' "https://github.com/${REPO}/releases/latest" | jq -r '.tag_name // empty' || true)"
