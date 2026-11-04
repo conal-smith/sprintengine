@@ -192,7 +192,11 @@ export const PrimaryButton = React.forwardRef<HTMLButtonElement, SizedButtonProp
       aria-busy={busy || undefined}
       {...rest}
       className={[
-        SHARED,
+        // The layout without the shared dimming: an unavailable primary is a
+        // neutral well, like the composer's send (2026-11-04). At 45% the
+        // accent read as a primary still loading, and a form with nothing
+        // typed yet showed its loudest colour on the one thing it could not do.
+        SHARED_LAYOUT,
         SIZE[size],
         ALIGN[align],
         cursorClass(busy),
@@ -204,8 +208,10 @@ export const PrimaryButton = React.forwardRef<HTMLButtonElement, SizedButtonProp
         'control-raised',
         'bg-[color:var(--accent-primary)] text-[color:var(--text-on-accent)]',
         'hover:bg-[color:var(--accent-primary-hover)]',
-        'disabled:hover:bg-[color:var(--accent-primary)]',
         FOCUS_RING_CLASS,
+        'disabled:bg-[color:var(--bg-active)] disabled:text-[color:var(--text-subtle)]',
+        'aria-disabled:bg-[color:var(--bg-active)] aria-disabled:text-[color:var(--text-subtle)]',
+        'disabled:hover:bg-[color:var(--bg-active)]',
         className ?? '',
       ].join(' ')}
     />
@@ -249,10 +255,10 @@ export const SendButton = React.forwardRef<HTMLButtonElement, SizedButtonProps>(
         'control-raised',
         'bg-[color:var(--accent-primary)] text-[color:var(--text-on-accent)]',
         'hover:bg-[color:var(--accent-primary-hover)]',
+        FOCUS_RING_CLASS,
         'disabled:bg-[color:var(--bg-active)] disabled:text-[color:var(--text-subtle)]',
         'aria-disabled:bg-[color:var(--bg-active)] aria-disabled:text-[color:var(--text-subtle)]',
         'disabled:hover:bg-[color:var(--bg-active)]',
-        FOCUS_RING_CLASS,
         className ?? '',
       ].join(' ')}
     />

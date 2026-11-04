@@ -200,7 +200,7 @@
      The resting tier rebinds it to `transparent` near the end of this file,
      exactly as it rebinds the fill and the ink — so a pane that is not holding
      focus keeps its remembered choice and gives up the edge. */
-  --selection-edge: var(--border-default);
+  --selection-edge: var(--border-subtle);
   /* Agent conversation panel canvas — and the new chat page, so starting a chat
      does not change the ground under the composer. The brightest paper the
      theme has: the conversation is the thing being read, so it is the one

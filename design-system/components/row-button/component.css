@@ -41,7 +41,7 @@
 .ds-row-button[aria-current='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-subtle);
 }
 
 .ds-row-button:focus-visible {

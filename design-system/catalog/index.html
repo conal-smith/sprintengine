@@ -2272,7 +2272,7 @@ code {
 .ds-card-button[aria-pressed='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-subtle);
 }
 
 .ds-card-button--bordered[aria-pressed='true'],
@@ -5524,7 +5524,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
  * Still ruled out, unchanged: an accent fill, a left bar, a glow. */
 .ds-list-row--selected {
   background: var(--sem-color-bg-selected);
-  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-subtle);
   color: var(--sem-color-text-primary);
 }
 
@@ -7574,7 +7574,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 .ds-row-button[aria-current='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-subtle);
 }
 
 .ds-row-button:focus-visible {
@@ -17788,7 +17788,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 .ds-card-button[aria-pressed='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-subtle);
 }
 
 .ds-card-button--bordered[aria-pressed='true'],
@@ -32980,7 +32980,7 @@ document.querySelectorAll('[data-demo-search]').forEach((input) =&gt; {
 <h4>Variants</h4>
 <ul><li><strong>Default</strong> — no modifier. The resting, unselected row.</li><li><strong><code>--selected</code></strong> — the selected row of the pane that currently has focus. Neutral <code>bg.selected</code> fill, a 2px inset <code>accent.primary</code> edge, title lifts to <code>text.primary</code>.</li><li><strong><code>--resting</code></strong> — the selected row of a pane that does not have focus. Quieter <code>bg.selected-resting</code> fill, <strong>no edge</strong>, title stays at <code>text.default</code>.</li></ul>
 <p>A surface has <strong>exactly one <code>--selected</code> row on screen</strong>. In a rail → list → detail layout the other two panes use <code>--resting</code>, so the person can always see which list their keyboard is driving. The edge is what makes that legible: one edge on screen, on the pane with focus.</p>
-<p>The edge is a <strong>neutral hairline</strong> in <code>border.default</code>, 2px inset, and never an accent (2026-11-04). It was the accent from 2026-09-05, when a neutral fill on its own lost to rows wearing a status tint; as a green outline it then became the loudest mark on every list, round whatever the person was reading. The hairline keeps the selected row's shape against a tinted neighbour without competing with the primary button, which is the accent's job. Selection never carries an accent fill, a left bar or a glow. See <code>patterns/selection</code>.</p>
+<p>The edge is a <strong>neutral hairline</strong> in <code>border.subtle</code>, 2px inset, and never an accent (2026-11-04). It was the accent from 2026-09-05, when a neutral fill on its own lost to rows wearing a status tint; as a green outline it then became the loudest mark on every list, round whatever the person was reading. The hairline keeps the selected row's shape against a tinted neighbour without competing with the primary button, which is the accent's job. Selection never carries an accent fill, a left bar or a glow. See <code>patterns/selection</code>.</p>
 <h5>Attention</h5>
 <p>Two states a row can say on its own, each taking the <strong>whole row</strong> — a tinted fill and the title in the tone's ink:</p>
 <ul><li><strong><code>--needs-input</code></strong> — an agent on this row is waiting for the person. <code>status.warn-soft</code> fill, <code>status.warn</code> ink. The loudest thing a row can say.</li><li><strong><code>--finished</code></strong> — a turn on this row finished while the person was looking elsewhere, and they have not opened it since. <code>status.good-faint</code> fill, <code>status.good</code> ink. One notch under needs-input by construction: it asks for a look, not an answer.</li></ul>
@@ -33079,7 +33079,7 @@ document.querySelectorAll('[data-demo-search]').forEach((input) =&gt; {
  * Still ruled out, unchanged: an accent fill, a left bar, a glow. */
 .ds-list-row--selected {
   background: var(--sem-color-bg-selected);
-  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-subtle);
   color: var(--sem-color-text-primary);
 }
 
@@ -39483,7 +39483,7 @@ window.addEventListener('resize', repositionAll)
 .ds-row-button[aria-current='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-subtle);
 }
 
 .ds-row-button:focus-visible {

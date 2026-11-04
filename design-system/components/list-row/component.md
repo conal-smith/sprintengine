@@ -42,7 +42,7 @@ detail layout the other two panes use `--resting`, so the person can always see
 which list their keyboard is driving. The edge is what makes that legible: one
 edge on screen, on the pane with focus.
 
-The edge is a **neutral hairline** in `border.default`, 2px inset, and never an
+The edge is a **neutral hairline** in `border.subtle`, 2px inset, and never an
 accent (2026-11-04). It was the accent from 2026-09-05, when a neutral fill on
 its own lost to rows wearing a status tint; as a green outline it then became
 the loudest mark on every list, round whatever the person was reading. The
