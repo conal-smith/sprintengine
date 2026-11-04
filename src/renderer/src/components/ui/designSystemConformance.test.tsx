@@ -233,7 +233,7 @@ test('designSystemConformance', async () => {
     // status wash — the person could not find the row their keyboard was driving.
     // The edge answers that; it reads `--selection-edge` rather than the accent
     // directly so the resting tier can drop it to transparent with the fill.
-    await run('T4 the selected row carries the 2px accent edge, through --selection-edge', () => {
+    await run('T4 the selected row carries the 2px edge, through --selection-edge', () => {
       assert.ok(
         hasClassMatching(selectedRow, /^ring-2$/) && hasClassMatching(selectedRow, /^ring-inset$/),
         'the edge is a 2px inset ring, so it never shifts the row',
