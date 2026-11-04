@@ -5,7 +5,7 @@ import type { CliUpdateAllItem } from '../../../../shared/ipc/cli-update-all'
 import { hostPlatform } from '../../clientCapabilities'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import { InlineNotice, OutlineButton } from '../ui'
-import { SettingCard, SettingsRow } from './SettingsAtoms'
+import { SettingsRow } from './SettingsAtoms'
 
 // Settings ▸ Agents: Update everything. One press updates every agent CLI
 // with a newer version published, on this machine and on each WSL
@@ -95,8 +95,10 @@ export function UpdateEverythingCard() {
       : `${outdated.count} ${outdated.count === 1 ? 'update' : 'updates'}${
           outdated.machines > 1 ? ` on ${outdated.machines} machines` : ''
         }. Paired machines update from their own Settings.`
+  // Rows, not a card: Settings ▸ Agents sets them in the card that also holds
+  // "Check for CLI updates", the switch they follow from.
   return (
-    <SettingCard>
+    <>
       <SettingsRow label="Update everything" help={summary}>
         <OutlineButton disabled={running || outdated.count === 0} onClick={() => void run()}>
           {running ? 'Updating…' : 'Update everything'}
@@ -131,6 +133,6 @@ export function UpdateEverythingCard() {
           ))
         : null}
       {error ? <InlineNotice tone="error">{error}</InlineNotice> : null}
-    </SettingCard>
+    </>
   )
 }

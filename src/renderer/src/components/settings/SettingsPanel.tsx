@@ -1542,6 +1542,10 @@ export default function SettingsPanel({
           {/* One switch for every machine: main compares each machine's
               installed CLIs against the registry, and this turns all of it
               off. */}
+          {/* Two cards where there were five (2026-11-04): a card per row read
+              as five unrelated settings, and the page had no groups. The CLI
+              updates — the switch, then every outdated CLI in one press — and
+              how chats behave. */}
           <SettingCard>
             <SettingToggle
               label="Check for CLI updates"
@@ -1549,19 +1553,20 @@ export default function SettingsPanel({
               enabled={checkCliVersions}
               onChange={setCheckCliVersions}
             />
+            <UpdateEverythingCard />
           </SettingCard>
           {/* First-run agent-config adoption. It runs silently at the first
               workspace creation — the user is never asked — so this line is the
               only place it is ever reported. Renders nothing unless an adoption
               actually ran this session, and says so plainly when it failed. */}
           <AgentConfigAdoptionStatus adoption={agentConfigAdoptionResult} />
-          <ConversationImportSettings />
-          {/* A chat a usage limit stopped, carried on when the limit resets. */}
-          <UsageLimitResumeSettings />
-          {/* What Enter does while a chat's agent works: queue, or steer. */}
-          <FollowUpBehaviorSetting />
-          {/* Every outdated CLI on every machine here, in one press. */}
-          <UpdateEverythingCard />
+          <SettingCard>
+            <ConversationImportSettings />
+            {/* A chat a usage limit stopped, carried on when the limit resets. */}
+            <UsageLimitResumeSettings />
+            {/* What Enter does while a chat's agent works: queue, or steer. */}
+            <FollowUpBehaviorSetting />
+          </SettingCard>
           <AgentClisSection
             runs={agentCliRuns}
             machine={agentsMachine}

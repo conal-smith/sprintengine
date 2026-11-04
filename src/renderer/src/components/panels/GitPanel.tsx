@@ -786,7 +786,7 @@ export default function GitPanel({ workspaceId }: { workspaceId: string }) {
   ): Promise<GitCommandResult | null> => {
     if (busy) return null
     setBusy(label)
-    setMessage({ tone: 'neutral', text: `${label}...` })
+    setMessage({ tone: 'neutral', text: `${label}…` })
     try {
       const result = await action()
       setMessage(resultMessage(result, success))
