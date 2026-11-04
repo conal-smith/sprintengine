@@ -56,12 +56,16 @@ function tickClass(index: number, current: number, hovered: number | null): stri
         : distance === 1
           ? 'scale-x-[0.6667]'
           : 'scale-x-50'
+  // A step under the transcript's own inks at rest (2026-11-04): the margin
+  // is a map of the reply, and at muted and border-strong its ticks read as
+  // a second column of content beside it. The tick under the pointer keeps
+  // full ink, which is the one a person is about to jump to.
   const ink =
     distance === 0
       ? 'bg-[color:var(--text-default)]'
       : index === current
-        ? 'bg-[color:var(--text-muted)]'
-        : 'bg-[color:var(--border-strong)]'
+        ? 'bg-[color:var(--text-subtle)]'
+        : 'bg-[color:var(--border-default)]'
   return `pointer-events-none absolute right-0 h-0.5 w-6 origin-right -translate-y-1/2 rounded-full transition-[scale,background-color] duration-150 ${scale} ${ink}`
 }
 

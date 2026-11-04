@@ -1882,7 +1882,9 @@ const SettingsTabButton = React.forwardRef<
     >
       {Icon ? (
         <Icon
-          className={`icon-sm shrink-0 ${active ? 'text-[color:var(--text-strong)]' : 'text-[color:var(--text-subtle)]'}`}
+          // Muted at rest, not subtle: the glyph is how a long list of tabs is
+          // scanned, and at the subtle step it read as a disabled row.
+          className={`icon-sm shrink-0 ${active ? 'text-[color:var(--text-strong)]' : 'text-[color:var(--text-muted)]'}`}
         />
       ) : null}
       <span className="min-w-0 truncate">{tab.label}</span>

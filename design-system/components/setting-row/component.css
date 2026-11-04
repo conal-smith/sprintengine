@@ -92,8 +92,13 @@
  * setting they cannot decide about. */
 .ds-setting-row-help {
   margin-top: var(--sem-space-3xs);
-  font-size: var(--sem-font-size-body);
+  /* One step under the label (2026-11-04). At the label's own size the two
+     lines read as one paragraph in two inks, and a page of rows had two levels
+     of type where it needs three: the page title, the setting, what it does.
+     Balanced, so a two-line help breaks in the middle, not after one word. */
+  font-size: var(--sem-font-size-meta);
   line-height: var(--sem-font-line-default);
+  text-wrap: balance;
   color: var(--sem-color-text-muted);
 }
 
