@@ -147,6 +147,25 @@ export interface ThemeColors {
   markYellow: string;
   markViolet: string;
   markRed: string;
+
+  /**
+   * `--sem-color-chart-1` to `-8` and `--sem-color-chart-other`: the eight
+   * categorical series a chart in a reply's ```visual block colours with, in
+   * slot order, and the grey its folded "Other" series wears. The desktop's own
+   * values, Light and Dark, so an agent's `var(--chart-1)` is the same blue on
+   * both screens (`rich/visualFrame.ts` hands them to the visual).
+   */
+  chart1: string;
+  chart2: string;
+  chart3: string;
+  chart4: string;
+  chart5: string;
+  chart6: string;
+  chart7: string;
+  chart8: string;
+  chartOther: string;
+  /** `--sem-color-bg-well`: a faint wash a visual sets a panel or a table's band on, over whatever it sits on. */
+  bgWell: string;
 }
 
 // Dark — the site's `dark:bg-neutral-950` page. Canvas #0a0a0a, cards
@@ -219,6 +238,17 @@ const darkColors: ThemeColors = {
   markYellow: "#fcc030",
   markViolet: "#8957e5",
   markRed: "#fc787c",
+
+  chart1: "#0c84fa",
+  chart2: "#ea630c",
+  chart3: "#1ba995",
+  chart4: "#b85dde",
+  chart5: "#879f07",
+  chart6: "#e253ae",
+  chart7: "#7e6cf7",
+  chart8: "#0da4cf",
+  chartOther: "#9c9ca4",
+  bgWell: "rgba(252,252,252,0.06)",
 };
 
 // Light — the site's white page. Cards are white on white and lift on a faint
@@ -295,6 +325,17 @@ const lightColors: ThemeColors = {
   markYellow: "#9a6000",
   markViolet: "#8957e5",
   markRed: "#d92d2d",
+
+  chart1: "#077ef0",
+  chart2: "#883601",
+  chart3: "#149483",
+  chart4: "#9f43c3",
+  chart5: "#768b09",
+  chart6: "#bf308f",
+  chart7: "#7e6cf7",
+  chart8: "#0581a3",
+  chartOther: "#707078",
+  bgWell: "rgba(32,36,40,0.05)",
 };
 
 export type ThemeName = "light" | "dark";

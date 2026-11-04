@@ -12,7 +12,7 @@
  * never saw an update. A wrong value here is invisible at runtime, which is
  * exactly the kind that has to be caught at build time.
  */
-export const RELEASES_REPO = 'slopsmith/sprintengine'
+export const RELEASES_REPO = 'sprintengine/sprintengine'
 
 export const RELEASES_URL = `https://github.com/${RELEASES_REPO}/releases`
 
