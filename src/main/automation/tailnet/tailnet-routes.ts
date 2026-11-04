@@ -63,6 +63,17 @@ export const TAILNET_CONVERSATION_IMAGE_PATH = `${TAILNET_ROUTE_PREFIX}/conversa
 export const TAILNET_CONVERSATION_FILES_PATH = `${TAILNET_ROUTE_PREFIX}/conversation-files`
 export const TAILNET_CONVERSATION_COMMANDS_PATH = `${TAILNET_ROUTE_PREFIX}/conversation-commands`
 
+// OAuth for the MCP endpoint (`tailnet-oauth-http.ts`). Unauthenticated, as
+// pairing is: they are how a client without a credential gets one. The
+// well-known documents that name them sit at the root, where RFC 8414 and
+// RFC 9728 put them.
+const TAILNET_OAUTH_PREFIX = `${TAILNET_ROUTE_PREFIX}/oauth`
+export const TAILNET_OAUTH_REGISTER_PATH = `${TAILNET_OAUTH_PREFIX}/register`
+export const TAILNET_OAUTH_AUTHORIZE_PATH = `${TAILNET_OAUTH_PREFIX}/authorize`
+export const TAILNET_OAUTH_WAIT_PATH = `${TAILNET_OAUTH_PREFIX}/authorize/wait`
+export const TAILNET_OAUTH_TOKEN_PATH = `${TAILNET_OAUTH_PREFIX}/token`
+export const TAILNET_OAUTH_REVOKE_PATH = `${TAILNET_OAUTH_PREFIX}/revoke`
+
 // ── What this transport speaks ───────────────────────────────────────────────
 //
 // Here rather than in the gateway server for the same reason the paths are:
@@ -410,6 +421,9 @@ export const TAILNET_CAPABILITIES = [
   // in the same editor it opens its own in and saves it here. A client that
   // does not see it still runs, pauses and closes them.
   'scheduled-agents-edit',
+  // An outside MCP client may sign in with OAuth (the MCP authorization spec)
+  // instead of pairing: discovery from the MCP endpoint's 401.
+  'mcp-oauth',
 ] as const
 
 export type TailnetCapability = (typeof TAILNET_CAPABILITIES)[number]

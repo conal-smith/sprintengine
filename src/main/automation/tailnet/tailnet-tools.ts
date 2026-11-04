@@ -221,7 +221,9 @@ export function createTailnetTools(options: {
       "the scopes named here. Requires the six-digit code shown on the ASKING machine's screen — ask the person to " +
       'read it off that screen; nothing on this machine reports it. Three wrong codes decline the request. The requesting machine collects its ' +
       'device token on its next poll. The scopes are NOT the ones the requester asked for — it cannot influence what ' +
-      'approving it grants. Served only over the local socket.',
+      'approving it grants. An MCP client signing in with OAuth (a request with `oauth`) is refused here: it is ' +
+      'approved in the Studio window only, since an agent that could approve one could open its sign-in page and let ' +
+      'itself in. Served only over the local socket.',
     inputSchema: {
       type: 'object',
       properties: {

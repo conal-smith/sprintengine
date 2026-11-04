@@ -187,6 +187,8 @@ const SERVER_IPC_CHANNEL_TABLE = {
   'tailnet:offer-pairing': {},
   'tailnet:revoke-device': {},
   'tailnet:set-enabled': {},
+  'tailnet:set-https': {},
+  'tailnet:reset-mcp-registrations': {},
   'tailnet:share-port': {},
   'tailnet:share-status': { retry: 'once' },
   'tailnet:unshare-port': {},

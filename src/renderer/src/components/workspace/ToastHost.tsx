@@ -74,7 +74,9 @@ function usePairRequestToastBridge(): void {
         showToast({
           id: toastId,
           tone: 'warn',
-          title: `Pair request from ${shortMachineName(event.peerNode ?? event.deviceName)}`,
+          title: event.oauth
+            ? `${event.deviceName} wants access`
+            : `Pair request from ${shortMachineName(event.peerNode ?? event.deviceName)}`,
           // No body without the request itself: a code field that cannot name
           // what it is answering would be worse than the pointer it replaced.
           content: request ? <PairRequestToastAccept request={request} /> : undefined,

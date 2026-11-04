@@ -946,6 +946,14 @@ export type ElectronApi = {
    */
   tailnetUpdateDeviceScopes: (deviceId: string, scopes: TailnetScope[]) => Promise<TailnetRemoteStatus>
   /**
+   * Publish the tailnet listener over HTTPS with Tailscale Serve, or stop
+   * (`https://<node>.<tailnet>.ts.net`), for MCP clients that sign in with
+   * OAuth. The outcome is in the answer's `mcp.https`.
+   */
+  tailnetSetHttps: (enabled: boolean) => Promise<TailnetRemoteStatus>
+  /** Forget every MCP client registration; each client registers afresh before it next signs in. */
+  tailnetResetMcpRegistrations: () => Promise<TailnetRemoteStatus>
+  /**
    * End a pairing in BOTH directions: revoke the device that machine holds
    * here, and forget the credential this machine holds there. Either id may be
    * omitted, and an id that is already gone is not an error — the result says

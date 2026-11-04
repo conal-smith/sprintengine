@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { encodeQrCode } from '../../../../shared/qr-code'
 import {
+  type TailnetDevice,
   type TailnetPairingOfferView,
   type TailnetPairingState,
   type TailnetRemoteStatus,
@@ -29,6 +30,7 @@ import { pairRoute } from '../remote/pairRouteModel'
 import { STANDARD_SCOPES } from '../remote/scopePickerModel'
 import { PairRequestCard } from '../remote/PairRequestCard'
 import { OutboundPairRequestCard } from '../remote/OutboundPairRequestCard'
+import { RemoteMcpSection } from './RemoteMcpSection'
 import { useTailnetPresence } from '../workspace/topbar/useTailnetPresence'
 import { hostPlatform } from '../../clientCapabilities'
 import { isImeKey } from '../../utils/imeKey'
@@ -158,7 +160,9 @@ export function RemoteTailnetSettingsTab() {
         // Only used when the scan produced no self row — Tailscale absent or
         // down — so the tab still says which machine you are sitting at.
         self: { name: 'This machine', os: hostPlatform() },
-        devices: status?.devices ?? [],
+        // MCP clients are programs, not machines: they are listed in their own
+        // section below, and several may sign in from one laptop.
+        devices: (status?.devices ?? []).filter((device) => device.origin.kind !== 'oauth'),
         connections: presence.mesh,
         peers: scan?.peers ?? [],
         now,
@@ -247,6 +251,30 @@ export function RemoteTailnetSettingsTab() {
       setStatus(await window.api.tailnetUpdateDeviceScopes(deviceId, [...STANDARD_SCOPES]))
     })
   }
+
+  const setHttps = (next: boolean): Promise<void> =>
+    run(next ? 'Turning on HTTPS.' : 'Turning off HTTPS.', async () => {
+      setStatus(await window.api.tailnetSetHttps(next))
+    })
+
+  const resetRegistrations = (): Promise<void> =>
+    run('Resetting MCP client registrations.', async () => {
+      setStatus(await window.api.tailnetResetMcpRegistrations())
+      setAction({
+        tone: 'idle',
+        message: 'MCP client registrations reset. Each client registers again before it next signs in.',
+      })
+    })
+
+  const revokeClient = (device: TailnetDevice): Promise<void> =>
+    run(`Revoking ${device.name}.`, async () => {
+      setStatus(await window.api.tailnetRevokeDevice(device.id))
+    })
+
+  const updateClientScopes = (device: TailnetDevice, scopes: TailnetScope[]): Promise<void> =>
+    run(`Changing what ${device.name} may do.`, async () => {
+      setStatus(await window.api.tailnetUpdateDeviceScopes(device.id, scopes))
+    })
 
   // Pair by a carried link: the possession-based path for a machine with
   // nobody in front of it to approve a request.
@@ -414,6 +442,16 @@ export function RemoteTailnetSettingsTab() {
           </p>
         )}
       </section>
+
+      <RemoteMcpSection
+        status={status}
+        now={now}
+        busy={busy}
+        onSetHttps={(next) => void setHttps(next)}
+        onResetRegistrations={() => void resetRegistrations()}
+        onRevoke={(device) => void revokeClient(device)}
+        onUpdateScopes={(device, scopes) => void updateClientScopes(device, scopes)}
+      />
 
       {pairRequests.length > 0 ? (
         <section>

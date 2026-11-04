@@ -1,4 +1,9 @@
-import type { TailnetPairRequest, TailnetRemoteStatus } from '../../../../shared/tailnet'
+import type {
+  TailnetHttpsState,
+  TailnetMcpAccess,
+  TailnetPairRequest,
+  TailnetRemoteStatus,
+} from '../../../../shared/tailnet'
 import type { Tone } from '../ui'
 
 // The Remote (tailnet) settings panel's view model, kept DOM-free so the rules
@@ -159,4 +164,35 @@ export function pairRequestAnswerable(
     return { canAnswer: false, note: 'This request lapsed before it was answered.' }
   }
   return { canAnswer: true, note: null }
+}
+
+/** The help line under the MCP URL: what to do with it, and what it cannot do over plain HTTP. */
+export function mcpUrlHelp(mcp: TailnetMcpAccess | null): string {
+  if (!mcp?.url) return 'Turn on remote control to get the URL an MCP client connects to.'
+  if (mcp.https.state === 'on')
+    return 'Give this URL to Claude Code, Codex or any MCP client that signs in with OAuth. You approve each one here.'
+  return 'Give this URL to an MCP client that signs in with OAuth. Most clients finish signing in only over HTTPS: turn it on below.'
+}
+
+/** The help line under the HTTPS switch, by what last happened when it was applied. */
+export function mcpHttpsHelp(https: TailnetHttpsState | null): string {
+  switch (https?.state) {
+    case 'on':
+      return `Published at ${https.origin ?? 'this machine’s tailnet name'} with this tailnet’s certificate.`
+    case 'starting':
+      return 'Asking Tailscale to publish it…'
+    case 'error':
+      return https.message ?? 'Tailscale did not publish it.'
+    default:
+      return 'Publishes the listener at https://<this machine>.<tailnet>.ts.net on port 443, through Tailscale Serve. Only your tailnet can reach it.'
+  }
+}
+
+/** "Ends in 12 days" for an MCP client's sign-in, or null when it has none to show. */
+export function signInEnds(iso: string | null, now: number): string | null {
+  const endsAt = iso ? Date.parse(iso) : Number.NaN
+  if (!Number.isFinite(endsAt)) return null
+  const days = Math.ceil((endsAt - now) / (24 * 60 * 60 * 1000))
+  if (days <= 0) return 'Sign-in ended'
+  return days === 1 ? 'Ends tomorrow' : `Ends in ${days} days`
 }

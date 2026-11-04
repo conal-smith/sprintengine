@@ -418,7 +418,7 @@
     },
     {
       "name": "tailnet.approve_pair_request",
-      "sha256": "0c13d2ed939527d2217582400ed94c6d287c2062c5803bd15e782e8090000520"
+      "sha256": "d36d2c4a2603b88f41b34e6ca3eee9689c8b010800a51dfda0bf33a5e957b345"
     },
     {
       "name": "tailnet.deny_pair_request",
@@ -848,7 +848,7 @@
     },
     {
       "name": "tailnet.approve_pair_request",
-      "sha256": "0c13d2ed939527d2217582400ed94c6d287c2062c5803bd15e782e8090000520"
+      "sha256": "d36d2c4a2603b88f41b34e6ca3eee9689c8b010800a51dfda0bf33a5e957b345"
     },
     {
       "name": "tailnet.deny_pair_request",

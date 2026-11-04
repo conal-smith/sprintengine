@@ -10,6 +10,7 @@ import { Input, OutlineButton, PrimaryButton, StatusDot } from '../ui'
 import { pairRequestAnswerable } from '../settings/tailnetPanelModel'
 import { ScopePicker } from './ScopePicker'
 import { usePairRequestAnswer } from './pairRequestAnswer'
+import { clampToRequested, signInDefaultScopes } from './scopePickerModel'
 
 // The ACTING surface for a request from another machine, shared by the
 // Remote popover and Settings → Remote (pair-from-the-scan-and-stay-paired,
@@ -29,6 +30,12 @@ import { usePairRequestAnswer } from './pairRequestAnswer'
 // the Pair a device dialog uses, so one set of words decides what a scope means
 // in both directions. The toast the request arrives as grants exactly the
 // requested set; anyone who wants to change it comes here.
+//
+// An MCP client signing in with OAuth (`request.oauth`) is the same card in
+// other words. It names the client and where its access goes — a client on
+// the computer whose browser opened the sign-in page, or a web service whose
+// operator gets the access — and the code to type is the one that page shows.
+// It opens on Read only, and can be granted at most what the client asked for.
 
 export function PairRequestCard({
   request,
@@ -47,10 +54,13 @@ export function PairRequestCard({
     () => [...(request.requestedScopes ?? TAILNET_LEGACY_REQUEST_SCOPES)],
     [request.requestedScopes],
   )
-  const [scopes, setScopes] = React.useState<TailnetScope[]>(requested)
+  const signIn = request.oauth ?? null
+  const initial = React.useMemo(() => (signIn ? signInDefaultScopes(requested) : requested), [signIn, requested])
+  const [scopes, setScopesRaw] = React.useState<TailnetScope[]>(initial)
+  const setScopes = (next: TailnetScope[]): void => setScopesRaw(signIn ? clampToRequested(next, requested) : next)
   // A request replaced under the cursor (answered elsewhere, re-asked) must not
   // leave the previous asker's ticks on screen.
-  React.useEffect(() => setScopes(requested), [requested])
+  React.useEffect(() => setScopesRaw(initial), [initial])
   const { code, setCode, codeError, busy, answer } = usePairRequestAnswer(request.id)
   const inputId = React.useId()
   const helpId = `${inputId}-help`
@@ -62,6 +72,7 @@ export function PairRequestCard({
   const answerable = pairRequestAnswerable(request, now)
   const disabled = busy !== null || !answerable.canAnswer
   const asker = request.peerNode ?? request.peerAddress
+  const codeSource = signIn ? 'the sign-in page' : asker
 
   const frame =
     variant === 'card'
@@ -73,9 +84,12 @@ export function PairRequestCard({
   return (
     <div className={frame} data-pair-request={request.id}>
       <div className="flex items-center gap-2 text-meta">
-        <StatusDot tone="warn" pulse label="Pair request" />
+        <StatusDot tone="warn" pulse label={signIn ? 'Sign-in request' : 'Pair request'} />
         <span className="min-w-0 flex-1 truncate font-medium text-[color:var(--text-default)]">
-          {asker} <span className="font-normal text-[color:var(--text-subtle)]">asks to pair</span>
+          {signIn ? signIn.clientName : asker}{' '}
+          <span className="font-normal text-[color:var(--text-subtle)]">
+            {signIn ? 'wants access to this Studio' : 'asks to pair'}
+          </span>
         </span>
       </div>
       {/* Both identities, labelled: the node is what the transport proved
@@ -83,15 +97,37 @@ export function PairRequestCard({
           name is whatever the asker typed. */}
       <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-micro">
         <dt className="text-[color:var(--text-subtle)]">
-          {request.peerNode ? 'Tailnet node' : 'Address (unverified)'}
+          {signIn ? 'Sign-in page opened on' : request.peerNode ? 'Tailnet node' : 'Address (unverified)'}
         </dt>
-        <dd className="truncate font-mono text-[color:var(--text-default)]">{asker}</dd>
-        <dt className="text-[color:var(--text-subtle)]">Calls itself</dt>
-        <dd className="truncate text-[color:var(--text-default)]">{request.deviceName}</dd>
+        <dd className="truncate font-mono text-[color:var(--text-default)]">
+          {asker}
+          {signIn && !request.peerNode ? ' (unverified)' : ''}
+          {signIn?.viaServe && request.peerNode ? ' (as Tailscale Serve reports it)' : ''}
+        </dd>
+        {signIn ? (
+          <>
+            <dt className="text-[color:var(--text-subtle)]">Access goes to</dt>
+            <dd className="truncate text-[color:var(--text-default)]">
+              {signIn.redirectKind === 'loopback'
+                ? `An MCP client on ${asker} (${signIn.redirectHost})`
+                : `${signIn.redirectHost} — whoever runs it gets the access`}
+            </dd>
+          </>
+        ) : (
+          <>
+            <dt className="text-[color:var(--text-subtle)]">Calls itself</dt>
+            <dd className="truncate text-[color:var(--text-default)]">{request.deviceName}</dd>
+          </>
+        )}
       </dl>
+      {signIn ? (
+        <p className="mt-1 text-micro text-[color:var(--text-subtle)]">
+          Only allow a sign-in you just started. It lasts 30 days.
+        </p>
+      ) : null}
       <div className="my-2">
         <label htmlFor={inputId} className="mb-1 block text-meta text-[color:var(--text-muted)]">
-          Enter the code shown on {asker}
+          Enter the code shown on {codeSource}
         </label>
         <Input
           id={inputId}
@@ -106,7 +142,7 @@ export function PairRequestCard({
           autoComplete="one-time-code"
           maxLength={6}
           placeholder="000000"
-          aria-label={`Code shown on ${asker}`}
+          aria-label={`Code shown on ${codeSource}`}
           aria-describedby={helpId}
           aria-invalid={codeError ? true : undefined}
           disabled={disabled}

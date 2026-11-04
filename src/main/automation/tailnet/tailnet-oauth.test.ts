@@ -1,0 +1,1471 @@
+import assert from 'node:assert/strict'
+import { createHash, randomBytes } from 'node:crypto'
+import { request as httpRequest } from 'node:http'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { test } from 'vitest'
+
+import { TAILNET_SCOPES, type TailnetScope } from '../../../shared/tailnet'
+import { toolSuccess, type McpToolRegistration } from '../../../shared/modules/mcp-tools'
+import { createTailnetDeviceStore, type TailnetDeviceStore } from './tailnet-devices'
+import { createTailnetGatewayServer, type TailnetGatewayServer } from './tailnet-gateway-server'
+import {
+  checkRedirectUri,
+  createTailnetOAuthStore,
+  OAUTH_ACCESS_TOKEN_TTL_MS,
+  OAUTH_GRANT_TTL_MS,
+  OAUTH_REFRESH_GRACE_MS,
+  pkceMatches,
+  redirectUriRegistered,
+  TAILNET_OAUTH_FILENAME,
+  type TailnetOAuthStore,
+} from './tailnet-oauth'
+import { canonicalResource } from './tailnet-oauth-http'
+import { publishGatewayOverHttps, withdrawRecordedGatewayHttps } from './tailnet-gateway-https'
+import type { TailnetPeerIdentity } from './tailnet-peer-identity'
+import { createTailnetRemoteService } from './tailnet-service'
+import { writeTailnetSettings } from './tailnet-settings'
+import {
+  TAILNET_IDENTITY_PATH,
+  TAILNET_MCP_PATH,
+  TAILNET_OAUTH_AUTHORIZE_PATH,
+  TAILNET_OAUTH_REGISTER_PATH,
+  TAILNET_OAUTH_REVOKE_PATH,
+  TAILNET_OAUTH_TOKEN_PATH,
+  TAILNET_PAIR_COLLECT_PATH,
+  TAILNET_PAIR_PATH,
+  TAILNET_WS_TICKET_PATH,
+} from './tailnet-routes'
+
+// OAuth sign-in for the tailnet MCP endpoint, against the real listener on
+// loopback with a real device store and OAuth store. Who whois says is calling
+// comes from an injected resolver a case can move between nodes, and the
+// clock is one the case can wind forward.
+
+const MAC_MINI: TailnetPeerIdentity = {
+  name: 'mac-mini.tail1234.ts.net',
+  stableNodeId: 'nMacMini1CNTRL',
+  loginName: 'dev@example.com',
+}
+const BUILD_BOX: TailnetPeerIdentity = {
+  name: 'build-box.tail1234.ts.net',
+  stableNodeId: 'nBuildBox2CNTRL',
+  loginName: 'dev@example.com',
+}
+
+const REDIRECT = 'http://localhost:33418/callback'
+
+type Gateway = {
+  server: TailnetGatewayServer
+  devices: TailnetDeviceStore
+  oauth: TailnetOAuthStore
+  port: number
+  origin: string
+  dir: string
+  callFrom(peer: TailnetPeerIdentity | null): void
+  advance(ms: number): void
+}
+
+function tools(): McpToolRegistration[] {
+  const tool = (name: string): McpToolRegistration => ({
+    name,
+    description: `Test ${name}`,
+    inputSchema: { type: 'object', properties: {} },
+    handler: async () => toolSuccess({ ok: true, tool: name }),
+  })
+  return [tool('workspace.list'), tool('backlog.update'), tool('tailnet.status')]
+}
+
+async function withGateway(run: (gateway: Gateway) => Promise<void>): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-'))
+  let caller: TailnetPeerIdentity | null = MAC_MINI
+  let offset = 0
+  const clock = () => Date.now() + offset
+  const devices = createTailnetDeviceStore({ resolveUserDataDir: () => dir, now: () => new Date(clock()) })
+  const oauth = createTailnetOAuthStore({ resolveUserDataDir: () => dir, devices, now: clock })
+  const server = createTailnetGatewayServer({
+    bindAddress: '127.0.0.1',
+    port: 0,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: (name) => name === 'backlog.update',
+    devices,
+    peers: { identify: async () => caller, resolve: async () => caller?.name ?? null },
+    oauth: { store: oauth },
+    now: clock,
+  })
+  await server.start()
+  const port = server.address()!.port
+  try {
+    await run({
+      server,
+      devices,
+      oauth,
+      port,
+      origin: `http://127.0.0.1:${port}`,
+      dir,
+      callFrom: (peer) => {
+        caller = peer
+      },
+      advance: (ms) => {
+        offset += ms
+      },
+    })
+  } finally {
+    oauth.dispose()
+    await server.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+type Answer = { status: number; headers: Record<string, string | string[] | undefined>; text: string; json: any }
+
+function http(
+  port: number,
+  method: string,
+  path: string,
+  options: { headers?: Record<string, string>; body?: string; host?: string } = {},
+): Promise<Answer> {
+  return new Promise((resolve, reject) => {
+    const payload = options.body ?? ''
+    const request = httpRequest(
+      {
+        host: '127.0.0.1',
+        port,
+        method,
+        path,
+        agent: false,
+        headers: {
+          Host: options.host ?? `127.0.0.1:${port}`,
+          ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
+          ...options.headers,
+        },
+      },
+      (response) => {
+        const chunks: Buffer[] = []
+        response.on('data', (chunk: Buffer) => chunks.push(chunk))
+        response.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8')
+          let json: unknown = null
+          try {
+            json = text ? JSON.parse(text) : null
+          } catch {
+            json = null
+          }
+          resolve({ status: response.statusCode ?? 0, headers: response.headers, text, json })
+        })
+      },
+    )
+    request.on('error', reject)
+    request.end(payload)
+  })
+}
+
+function postJson(port: number, path: string, body: unknown, headers: Record<string, string> = {}) {
+  return http(port, 'POST', path, {
+    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json', ...headers },
+  })
+}
+
+function postForm(port: number, path: string, fields: Record<string, string>) {
+  return http(port, 'POST', path, {
+    body: new URLSearchParams(fields).toString(),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  })
+}
+
+function mcp(port: number, token: string, body: unknown, headers: Record<string, string> = {}) {
+  return postJson(port, TAILNET_MCP_PATH, body, {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/json, text/event-stream',
+    ...headers,
+  })
+}
+
+function pkce(): { verifier: string; challenge: string } {
+  const verifier = randomBytes(32).toString('base64url')
+  return { verifier, challenge: createHash('sha256').update(verifier).digest('base64url') }
+}
+
+async function register(gateway: Gateway, redirectUris = [REDIRECT]): Promise<string> {
+  const answer = await postJson(gateway.port, TAILNET_OAUTH_REGISTER_PATH, {
+    client_name: 'Claude Code (studio)',
+    redirect_uris: redirectUris,
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+  })
+  assert.equal(answer.status, 201, answer.text)
+  return answer.json.client_id as string
+}
+
+function authorizePath(params: Record<string, string>): string {
+  return `${TAILNET_OAUTH_AUTHORIZE_PATH}?${new URLSearchParams(params).toString()}`
+}
+
+type SignIn = { clientId: string; verifier: string; waitPath: string; requestId: string; code: string; state: string }
+
+/** Register, open the sign-in page, and read what the page shows: up to the point the person must answer. */
+async function startSignIn(gateway: Gateway, extra: Record<string, string> = {}): Promise<SignIn> {
+  const clientId = await register(gateway)
+  const { verifier, challenge } = pkce()
+  const state = randomBytes(8).toString('hex')
+  const opened = await http(
+    gateway.port,
+    'GET',
+    authorizePath({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state,
+      resource: `${gateway.origin}${TAILNET_MCP_PATH}`,
+      scope: TAILNET_SCOPES.join(' '),
+      ...extra,
+    }),
+  )
+  assert.equal(opened.status, 303, opened.text)
+  const waitPath = String(opened.headers.location)
+  const page = await http(gateway.port, 'GET', waitPath)
+  assert.equal(page.status, 200)
+  const code = /class="code"[^>]*>(\d{3}) (\d{3})</u.exec(page.text)
+  assert.ok(code, 'the waiting page shows the six digits')
+  const requestId = new URL(waitPath, gateway.origin).searchParams.get('id')!
+  return { clientId, verifier, waitPath, requestId, code: `${code[1]}${code[2]}`, state }
+}
+
+/** The person types the code into the Studio window and allows it. */
+function approve(gateway: Gateway, signIn: SignIn, scopes: TailnetScope[] = [...TAILNET_SCOPES]): void {
+  const outcome = gateway.devices.approvePairRequest({ id: signIn.requestId, scopes, code: signIn.code, via: 'ipc' })
+  assert.equal(outcome.ok, true, JSON.stringify(outcome))
+}
+
+/** The browser comes back to the waiting page and is sent on to the client with its code. */
+async function codeFor(gateway: Gateway, signIn: SignIn): Promise<string> {
+  const back = await http(gateway.port, 'GET', signIn.waitPath)
+  assert.equal(back.status, 303)
+  const location = new URL(String(back.headers.location))
+  assert.equal(`${location.origin}${location.pathname}`, REDIRECT)
+  assert.equal(location.searchParams.get('state'), signIn.state)
+  assert.equal(location.searchParams.get('iss'), gateway.origin)
+  return location.searchParams.get('code')!
+}
+
+async function exchange(gateway: Gateway, signIn: SignIn, code: string) {
+  return postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+    grant_type: 'authorization_code',
+    code,
+    client_id: signIn.clientId,
+    redirect_uri: REDIRECT,
+    code_verifier: signIn.verifier,
+    resource: `${gateway.origin}${TAILNET_MCP_PATH}`,
+  })
+}
+
+async function signedIn(
+  gateway: Gateway,
+  scopes?: TailnetScope[],
+): Promise<{ signIn: SignIn; access: string; refresh: string }> {
+  const signIn = await startSignIn(gateway)
+  approve(gateway, signIn, scopes)
+  const tokens = await exchange(gateway, signIn, await codeFor(gateway, signIn))
+  assert.equal(tokens.status, 200, tokens.text)
+  return { signIn, access: tokens.json.access_token, refresh: tokens.json.refresh_token }
+}
+
+const initialize = {
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
+}
+
+// ── Discovery ─────────────────────────────────────────────────────────────
+
+test('an unauthenticated MCP request is told where to sign in', async () => {
+  await withGateway(async (gateway) => {
+    const answer = await mcp(gateway.port, '', initialize, { Authorization: '' })
+    assert.equal(answer.status, 401)
+    const challenge = String(answer.headers['www-authenticate'])
+    assert.match(challenge, /^Bearer realm="sprintengine-studio-tailnet"/u)
+    assert.ok(
+      challenge.includes(
+        `resource_metadata="${gateway.origin}/.well-known/oauth-protected-resource${TAILNET_MCP_PATH}"`,
+      ),
+    )
+    assert.doesNotMatch(challenge, /error=/u, 'no token, so no invalid_token')
+    assert.equal(answer.json.error.code, 'unauthorized')
+  })
+})
+
+test('the resource and server metadata name this origin throughout', async () => {
+  await withGateway(async (gateway) => {
+    for (const path of [
+      '/.well-known/oauth-protected-resource',
+      `/.well-known/oauth-protected-resource${TAILNET_MCP_PATH}`,
+    ]) {
+      const resource = await http(gateway.port, 'GET', path)
+      assert.equal(resource.status, 200)
+      assert.deepEqual(resource.json, {
+        resource: `${gateway.origin}${TAILNET_MCP_PATH}`,
+        authorization_servers: [gateway.origin],
+        scopes_supported: [...TAILNET_SCOPES],
+        bearer_methods_supported: ['header'],
+        resource_name: 'SprintEngine Studio',
+      })
+    }
+    const server = await http(gateway.port, 'GET', '/.well-known/oauth-authorization-server')
+    assert.equal(server.status, 200)
+    assert.equal(server.json.issuer, gateway.origin)
+    assert.equal(server.json.token_endpoint, `${gateway.origin}${TAILNET_OAUTH_TOKEN_PATH}`)
+    assert.deepEqual(server.json.code_challenge_methods_supported, ['S256'])
+    assert.deepEqual(server.json.token_endpoint_auth_methods_supported, ['none'])
+    assert.equal(server.json.registration_endpoint, `${gateway.origin}${TAILNET_OAUTH_REGISTER_PATH}`)
+    assert.equal(server.json.authorization_response_iss_parameter_supported, true)
+    assert.equal(server.headers['cache-control'], 'no-store')
+  })
+})
+
+test('a Host this Studio does not answer to is refused, never echoed', async () => {
+  await withGateway(async (gateway) => {
+    const answer = await http(gateway.port, 'GET', '/.well-known/oauth-authorization-server', {
+      host: 'evil.example.com',
+    })
+    assert.equal(answer.status, 421)
+    assert.doesNotMatch(answer.text, /evil\.example\.com/u)
+    const page = await http(gateway.port, 'GET', authorizePath({ client_id: 'x' }), { host: 'evil.example.com' })
+    assert.equal(page.status, 421)
+  })
+})
+
+test('a browser request is refused outright, metadata and token endpoint included', async () => {
+  await withGateway(async (gateway) => {
+    const answer = await http(gateway.port, 'GET', '/.well-known/oauth-authorization-server', {
+      headers: { Origin: 'https://evil.example.com' },
+    })
+    assert.equal(answer.status, 403)
+    const tokenCall = await http(gateway.port, 'POST', TAILNET_OAUTH_TOKEN_PATH, {
+      body: 'grant_type=refresh_token&refresh_token=x',
+      headers: { Origin: gateway.origin, 'Content-Type': 'application/x-www-form-urlencoded' },
+    })
+    assert.equal(tokenCall.status, 403)
+  })
+})
+
+// ── Registration ──────────────────────────────────────────────────────────
+
+test('registration takes loopback redirect URIs and nothing else', async () => {
+  await withGateway(async (gateway) => {
+    const good = await postJson(gateway.port, TAILNET_OAUTH_REGISTER_PATH, {
+      client_name: 'Codex',
+      redirect_uris: ['http://127.0.0.1:1455/auth/callback', 'http://[::1]:1455/auth/callback'],
+    })
+    assert.equal(good.status, 201)
+    assert.match(good.json.client_id, /^mcc_/u)
+    assert.equal(good.json.token_endpoint_auth_method, 'none')
+    assert.equal(good.json.client_secret, undefined, 'a public client is issued no secret')
+    for (const bad of [
+      'https://app.example.com/cb',
+      'cursor://anysphere/callback',
+      'http://app.example.com/cb',
+      'https://app.example.com/cb#frag',
+      'https://user:pass@app.example.com/cb',
+      'javascript:alert(1)',
+    ]) {
+      const refused = await postJson(gateway.port, TAILNET_OAUTH_REGISTER_PATH, { redirect_uris: [bad] })
+      assert.equal(refused.status, 400, bad)
+      assert.equal(refused.json.error, 'invalid_redirect_uri', bad)
+    }
+    const noUris = await postJson(gateway.port, TAILNET_OAUTH_REGISTER_PATH, { client_name: 'x' })
+    assert.equal(noUris.json.error, 'invalid_redirect_uri')
+    const wrongGrant = await postJson(gateway.port, TAILNET_OAUTH_REGISTER_PATH, {
+      redirect_uris: [REDIRECT],
+      grant_types: ['client_credentials'],
+    })
+    assert.equal(wrongGrant.json.error, 'invalid_client_metadata')
+  })
+})
+
+test('a registration is its signed client id, so nothing is stored and nothing can be forged', async () => {
+  await withGateway(async (gateway) => {
+    const named = await postJson(gateway.port, TAILNET_OAUTH_REGISTER_PATH, {
+      client_name: 'Evil\u202eedoC\u0000 <script>',
+      redirect_uris: [REDIRECT],
+    })
+    assert.equal(named.json.client_name, 'Evil edoC <script>')
+    for (let index = 0; index < 20; index += 1)
+      assert.equal(
+        (await postJson(gateway.port, TAILNET_OAUTH_REGISTER_PATH, { redirect_uris: [REDIRECT] })).status,
+        201,
+      )
+    assert.equal(
+      existsSync(join(gateway.dir, TAILNET_OAUTH_FILENAME))
+        ? readFileSync(join(gateway.dir, TAILNET_OAUTH_FILENAME), 'utf8').includes('redirect')
+        : false,
+      false,
+    )
+    const clientId = named.json.client_id as string
+    assert.equal(gateway.oauth.clientFor(clientId)?.clientName, 'Evil edoC <script>')
+    // A client id rewritten to add a redirect URI no longer verifies.
+    const [body, signature] = clientId.slice('mcc_'.length).split('.')
+    const forged = JSON.parse(Buffer.from(body!, 'base64url').toString('utf8'))
+    forged.r.push('https://evil.example.com/cb')
+    const forgedId = `mcc_${Buffer.from(JSON.stringify(forged)).toString('base64url')}.${signature}`
+    assert.equal(gateway.oauth.clientFor(forgedId), null)
+    const tooMany = await postJson(gateway.port, TAILNET_OAUTH_REGISTER_PATH, {
+      redirect_uris: Array.from({ length: 6 }, (_, index) => `http://localhost:${4000 + index}/cb`),
+    })
+    assert.equal(tooMany.json.error, 'invalid_redirect_uri')
+  })
+})
+
+// ── The sign-in ───────────────────────────────────────────────────────────
+
+test('the full sign-in: approved in Studio, tokens, and the MCP endpoint over Streamable HTTP', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    // The request is waiting in Studio as an OAuth sign-in, without the code.
+    const waiting = gateway.devices.listPairRequests()
+    assert.equal(waiting.length, 1)
+    assert.equal(waiting[0]!.oauth?.clientName, 'Claude Code (studio)')
+    assert.equal(waiting[0]!.oauth?.redirectHost, 'localhost')
+    assert.equal(waiting[0]!.peerNode, MAC_MINI.name)
+    assert.equal(JSON.stringify(waiting).includes(signIn.code), false, 'the list never carries the code')
+    // The page refreshes itself and has nothing to press.
+    const page = await http(gateway.port, 'GET', signIn.waitPath)
+    assert.match(page.text, /<meta http-equiv="refresh"/u)
+    assert.doesNotMatch(page.text, /<form|<script|<button|<a /iu)
+    assert.match(String(page.headers['content-security-policy']), /default-src 'none'/u)
+    assert.equal(page.headers['referrer-policy'], 'no-referrer')
+
+    approve(gateway, signIn, ['workspace:read', 'backlog:read'])
+    const code = await codeFor(gateway, signIn)
+    const tokens = await exchange(gateway, signIn, code)
+    assert.equal(tokens.status, 200, tokens.text)
+    assert.equal(tokens.json.token_type, 'Bearer')
+    assert.equal(tokens.json.expires_in, OAUTH_ACCESS_TOKEN_TTL_MS / 1000)
+    assert.equal(tokens.json.scope, 'workspace:read backlog:read')
+    assert.match(tokens.json.access_token, /^mcat_/u)
+    assert.match(tokens.json.refresh_token, /^mcrt_/u)
+    assert.equal(tokens.headers['cache-control'], 'no-store')
+
+    // The client is a device in Settings → Remote, held to the node that redeemed the code.
+    const device = gateway.devices.listDevices().find((entry) => entry.origin.kind === 'oauth')
+    assert.ok(device)
+    assert.equal(device.name, 'Claude Code (studio)')
+    // Only hashes reach disk.
+    const stored = readFileSync(join(gateway.dir, TAILNET_OAUTH_FILENAME), 'utf8')
+    assert.equal(stored.includes(tokens.json.access_token), false)
+    assert.equal(stored.includes(tokens.json.refresh_token), false)
+
+    const access = tokens.json.access_token as string
+    const init = await mcp(gateway.port, access, initialize)
+    assert.equal(init.status, 200, init.text)
+    assert.equal(init.json.result.protocolVersion, '2025-06-18')
+    const session = String(init.headers['mcp-session-id'])
+    assert.ok(session.length > 20, 'a session is minted on initialize')
+
+    const initialized = await mcp(
+      gateway.port,
+      access,
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { 'Mcp-Session-Id': session, 'MCP-Protocol-Version': '2025-06-18' },
+    )
+    assert.equal(initialized.status, 202)
+    assert.equal(initialized.text, '', 'a notification is accepted with no body')
+
+    const listed = await mcp(
+      gateway.port,
+      access,
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      { 'Mcp-Session-Id': session, 'MCP-Protocol-Version': '2025-06-18' },
+    )
+    // Granted workspace:read and backlog:read: the read tool, not the mutation, never the local-only one.
+    assert.deepEqual(
+      listed.json.result.tools.map((tool: { name: string }) => tool.name),
+      ['workspace.list'],
+    )
+    const refused = await mcp(gateway.port, access, {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'backlog.update', arguments: {} },
+    })
+    assert.equal(refused.json.result.isError, true)
+    assert.match(JSON.stringify(refused.json.result), /tailnet_scope_required/u)
+    const localOnly = await mcp(gateway.port, access, {
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: { name: 'tailnet.status', arguments: {} },
+    })
+    assert.match(JSON.stringify(localOnly.json.result), /tailnet_local_only/u)
+
+    // A session another device's or unknown is 404, so the client initializes again.
+    const lost = await mcp(
+      gateway.port,
+      access,
+      { jsonrpc: '2.0', id: 5, method: 'ping' },
+      { 'Mcp-Session-Id': 'nope' },
+    )
+    assert.equal(lost.status, 404)
+
+    // Widened from Settings, the same token sees more at once.
+    gateway.devices.updateDeviceScopes(device.id, [...TAILNET_SCOPES])
+    const widened = await mcp(gateway.port, access, { jsonrpc: '2.0', id: 6, method: 'tools/list' })
+    assert.deepEqual(
+      widened.json.result.tools.map((tool: { name: string }) => tool.name),
+      ['workspace.list', 'backlog.update'],
+    )
+  })
+})
+
+test('an OAuth sign-in is granted at most what it asked for', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway, { scope: 'workspace:read offline_access' })
+    assert.deepEqual(gateway.devices.listPairRequests()[0]!.requestedScopes, ['workspace:read'])
+    approve(gateway, signIn, [...TAILNET_SCOPES])
+    const tokens = await exchange(gateway, signIn, await codeFor(gateway, signIn))
+    assert.equal(tokens.json.scope, 'workspace:read')
+  })
+})
+
+test('approval happens only in the Studio window', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    // Not by a tool, even one holding the code.
+    const byTool = gateway.devices.approvePairRequest({
+      id: signIn.requestId,
+      scopes: [...TAILNET_SCOPES],
+      code: signIn.code,
+      via: 'tool',
+    })
+    assert.equal(byTool.ok, false)
+    assert.equal(!byTool.ok && byTool.code, 'approve_in_window')
+    // Not by the pair-request collect, even with the page's key.
+    const key = new URL(signIn.waitPath, gateway.origin).searchParams.get('key')!
+    const collected = await postJson(gateway.port, TAILNET_PAIR_COLLECT_PATH, { id: signIn.requestId, secret: key })
+    assert.deepEqual(collected.json, { status: 'expired' })
+    // Not by the page, which offers nothing but itself, and keeps waiting.
+    const again = await http(gateway.port, 'GET', signIn.waitPath)
+    assert.equal(again.status, 200)
+    // And not with a guessed key.
+    const guessed = await http(gateway.port, 'GET', signIn.waitPath.replace(/key=[^&]+/u, 'key=guess'))
+    assert.equal(guessed.status, 404)
+    // A wrong code in the window does not approve it either.
+    const wrong = gateway.devices.approvePairRequest({ id: signIn.requestId, scopes: [], code: '000000', via: 'ipc' })
+    assert.equal(wrong.ok, false)
+  })
+})
+
+test('declined in Studio, the browser is sent back with access_denied', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    assert.equal(gateway.devices.denyPairRequest(signIn.requestId), true)
+    const back = await http(gateway.port, 'GET', signIn.waitPath)
+    assert.equal(back.status, 303)
+    const location = new URL(String(back.headers.location))
+    assert.equal(location.searchParams.get('error'), 'access_denied')
+    assert.equal(location.searchParams.get('state'), signIn.state)
+    assert.equal(gateway.devices.listDevices().length, 0)
+  })
+})
+
+test('a retried sign-in replaces the one it left waiting', async () => {
+  await withGateway(async (gateway) => {
+    await startSignIn(gateway)
+    const second = await startSignIn(gateway)
+    const waiting = gateway.devices.listPairRequests()
+    assert.equal(waiting.length, 1)
+    assert.equal(waiting[0]!.id, second.requestId)
+  })
+})
+
+test('redirect URIs are matched exactly, loopback on any port, and a bad one is never followed', async () => {
+  await withGateway(async (gateway) => {
+    const clientId = await register(gateway)
+    const { challenge } = pkce()
+    const base = {
+      response_type: 'code',
+      client_id: clientId,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 's1',
+    }
+    for (const redirect of [
+      'https://evil.example.com/cb',
+      'http://localhost:33418/other',
+      'http://127.0.0.1:33418/callback',
+    ]) {
+      const refused = await http(gateway.port, 'GET', authorizePath({ ...base, redirect_uri: redirect }))
+      assert.equal(refused.status, 400, redirect)
+      assert.equal(refused.headers.location, undefined, `${redirect} is not followed`)
+    }
+    const otherPort = await http(
+      gateway.port,
+      'GET',
+      authorizePath({ ...base, redirect_uri: 'http://localhost:50123/callback' }),
+    )
+    assert.equal(otherPort.status, 303, 'a loopback redirect URI matches on any port')
+    const unknownClient = await http(
+      gateway.port,
+      'GET',
+      authorizePath({ ...base, client_id: 'mcc_nope', redirect_uri: REDIRECT }),
+    )
+    assert.equal(unknownClient.status, 400)
+    assert.equal(unknownClient.headers.location, undefined)
+    assert.match(unknownClient.text, /does not know this client/u)
+  })
+})
+
+test('a bad authorization request goes back to the client as an RFC 6749 error', async () => {
+  await withGateway(async (gateway) => {
+    const clientId = await register(gateway)
+    const { challenge } = pkce()
+    const base = {
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 'xyz',
+    }
+    const cases: Array<[Record<string, string>, string]> = [
+      [{ code_challenge: '' }, 'invalid_request'],
+      [{ code_challenge_method: 'plain' }, 'invalid_request'],
+      [{ code_challenge: 'short' }, 'invalid_request'],
+      [{ response_type: 'token' }, 'unsupported_response_type'],
+      [{ resource: 'https://other.example.com/mcp' }, 'invalid_target'],
+    ]
+    for (const [override, error] of cases) {
+      const answer = await http(gateway.port, 'GET', authorizePath({ ...base, ...override }))
+      assert.equal(answer.status, 303, JSON.stringify(override))
+      const location = new URL(String(answer.headers.location))
+      assert.equal(location.searchParams.get('error'), error, JSON.stringify(override))
+      assert.equal(location.searchParams.get('state'), 'xyz')
+      assert.equal(location.searchParams.get('iss'), gateway.origin)
+    }
+    assert.equal(gateway.devices.listPairRequests().length, 0, 'no bad request reached the person')
+    // The origin alone is this Studio too.
+    const byOrigin = await http(gateway.port, 'GET', authorizePath({ ...base, resource: `${gateway.origin}/` }))
+    assert.match(String(byOrigin.headers.location), /authorize\/wait/u)
+  })
+})
+
+// ── Tokens ────────────────────────────────────────────────────────────────
+
+test('a code needs its PKCE verifier and is spent the first time it is presented', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    approve(gateway, signIn)
+    const code = await codeFor(gateway, signIn)
+    const wrong = await exchange(gateway, { ...signIn, verifier: pkce().verifier }, code)
+    assert.equal(wrong.status, 400)
+    assert.equal(wrong.json.error, 'invalid_grant')
+    const afterWrong = await exchange(gateway, signIn, code)
+    assert.equal(afterWrong.json.error, 'invalid_grant', 'a guess spends the code')
+  })
+})
+
+test('a code redeemed twice revokes what it minted', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    approve(gateway, signIn)
+    const code = await codeFor(gateway, signIn)
+    const missingRedirect = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'authorization_code',
+      code,
+      client_id: signIn.clientId,
+      code_verifier: signIn.verifier,
+    })
+    assert.equal(
+      missingRedirect.json.error,
+      'invalid_request',
+      'redirect_uri is required, and the code is not spent by a malformed request',
+    )
+    const good = await exchange(gateway, signIn, code)
+    assert.equal(good.status, 200, good.text)
+    const replayed = await exchange(gateway, signIn, code)
+    assert.equal(replayed.json.error, 'invalid_grant')
+    assert.equal(gateway.devices.listDevices().length, 0, 'the grant the code minted is gone')
+    const after = await mcp(gateway.port, good.json.access_token, initialize)
+    assert.equal(after.status, 401)
+  })
+})
+
+test('a code expires', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    approve(gateway, signIn)
+    const code = await codeFor(gateway, signIn)
+    gateway.advance(2 * 60 * 1000)
+    const late = await exchange(gateway, signIn, code)
+    assert.equal(late.json.error, 'invalid_grant')
+  })
+})
+
+test('refresh tokens rotate, and a replayed one revokes the grant', async () => {
+  await withGateway(async (gateway) => {
+    const { signIn, refresh } = await signedIn(gateway)
+    const first = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      refresh_token: refresh,
+      client_id: signIn.clientId,
+    })
+    assert.equal(first.status, 200, first.text)
+    assert.notEqual(first.json.refresh_token, refresh)
+    const working = await mcp(gateway.port, first.json.access_token, initialize)
+    assert.equal(working.status, 200)
+    // The old one, presented again after the grace minute: two parties hold this grant.
+    gateway.advance(OAUTH_REFRESH_GRACE_MS + 1000)
+    const replay = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      client_id: signIn.clientId,
+      refresh_token: refresh,
+    })
+    assert.equal(replay.json.error, 'invalid_grant')
+    assert.equal(gateway.devices.listDevices().length, 0)
+    const revoked = await mcp(gateway.port, first.json.access_token, initialize)
+    assert.equal(revoked.status, 401)
+    assert.match(String(revoked.headers['www-authenticate']), /error="invalid_token"/u)
+    const newer = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      client_id: signIn.clientId,
+      refresh_token: first.json.refresh_token,
+    })
+    assert.equal(newer.json.error, 'invalid_grant')
+  })
+})
+
+test('an access token expires after an hour, and the sign-in after 30 days however it is used', async () => {
+  await withGateway(async (gateway) => {
+    const { signIn, access, refresh } = await signedIn(gateway)
+    gateway.advance(OAUTH_ACCESS_TOKEN_TTL_MS + 1000)
+    const expired = await mcp(gateway.port, access, initialize)
+    assert.equal(expired.status, 401)
+    assert.equal(expired.json.error.code, 'token_expired')
+    assert.match(String(expired.headers['www-authenticate']), /error="invalid_token"/u)
+    const refreshed = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      client_id: signIn.clientId,
+      refresh_token: refresh,
+    })
+    assert.equal(refreshed.status, 200)
+    // Refreshed every day, it still ends at 30 days.
+    let current = refreshed.json.refresh_token as string
+    for (let day = 1; day < 30; day += 1) {
+      gateway.advance(24 * 60 * 60 * 1000)
+      const next = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+        grant_type: 'refresh_token',
+        client_id: signIn.clientId,
+        refresh_token: current,
+      })
+      if (next.status !== 200) break
+      current = next.json.refresh_token
+      assert.ok(next.json.expires_in <= OAUTH_ACCESS_TOKEN_TTL_MS / 1000)
+    }
+    gateway.advance(OAUTH_GRANT_TTL_MS)
+    const ended = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      client_id: signIn.clientId,
+      refresh_token: current,
+    })
+    assert.equal(ended.json.error, 'invalid_grant')
+    assert.equal(gateway.devices.listDevices().length, 0, 'the ended sign-in and its device are gone')
+  })
+})
+
+test('a grant is held to the node that redeemed its code', async () => {
+  await withGateway(async (gateway) => {
+    const { signIn, access, refresh } = await signedIn(gateway)
+    gateway.callFrom(BUILD_BOX)
+    const elsewhere = await mcp(gateway.port, access, initialize)
+    assert.equal(elsewhere.status, 401)
+    assert.equal(elsewhere.json.error.code, 'peer_mismatch')
+    const refreshElsewhere = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      client_id: signIn.clientId,
+      refresh_token: refresh,
+    })
+    assert.equal(refreshElsewhere.json.error, 'invalid_grant')
+    // Refused without spending it: the client on its own node still refreshes.
+    gateway.callFrom(MAC_MINI)
+    const home = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      client_id: signIn.clientId,
+      refresh_token: refresh,
+    })
+    assert.equal(home.status, 200)
+  })
+})
+
+test('revoking the device in Settings stops its tokens at once', async () => {
+  await withGateway(async (gateway) => {
+    const { signIn, access, refresh } = await signedIn(gateway)
+    const device = gateway.devices.listDevices()[0]!
+    gateway.devices.revokeDevice(device.id)
+    assert.equal((await mcp(gateway.port, access, initialize)).status, 401)
+    const refreshed = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      client_id: signIn.clientId,
+      refresh_token: refresh,
+    })
+    assert.equal(refreshed.json.error, 'invalid_grant')
+  })
+})
+
+test('a client revokes its own refresh token (RFC 7009)', async () => {
+  await withGateway(async (gateway) => {
+    const { access, refresh } = await signedIn(gateway)
+    const answer = await postForm(gateway.port, TAILNET_OAUTH_REVOKE_PATH, { token: refresh })
+    assert.equal(answer.status, 200)
+    assert.equal((await mcp(gateway.port, access, initialize)).status, 401)
+    const unknown = await postForm(gateway.port, TAILNET_OAUTH_REVOKE_PATH, { token: 'mcrt_nothing' })
+    assert.equal(unknown.status, 200)
+  })
+})
+
+test('an access token opens the MCP endpoint and no other route', async () => {
+  await withGateway(async (gateway) => {
+    const { access } = await signedIn(gateway)
+    for (const [method, path] of [
+      ['GET', TAILNET_IDENTITY_PATH],
+      ['POST', TAILNET_WS_TICKET_PATH],
+    ] as const) {
+      const answer = await http(gateway.port, method, path, {
+        headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/json' },
+        body: method === 'POST' ? '{}' : undefined,
+      })
+      assert.equal(answer.status, 401, path)
+      assert.equal(answer.json.error.code, 'wrong_resource', path)
+    }
+  })
+})
+
+test('an approved sign-in whose browser never came back leaves nothing behind', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    approve(gateway, signIn)
+    assert.equal(gateway.devices.listDevices().length, 1)
+    gateway.advance(16 * 60 * 1000)
+    gateway.oauth.sweep()
+    assert.equal(gateway.devices.listDevices().length, 0)
+  })
+})
+
+// ── The MCP endpoint, for everyone ────────────────────────────────────────
+
+test('Streamable HTTP: GET and DELETE are 405, mirrored headers must match the body, versions are checked', async () => {
+  await withGateway(async (gateway) => {
+    const offer = gateway.devices.offerPairing({ scopes: [...TAILNET_SCOPES] })
+    const paired = await postJson(gateway.port, TAILNET_PAIR_PATH, { pairingToken: offer.token, deviceName: 'phone' })
+    const token = paired.json.deviceToken as string
+    for (const method of ['GET', 'DELETE']) {
+      const answer = await http(gateway.port, method, TAILNET_MCP_PATH, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      assert.equal(answer.status, 405, method)
+      assert.equal(answer.headers.allow, 'POST')
+    }
+    const mismatch = await mcp(
+      gateway.port,
+      token,
+      { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      { 'Mcp-Method': 'tools/call' },
+    )
+    assert.equal(mismatch.status, 400)
+    assert.equal(mismatch.json.error.code, -32020)
+    const nameMismatch = await mcp(
+      gateway.port,
+      token,
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'workspace.list', arguments: {} } },
+      { 'Mcp-Method': 'tools/call', 'Mcp-Name': `=?base64?${Buffer.from('backlog.update').toString('base64')}?=` },
+    )
+    assert.equal(nameMismatch.json.error.code, -32020)
+    const nameMatch = await mcp(
+      gateway.port,
+      token,
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'workspace.list', arguments: {} } },
+      { 'Mcp-Method': 'tools/call', 'Mcp-Name': 'workspace.list' },
+    )
+    assert.equal(nameMatch.status, 200)
+    const unsupported = await mcp(
+      gateway.port,
+      token,
+      { jsonrpc: '2.0', id: 1, method: 'ping' },
+      { 'MCP-Protocol-Version': '2099-01-01' },
+    )
+    assert.equal(unsupported.status, 400)
+    assert.ok(unsupported.json.error.data.supported.includes('2025-06-18'))
+    const response = await mcp(gateway.port, token, { jsonrpc: '2.0', id: 9, result: {} })
+    assert.equal(response.status, 202)
+    const batch = await mcp(gateway.port, token, [{ jsonrpc: '2.0', id: 1, method: 'ping' }])
+    assert.equal(batch.status, 400)
+    // The device token keeps working on the MCP endpoint, as it always did.
+    const ping = await mcp(gateway.port, token, { jsonrpc: '2.0', id: 1, method: 'ping' })
+    assert.deepEqual(ping.json, { jsonrpc: '2.0', id: 1, result: {} })
+  })
+})
+
+test('a pairing code sent as a bearer token is told what to do with it', async () => {
+  await withGateway(async (gateway) => {
+    const offer = gateway.devices.offerPairing({ scopes: [...TAILNET_SCOPES] })
+    for (const bearer of [offer.token, `sprintengine-tailnet://pair?endpoint=127.0.0.1:1&token=${offer.token}`]) {
+      const answer = await mcp(gateway.port, bearer, initialize)
+      assert.equal(answer.status, 401)
+      assert.equal(answer.json.error.code, 'pairing_code_not_a_token')
+      assert.match(answer.json.error.message, /POST \/tailnet\/v1\/pair/u)
+      assert.match(String(answer.headers['www-authenticate']), /resource_metadata=/u)
+    }
+    // And the offer is not spent by it.
+    assert.ok(gateway.devices.getPairingState())
+  })
+})
+
+// ── Pure rules ────────────────────────────────────────────────────────────
+
+test('the pure rules: redirect URIs, PKCE, resource indicators', () => {
+  assert.deepEqual(checkRedirectUri('http://[::1]:4000/cb'), { kind: 'loopback', host: '[::1]' })
+  assert.equal(checkRedirectUri('http://localhost.evil.com/cb'), null)
+  assert.equal(redirectUriRegistered('http://127.0.0.1:9/cb', ['http://127.0.0.1:1/cb']), true)
+  assert.equal(redirectUriRegistered('http://127.0.0.1:9/cb?x=1', ['http://127.0.0.1:1/cb']), false)
+  assert.equal(redirectUriRegistered('https://a.example.com:9/cb', ['https://a.example.com:1/cb']), false)
+  const { verifier, challenge } = pkce()
+  assert.equal(pkceMatches(verifier, challenge), true)
+  assert.equal(pkceMatches('short', challenge), false)
+  assert.equal(
+    canonicalResource('HTTPS://Mac-Mini.Example.TS.NET:443/tailnet/v1/mcp/'),
+    'https://mac-mini.example.ts.net/tailnet/v1/mcp',
+  )
+  assert.equal(canonicalResource('https://mac-mini.example.ts.net/#x'), null)
+  assert.equal(canonicalResource('mac-mini.example.ts.net'), null)
+})
+
+test('the store keeps its signing key across restarts and no registration at all', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-store-'))
+  try {
+    const devices = createTailnetDeviceStore({ resolveUserDataDir: () => dir })
+    const store = createTailnetOAuthStore({ resolveUserDataDir: () => dir, devices })
+    const registered = store.registerClient({ redirect_uris: [REDIRECT] })
+    assert.equal(registered.ok, true)
+    store.dispose()
+    // The signing key survives a restart, so a client registered before one is still known.
+    const reread = createTailnetOAuthStore({ resolveUserDataDir: () => dir, devices })
+    assert.ok(registered.ok && reread.clientFor(registered.client.clientId))
+    reread.dispose()
+    const stored = JSON.parse(readFileSync(join(dir, TAILNET_OAUTH_FILENAME), 'utf8'))
+    assert.deepEqual(stored.grants, [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ── Behind Tailscale Serve ────────────────────────────────────────────────
+
+test('behind Tailscale Serve, only OAuth sign-in and OAuth MCP calls are served, Host is checked, and the forwarded address is the peer', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-serve-'))
+  const asked: string[] = []
+  const devices = createTailnetDeviceStore({ resolveUserDataDir: () => dir })
+  const oauth = createTailnetOAuthStore({ resolveUserDataDir: () => dir, devices })
+  let tailnetOrigin = ''
+  const server = createTailnetGatewayServer({
+    bindAddress: '127.0.0.1',
+    port: 0,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: () => false,
+    devices,
+    peers: {
+      identify: async (address) => {
+        asked.push(address)
+        return MAC_MINI
+      },
+      resolve: async () => MAC_MINI.name,
+    },
+    oauth: { store: oauth },
+    publicOrigins: () => ({ tailnet: [tailnetOrigin], serve: 'https://mac-mini.example.ts.net' }),
+  })
+  await server.start()
+  try {
+    const port = server.address()!.port
+    tailnetOrigin = `http://127.0.0.1:${port}`
+    const servePort = await server.openServeListener()
+    assert.equal(server.serveAddress()?.port, servePort)
+    const viaServe = (
+      method: string,
+      path: string,
+      options: { headers?: Record<string, string>; body?: string; host?: string } = {},
+    ) =>
+      http(servePort, method, path, {
+        host: options.host ?? 'mac-mini.example.ts.net',
+        ...(options.body ? { body: options.body } : {}),
+        headers: { 'X-Forwarded-For': '100.64.0.9', 'Content-Type': 'application/json', ...options.headers },
+      })
+    const metadata = await viaServe('GET', '/.well-known/oauth-authorization-server')
+    assert.equal(metadata.status, 200)
+    assert.equal(metadata.json.issuer, 'https://mac-mini.example.ts.net')
+    assert.equal(metadata.json.token_endpoint, `https://mac-mini.example.ts.net${TAILNET_OAUTH_TOKEN_PATH}`)
+    assert.equal(
+      (await viaServe('GET', '/.well-known/oauth-authorization-server', { host: `127.0.0.1:${servePort}` })).status,
+      421,
+    )
+    const unauthorized = await viaServe('POST', TAILNET_MCP_PATH, { body: JSON.stringify(initialize) })
+    assert.match(
+      String(unauthorized.headers['www-authenticate']),
+      /resource_metadata="https:\/\/mac-mini\.example\.ts\.net\/\.well-known\/oauth-protected-resource\/tailnet\/v1\/mcp"/u,
+    )
+
+    // A paired device's token is node-bound, and a process here can forge the
+    // node behind Serve: so it is not taken there at all, nor any other route.
+    const offer = devices.offerPairing({ scopes: [...TAILNET_SCOPES] })
+    const paired = await postJson(port, TAILNET_PAIR_PATH, { pairingToken: offer.token, deviceName: 'phone' })
+    const token = paired.json.deviceToken as string
+    const deviceViaServe = await viaServe('POST', TAILNET_MCP_PATH, {
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    assert.equal(deviceViaServe.status, 401)
+    assert.equal(deviceViaServe.json.error.code, 'oauth_required_here')
+    for (const [method, path] of [
+      ['POST', TAILNET_PAIR_PATH],
+      ['GET', '/tailnet/v1/health'],
+      ['POST', '/tailnet/v1/pair-request'],
+      ['POST', TAILNET_WS_TICKET_PATH],
+      ['GET', TAILNET_IDENTITY_PATH],
+      ['GET', TAILNET_MCP_PATH],
+    ] as const) {
+      const answer = await viaServe(method, path, {
+        body: method === 'POST' ? '{}' : undefined,
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      assert.equal(answer.status, 404, `${method} ${path}`)
+    }
+
+    // The sign-in itself works there, and the node is the forwarded one.
+    const registered = await viaServe('POST', TAILNET_OAUTH_REGISTER_PATH, {
+      body: JSON.stringify({ client_name: 'Claude Code', redirect_uris: [REDIRECT] }),
+    })
+    assert.equal(registered.status, 201)
+    asked.length = 0
+    const { challenge } = pkce()
+    const opened = await viaServe(
+      'GET',
+      authorizePath({
+        response_type: 'code',
+        client_id: registered.json.client_id,
+        redirect_uri: REDIRECT,
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }),
+    )
+    assert.equal(opened.status, 303)
+    assert.deepEqual(asked, ['100.64.0.9'], 'behind Serve, the forwarded tailnet address is the peer')
+    assert.equal(devices.listPairRequests()[0]?.oauth?.viaServe, true, 'the card says the node is what Serve reported')
+    asked.length = 0
+    await mcp(port, token, { jsonrpc: '2.0', id: 1, method: 'ping' }, { 'X-Forwarded-For': '100.64.0.9' })
+    assert.deepEqual(asked, ['127.0.0.1'], 'on the tailnet listener the header is ignored')
+    await server.closeServeListener()
+    assert.equal(server.serveAddress(), null)
+  } finally {
+    oauth.dispose()
+    await server.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the service publishes HTTPS when asked, names it in the MCP URL, and takes it down', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-https-'))
+  const published: number[] = []
+  const withdrawn: number[] = []
+  let refuse = false
+  writeTailnetSettings(dir, { enabled: true, port: await freePort(), notifications: false })
+  const service = createTailnetRemoteService({
+    resolveUserDataDir: () => dir,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: () => false,
+    resolveBindAddress: () => '127.0.0.1',
+    resolveSelfDnsName: async () => 'mac-mini.example.ts.net',
+    createPeerResolver: () => ({ identify: async () => MAC_MINI, resolve: async () => MAC_MINI.name }),
+    publishHttps: async (localPort) => {
+      published.push(localPort)
+      return refuse
+        ? { ok: false, message: 'Tailscale already serves something else on HTTPS port 443.' }
+        : {
+            ok: true,
+            origin: 'https://mac-mini.example.ts.net',
+            stop: async () => {
+              withdrawn.push(localPort)
+            },
+          }
+    },
+    withdrawStaleHttps: async () => {},
+  })
+  try {
+    const started = await service.initialize()
+    assert.equal(started.mcp?.https.state, 'off')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(
+      service.getStatus().mcp?.url,
+      `http://mac-mini.example.ts.net:${started.port}${TAILNET_MCP_PATH}`,
+      'the MagicDNS name, once known',
+    )
+    const on = await service.setHttps(true)
+    assert.equal(on.mcp?.https.state, 'on')
+    assert.equal(on.mcp?.url, `https://mac-mini.example.ts.net${TAILNET_MCP_PATH}`)
+    assert.equal(published.length, 1)
+    assert.ok(published[0]! > 0 && published[0] !== started.port, 'Serve is pointed at the loopback listener')
+    const off = await service.setHttps(false)
+    assert.equal(off.mcp?.https.state, 'off')
+    assert.deepEqual(withdrawn, published)
+    assert.equal(off.mcp?.url, `http://mac-mini.example.ts.net:${started.port}${TAILNET_MCP_PATH}`)
+    refuse = true
+    const refused = await service.setHttps(true)
+    assert.equal(refused.mcp?.https.state, 'error')
+    assert.match(refused.mcp?.https.message ?? '', /something else/u)
+    assert.equal(refused.mcp?.url?.startsWith('http://'), true)
+  } finally {
+    await service.shutdown()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+async function freePort(): Promise<number> {
+  const { createServer } = await import('node:net')
+  const probe = createServer()
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const address = probe.address()
+  const port = typeof address === 'object' && address ? address.port : 0
+  await new Promise<void>((resolve) => probe.close(() => resolve()))
+  return port
+}
+
+// ── Hardening ─────────────────────────────────────────────────────────────
+
+test('a sign-in whose node Tailscale cannot name is not completed, and an unnamed refresh is refused', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    approve(gateway, signIn)
+    const code = await codeFor(gateway, signIn)
+    gateway.callFrom(null)
+    const refused = await exchange(gateway, signIn, code)
+    assert.equal(refused.json.error, 'invalid_grant')
+    assert.match(refused.json.error_description, /could not confirm through Tailscale/u)
+    assert.equal(gateway.devices.listDevices().length, 0, 'no unbound grant is left behind')
+    gateway.callFrom(MAC_MINI)
+    const { signIn: second, refresh } = await signedIn(gateway)
+    gateway.callFrom(null)
+    const unnamed = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      refresh_token: refresh,
+      client_id: second.clientId,
+    })
+    assert.equal(unnamed.json.error, 'invalid_grant')
+  })
+})
+
+test('a refresh names its client', async () => {
+  await withGateway(async (gateway) => {
+    const { refresh } = await signedIn(gateway)
+    const answer = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, {
+      grant_type: 'refresh_token',
+      refresh_token: refresh,
+    })
+    assert.equal(answer.json.error, 'invalid_request')
+  })
+})
+
+test('a sign-in another one replaced is forgotten with it', async () => {
+  await withGateway(async (gateway) => {
+    const first = await startSignIn(gateway)
+    await startSignIn(gateway)
+    const stale = await http(gateway.port, 'GET', first.waitPath)
+    assert.equal(stale.status, 404)
+    assert.equal(gateway.oauth.pendingAuthorization(first.requestId), null)
+  })
+})
+
+test('a sign-in started by any web page is refused, and one opened directly is not', async () => {
+  await withGateway(async (gateway) => {
+    const clientId = await register(gateway)
+    const { challenge } = pkce()
+    const path = authorizePath({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    })
+    const crossSite = await http(gateway.port, 'GET', path, { headers: { 'Sec-Fetch-Site': 'cross-site' } })
+    assert.equal(crossSite.status, 403)
+    // Every machine on a tailnet is the same site: a page on another one is refused too.
+    const sameSite = await http(gateway.port, 'GET', path, {
+      headers: { 'Sec-Fetch-Site': 'same-site', 'Sec-Fetch-Mode': 'navigate' },
+    })
+    assert.equal(sameSite.status, 403)
+    const sameOrigin = await http(gateway.port, 'GET', path, { headers: { 'Sec-Fetch-Site': 'same-origin' } })
+    assert.equal(sameOrigin.status, 403, 'nothing on this origin links to the start of a sign-in')
+    assert.equal(gateway.devices.listPairRequests().length, 0)
+    const direct = await http(gateway.port, 'GET', path, { headers: { 'Sec-Fetch-Site': 'none' } })
+    assert.equal(direct.status, 303)
+  })
+})
+
+test('resetting registrations stops every client id issued so far, and leaves signed-in clients alone', async () => {
+  await withGateway(async (gateway) => {
+    const { signIn, access } = await signedIn(gateway)
+    gateway.oauth.resetRegistrations()
+    assert.equal(gateway.oauth.clientFor(signIn.clientId), null)
+    assert.equal((await mcp(gateway.port, access, initialize)).status, 200)
+  })
+})
+
+test('a sign-in is approved only with an explicit window answer', async () => {
+  await withGateway(async (gateway) => {
+    const signIn = await startSignIn(gateway)
+    const unsaid = gateway.devices.approvePairRequest({
+      id: signIn.requestId,
+      scopes: [...TAILNET_SCOPES],
+      code: signIn.code,
+    })
+    assert.equal(!unsaid.ok && unsaid.code, 'approve_in_window')
+  })
+})
+
+test('behind Tailscale Serve, a caller with no tailnet address, or one that came through Funnel, is refused', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-funnel-'))
+  const devices = createTailnetDeviceStore({ resolveUserDataDir: () => dir })
+  const oauth = createTailnetOAuthStore({ resolveUserDataDir: () => dir, devices })
+  const server = createTailnetGatewayServer({
+    bindAddress: '127.0.0.1',
+    port: 0,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: () => false,
+    devices,
+    peers: { identify: async () => MAC_MINI, resolve: async () => MAC_MINI.name },
+    oauth: { store: oauth },
+    publicOrigins: () => ({ tailnet: [], serve: 'https://mac-mini.example.ts.net' }),
+  })
+  await server.start()
+  try {
+    const servePort = await server.openServeListener()
+    const ask = (headers: Record<string, string>) =>
+      http(servePort, 'GET', '/.well-known/oauth-authorization-server', { host: 'mac-mini.example.ts.net', headers })
+    assert.equal((await ask({})).status, 403, 'no forwarded address: a process on this machine')
+    assert.equal((await ask({ 'X-Forwarded-For': '203.0.113.9' })).json.error.code, 'tailnet_peer_required')
+    const funnel = await ask({ 'X-Forwarded-For': '100.64.0.9', 'Tailscale-Funnel-Request': '?1' })
+    assert.equal(funnel.status, 403)
+    assert.equal(funnel.json.error.code, 'funnel_not_allowed')
+    assert.equal((await ask({ 'X-Forwarded-For': '100.64.0.9' })).status, 200)
+  } finally {
+    oauth.dispose()
+    await server.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a serve mapping an earlier run left behind is withdrawn at startup while HTTPS is off', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-stale-'))
+  const ran: string[][] = []
+  writeFileSync(join(dir, 'tailnet-https-serve.json'), JSON.stringify({ servePort: 443, localPort: 51234 }))
+  const status = JSON.stringify({
+    TCP: { '443': { HTTPS: true } },
+    Web: { 'mac-mini.example.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:51234' } } } },
+  })
+  try {
+    await withdrawRecordedGatewayHttps({
+      recordDir: dir,
+      deps: {
+        read: async () => status,
+        run: async (args) => {
+          ran.push([...args])
+          return { ok: true, stdout: '', stderr: '' }
+        },
+      },
+    })
+    assert.deepEqual(ran, [['serve', '--https=443', 'off']])
+    assert.equal(existsSync(join(dir, 'tailnet-https-serve.json')), false)
+    // Not ours any more (pointed elsewhere since): left alone.
+    ran.length = 0
+    writeFileSync(join(dir, 'tailnet-https-serve.json'), JSON.stringify({ servePort: 443, localPort: 40000 }))
+    await withdrawRecordedGatewayHttps({
+      recordDir: dir,
+      deps: {
+        read: async () => status,
+        run: async (args) => (ran.push([...args]), { ok: true, stdout: '', stderr: '' }),
+      },
+    })
+    assert.deepEqual(ran, [])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  let withdrawn = 0
+  const serviceDir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-stale-service-'))
+  writeTailnetSettings(serviceDir, { enabled: false, port: 1, notifications: false })
+  const service = createTailnetRemoteService({
+    resolveUserDataDir: () => serviceDir,
+    serverName: 'sprintengine-studio',
+    serverVersion: '9.9.9',
+    resolveTools: () => tools(),
+    isMutation: () => false,
+    resolveBindAddress: () => '127.0.0.1',
+    withdrawStaleHttps: async () => {
+      withdrawn += 1
+    },
+  })
+  try {
+    await service.initialize()
+    assert.equal(withdrawn, 1)
+  } finally {
+    await service.shutdown()
+    rmSync(serviceDir, { recursive: true, force: true })
+  }
+})
+
+test('a refresh racing another from the same node gets the same tokens; from another node, or later, it revokes', async () => {
+  await withGateway(async (gateway) => {
+    const { signIn, refresh } = await signedIn(gateway)
+    const form = { grant_type: 'refresh_token', refresh_token: refresh, client_id: signIn.clientId }
+    const winner = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, form)
+    assert.equal(winner.status, 200)
+    const loser = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, form)
+    assert.equal(loser.status, 200, loser.text)
+    assert.equal(loser.json.refresh_token, winner.json.refresh_token, 'both callers hold one pair')
+    assert.equal(loser.json.access_token, winner.json.access_token)
+    assert.equal(gateway.devices.listDevices().length, 1)
+    // From another node within the minute: a replay.
+    gateway.callFrom(BUILD_BOX)
+    const elsewhere = await postForm(gateway.port, TAILNET_OAUTH_TOKEN_PATH, form)
+    assert.equal(elsewhere.json.error, 'invalid_grant')
+    assert.equal(gateway.devices.listDevices().length, 0, 'revoked')
+  })
+})
+
+test('one machine raises at most four sign-in prompts in ten minutes', async () => {
+  await withGateway(async (gateway) => {
+    const clientId = await register(gateway)
+    const open = () =>
+      http(
+        gateway.port,
+        'GET',
+        authorizePath({
+          response_type: 'code',
+          client_id: clientId,
+          redirect_uri: REDIRECT,
+          code_challenge: pkce().challenge,
+          code_challenge_method: 'S256',
+        }),
+      )
+    for (let index = 0; index < 4; index += 1) assert.match(String((await open()).headers.location), /authorize\/wait/u)
+    const fifth = new URL(String((await open()).headers.location))
+    assert.equal(fifth.searchParams.get('error'), 'temporarily_unavailable')
+    const waiting = gateway.devices.listPairRequests()
+    assert.equal(waiting.length, 1)
+    assert.equal(waiting[0]!.retry, true, 'a retry is marked, so it is not notified again')
+    gateway.advance(10 * 60 * 1000 + 1000)
+    assert.match(String((await open()).headers.location), /authorize\/wait/u)
+  })
+})
+
+test('one device opening sessions without end pushes out only its own', async () => {
+  await withGateway(async (gateway) => {
+    const pair = async (name: string) => {
+      const offer = gateway.devices.offerPairing({ scopes: [...TAILNET_SCOPES] })
+      return (await postJson(gateway.port, TAILNET_PAIR_PATH, { pairingToken: offer.token, deviceName: name })).json
+        .deviceToken as string
+    }
+    const quiet = await pair('laptop')
+    const noisy = await pair('script')
+    const kept = String((await mcp(gateway.port, quiet, initialize)).headers['mcp-session-id'])
+    const firstNoisy = String((await mcp(gateway.port, noisy, initialize)).headers['mcp-session-id'])
+    for (let index = 0; index < 40; index += 1) await mcp(gateway.port, noisy, initialize)
+    const ping = { jsonrpc: '2.0', id: 9, method: 'ping' }
+    assert.equal((await mcp(gateway.port, quiet, ping, { 'Mcp-Session-Id': kept })).status, 200)
+    assert.equal((await mcp(gateway.port, noisy, ping, { 'Mcp-Session-Id': firstNoisy })).status, 404)
+  })
+})
+
+test('HTTPS runs a foreground serve that is up once Serve reports it, and ends with stop', async () => {
+  const { EventEmitter } = await import('node:events')
+  const dir = mkdtempSync(join(tmpdir(), 'tailnet-oauth-fg-'))
+  const self = JSON.stringify({
+    BackendState: 'Running',
+    Self: { ID: 'n1', DNSName: 'mac-mini.example.ts.net.', TailscaleIPs: ['100.64.0.1'], HostName: 'mac-mini' },
+    Peer: {},
+  })
+  let mapped = false
+  let stopped = 0
+  const spawned: string[][] = []
+  const serveStatus = () =>
+    JSON.stringify(
+      mapped
+        ? {
+            Foreground: {
+              session: {
+                TCP: { '443': { HTTPS: true } },
+                Web: { 'mac-mini.example.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:51000' } } } },
+              },
+            },
+          }
+        : {},
+    )
+  const deps = {
+    read: async (args: readonly string[]) => (args[0] === 'status' ? self : serveStatus()),
+    spawn: (args: readonly string[]) => {
+      spawned.push([...args])
+      const child = Object.assign(new EventEmitter(), {
+        pid: 4242,
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      })
+      setTimeout(() => {
+        mapped = true
+      }, 50)
+      return {
+        child: child as never,
+        stop: () => {
+          stopped += 1
+          mapped = false
+          setTimeout(() => child.emit('exit', 0), 5)
+        },
+      }
+    },
+  }
+  try {
+    const published = await publishGatewayOverHttps({ localPort: 51000, recordDir: dir, deps })
+    assert.equal(published.ok, true, JSON.stringify(published))
+    assert.deepEqual(spawned, [['serve', '--https=443', 'http://127.0.0.1:51000']], 'foreground: no --bg')
+    assert.equal(published.ok && published.origin, 'https://mac-mini.example.ts.net')
+    const record = JSON.parse(readFileSync(join(dir, 'tailnet-https-serve.json'), 'utf8'))
+    assert.equal(record.pid, 4242)
+    if (published.ok) await published.stop()
+    assert.equal(stopped, 1)
+    assert.equal(existsSync(join(dir, 'tailnet-https-serve.json')), false)
+    // Something already on 443 is left alone and nothing is started.
+    mapped = true
+    spawned.length = 0
+    const refused = await publishGatewayOverHttps({ localPort: 52000, recordDir: dir, deps })
+    assert.equal(refused.ok, false)
+    assert.deepEqual(spawned, [])
+    // A recorded serve an earlier run left is ended at the next start.
+    writeFileSync(join(dir, 'tailnet-https-serve.json'), JSON.stringify({ servePort: 443, localPort: 51000, pid: 777 }))
+    const killed: number[] = []
+    await withdrawRecordedGatewayHttps({
+      recordDir: dir,
+      deps: { isOurServe: (pid) => pid === 777, kill: (pid) => killed.push(pid) },
+    })
+    assert.deepEqual(killed, [777])
+    assert.equal(existsSync(join(dir, 'tailnet-https-serve.json')), false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
