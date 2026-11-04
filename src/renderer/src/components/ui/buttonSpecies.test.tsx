@@ -203,7 +203,10 @@ test('buttonSpecies', async () => {
         assert.ok(!/(?:^|\s)rounded-(?:xs|sm)(?:\s|$)/.test(classes), `size=${size} drops the step’s own radius`)
         assert.deepEqual(duplicateUtilities(classes), [], `SendButton size=${size} declares a property twice`)
         assert.match(classes, /bg-\[color:var\(--accent-primary\)\]/, 'the primary’s fill')
-        assert.match(classes, /disabled:hover:bg-\[color:var\(--accent-primary\)\]/, 'and its disabled hover guard')
+        // Nothing to send is a neutral disc, not a dimmed accent one (2026-11-04).
+        assert.match(classes, /(?:^|\s)disabled:bg-\[color:var\(--bg-active\)\]/, 'its neutral disabled ground')
+        assert.match(classes, /disabled:hover:bg-\[color:var\(--bg-active\)\]/, 'and its disabled hover guard')
+        assert.ok(!/disabled:opacity-/.test(classes), 'and no dimming on top of it')
         assert.match(classes, /control-raised/, 'and its one lit edge (tier 1)')
       }
       assert.equal(attrOf(<SendButton busy>Save</SendButton>, 'aria-busy'), 'true')

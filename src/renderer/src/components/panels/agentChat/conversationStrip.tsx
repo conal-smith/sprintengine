@@ -477,7 +477,7 @@ function BranchItem({
   const cut = text !== branch.name
   const content = (
     <>
-      {branch.worktree ? <WorktreeGlyph className="icon-xs shrink-0 text-[color:var(--text-subtle)]" /> : null}
+      {branch.worktree ? <WorktreeGlyph className="icon-xs shrink-0 text-[color:var(--text-muted)]" /> : null}
       <span ref={textRef} aria-hidden={cut || undefined} className="whitespace-nowrap font-mono">
         {text}
       </span>
@@ -490,12 +490,14 @@ function BranchItem({
       wrapperClassName="flex min-w-0"
     >
       {branch.onOpen ? (
-        // The strip's quiet ghost: the item reads as the line's text until
-        // the pointer arrives, as the New chat strip's project line does.
+        // The strip's ghost: the item reads as the line's text until the
+        // pointer arrives, as the New chat strip's project line does. Muted
+        // rather than subtle (2026-11-04): at the subtle step, under a
+        // composer that is itself quiet, the checkout read as switched off.
         <GhostButton
           ref={itemRef}
           size="xs"
-          tone="subtle"
+          tone="neutral"
           onClick={branch.onOpen}
           aria-label={branchItemLabel(branch)}
           data-strip-branch={branch.name}
@@ -509,7 +511,7 @@ function BranchItem({
           role="img"
           aria-label={branchItemLabel(branch)}
           data-strip-branch={branch.name}
-          className="inline-flex h-control-xs min-w-0 items-center gap-1.5 whitespace-nowrap px-2 text-meta text-[color:var(--text-subtle)]"
+          className="inline-flex h-control-xs min-w-0 items-center gap-1.5 whitespace-nowrap px-2 text-meta text-[color:var(--text-muted)]"
         >
           {content}
         </span>

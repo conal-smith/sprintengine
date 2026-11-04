@@ -125,6 +125,7 @@ import {
   type ExtensionScaffoldTargetState,
 } from '../../../../../shared/extension-scaffold'
 import { ScheduleSlashPicker, type ScheduleSlashPickerHandle } from './schedule/ScheduleSlashPicker'
+import { CHAT_COMPOSER_PLACEHOLDER } from './composerPlaceholder'
 import { localTimeZone } from './schedule/scheduleEditor'
 import { defaultSendAt, sendTimeWords } from './schedule/sendTime'
 import { rememberSchedule } from './schedule/recentSchedules'
@@ -2207,7 +2208,9 @@ export default function NewAgentPanel({
       ? 'Describe the extension…'
       : selection.kind === 'general'
         ? 'Describe the task. It runs in a terminal you can take over.'
-        : 'Describe the task…'
+        : selection.kind === 'conversation'
+          ? CHAT_COMPOSER_PLACEHOLDER
+          : 'Describe the task…'
   // No agent CLI at all, or (for a chat agent) none with a chat runtime: the
   // same install route either way, because installing a CLI is the answer to
   // both.
