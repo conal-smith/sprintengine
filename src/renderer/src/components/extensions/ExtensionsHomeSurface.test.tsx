@@ -220,15 +220,21 @@ test('ExtensionsHomeSurface', async () => {
     'and there is one slot per row, no more',
   )
 
-  /** What clicking left behind: the routed surface, and the view it was latched to. */
+  /**
+   * What clicking left behind: the surface it opened — a door in the card
+   * region, or the Extensions modal over it (owner ruling 2026-11-03) — and the
+   * view it was latched to.
+   */
   function landing(click: () => void): { surface: string | null; view: ExtensionsSurfaceTarget | null } {
     act(() => {
       useWorkspaceStore.getState().closeGlobalSurface()
+      useWorkspaceStore.getState().closeModalSurface()
     })
     consumePendingExtensionsSurfaceTarget()
     act(click)
+    const state = useWorkspaceStore.getState()
     return {
-      surface: useWorkspaceStore.getState().activeGlobalSurface,
+      surface: state.activeGlobalSurface ?? state.activeModalSurface,
       view: consumePendingExtensionsSurfaceTarget(),
     }
   }
@@ -244,7 +250,7 @@ test('ExtensionsHomeSurface', async () => {
       fromRow,
       `${label}: the tile lands where the row lands — same surface, same latched view`,
     )
-    assert.ok(fromTile.surface, `${label}: and clicking it actually routes the card region somewhere`)
+    assert.ok(fromTile.surface, `${label}: and clicking it actually opens something`)
   }
 
   // A door already open does not change what the next tile does: the view
@@ -259,13 +265,15 @@ test('ExtensionsHomeSurface', async () => {
       .find((tile) => nameOf(tile) === 'Skills')
       ?.click()
   })
-  assert.equal(useWorkspaceStore.getState().activeGlobalSurface, 'extensions')
+  assert.equal(useWorkspaceStore.getState().activeModalSurface, 'extensions', 'the tile opens the Extensions modal')
+  assert.equal(useWorkspaceStore.getState().activeGlobalSurface, 'design', 'over the door that was open')
   assert.deepEqual(
     consumePendingExtensionsSurfaceTarget(),
     { view: 'skills' },
     'a tile clicked over an open door latches its view first, like the row does',
   )
   act(() => {
+    useWorkspaceStore.getState().closeModalSurface()
     useWorkspaceStore.getState().closeGlobalSurface()
   })
 

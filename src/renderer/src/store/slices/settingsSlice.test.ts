@@ -414,26 +414,29 @@ test('settingsSlice', async () => {
   carrier.activeModalSurface = null
   carrier.activeGlobalSurface = null
 
-  // openExtensionsSurface opens the Plugins DOOR (Extensions drawer ruling,
-  // 2026-09-05; a modal from 2026-09-01 until then, the Extensions door before
-  // that); closing is closeGlobalSurface. The caller can be inside the Settings
-  // modal (Settings → Modules "Browse marketplace"): the door routes the region
-  // the modal was floating over, so the modal closes and the settings request it
-  // was carrying goes with it rather than surviving to re-open a category later.
-  // The sidebar follows: Plugins is a drawer row, so leaving it lands on the
-  // drawer rather than on the workspaces tree.
+  // openExtensionsSurface opens the Extensions MODAL (owner ruling 2026-11-03;
+  // the Plugins door from 2026-09-05, a modal from 2026-09-01 until then). The
+  // caller can be inside the Settings modal (Settings → Modules "Browse
+  // marketplace"): Extensions takes the modal's place, and the settings request
+  // it was carrying goes with it rather than surviving to re-open a category
+  // later. A modal routes nothing, so the door underneath and the sidebar
+  // section stay as they were.
   carrier.activeModalSurface = 'settings'
+  carrier.activeGlobalSurface = 'backlog'
   carrier.sidebarSection = 'home'
   carrier.settingsOverlay = { initialTab: 'modules', checkForUpdatesRequestId: null }
   slice.openExtensionsSurface()
-  assert.equal(carrier.activeGlobalSurface, 'extensions', 'Browse marketplace lands on the Plugins door')
-  assert.equal(carrier.activeModalSurface, null, 'and the Settings modal it was opened from is gone')
-  assert.equal(carrier.sidebarSection, 'extensions', 'with the Extensions drawer beside it')
+  assert.equal(carrier.activeModalSurface, 'extensions', 'Browse marketplace opens the Extensions modal')
+  assert.equal(carrier.activeGlobalSurface, 'backlog', 'over the door that was already open')
+  assert.equal(carrier.sidebarSection, 'home', 'and the sidebar is left where it was')
   assert.equal('connectorsSurface' in carrier, false, 'the modal-era store flag is gone')
   assert.equal(carrier.settingsOverlay.initialTab, null, 'the settings request does not outlive its modal')
-  slice.closeGlobalSurface()
-  assert.equal(carrier.activeGlobalSurface, null)
-  assert.equal(carrier.sidebarSection, 'extensions', 'and leaving the door lands back on the drawer')
+  slice.openGlobalSurface('extensions')
+  assert.equal(carrier.activeModalSurface, 'extensions', 'the surface id opens the modal too, whoever asks')
+  assert.equal(carrier.activeGlobalSurface, 'backlog', 'and never lands in the card region')
+  slice.closeModalSurface()
+  assert.equal(carrier.activeModalSurface, null)
+  carrier.activeGlobalSurface = null
 
   // A door underneath survives a modal's open/close round-trip: the modal is a
   // float over the card region, not a routing of it.
@@ -478,9 +481,10 @@ test('settingsSlice', async () => {
   assert.equal(carrier.activeModalSurface, null, 'a door open closes the modal over it')
   slice.openModalSurface('settings')
   slice.openExtensionsSurface()
-  assert.equal(carrier.activeModalSurface, null, 'a named door convenience closes the modal too')
+  assert.equal(carrier.activeModalSurface, 'extensions', 'Extensions takes the place of the modal it was opened from')
   slice.closeGlobalSurface()
   carrier.activeGlobalSurface = null
+  carrier.activeModalSurface = null
 
   // Which SECTION a door open moves the sidebar to is the Extensions drawer
   // ruling (2026-09-05), and it is not "always Extensions" any more. A door that
@@ -489,7 +493,8 @@ test('settingsSlice', async () => {
   // leaves the section exactly where the operator had it — flipping there swapped
   // the sidebar into a drawer nobody asked for and lit the Extensions glyph for a
   // surface that is not one of its rows.
-  for (const drawerDoor of ['design', 'extensions', 'extensions-home']) {
+  // (`extensions` itself opens as a modal since 2026-11-03, and moves nothing.)
+  for (const drawerDoor of ['design', 'extensions-home']) {
     carrier.sidebarSection = 'home'
     slice.openGlobalSurface(drawerDoor)
     assert.equal(carrier.sidebarSection, 'extensions', `${drawerDoor} is a drawer door and moves the section`)
@@ -536,8 +541,8 @@ test('settingsSlice', async () => {
   assert.equal(carrier.workspacePaneWidth, 420, 'a non-finite width falls back to the default')
 
   // T3: the MCPs / Skill packs / Extensions settings tabs folded into the
-  // connectors surface — the Plugins DOOR again since the Extensions drawer
-  // ruling (2026-09-05; a modal from 2026-09-01, the Extensions door before that). A
+  // connectors surface — the Extensions MODAL since 2026-11-03 (the Plugins
+  // door from 2026-09-05, a modal from 2026-09-01, the Extensions door before that). A
   // deep-link that once opened one of those tabs (by tab id, or the legacy
   // Extensions browse deep-link) must open the surface, not a settings overlay on
   // a tab that no longer exists.
@@ -547,8 +552,8 @@ test('settingsSlice', async () => {
     carrier.settingsOverlay = { initialTab: null, checkForUpdatesRequestId: null }
     consumePendingExtensionsSurfaceTarget()
     slice.openSettingsOverlay({ initialTab: foldedTab })
-    assert.equal(carrier.activeGlobalSurface, 'extensions', `${foldedTab} routes to the Plugins door`)
-    assert.equal(carrier.activeModalSurface, null, `${foldedTab} leaves no modal floating over it`)
+    assert.equal(carrier.activeModalSurface, 'extensions', `${foldedTab} routes to the Extensions modal`)
+    assert.equal(carrier.activeGlobalSurface, null, `${foldedTab} routes no door into the card region`)
     assert.equal(carrier.settingsOverlay.initialTab, null, `${foldedTab} leaves no dangling settings tab`)
     // Skill packs are gone, so the tab that named them lands on Skills —
     // the surface's other deep-links land on the Plugins catalogue, which is

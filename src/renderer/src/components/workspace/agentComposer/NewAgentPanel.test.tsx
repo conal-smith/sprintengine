@@ -642,13 +642,15 @@ test('NewAgentPanel', async () => {
         `it says what it opens instead of a command; got: ${tip?.textContent}`,
       )
 
-      // A shell runs nothing on your behalf: no suggested tasks, and a prompt
-      // field that says so rather than dropping what was typed.
+      // A shell runs nothing on your behalf: no suggested tasks, and no text
+      // field turned off — the box is the shell's prompt, and the whole line
+      // opens it.
       const { SUGGESTION_BANK } = await import('./suggestionBank')
       assert.ok(!SUGGESTION_BANK.some((entry) => text.includes(entry.title)), 'no suggestion cards for a plain shell')
-      const promptField = composerField(view.container)
-      assert.equal(composerDisabled(promptField), true, 'and no prompt to type into')
-      assert.ok(composerPlaceholder(promptField).includes('nothing typed'), 'which says why')
+      assert.equal(view.container.querySelector('.cm-content'), null, 'and no prompt to type into')
+      const promptLine = view.container.querySelector('[data-terminal-launch-prompt]')
+      assert.ok(promptLine?.querySelector('.terminal-launch-caret'), 'the box draws a shell prompt with its caret')
+      assert.equal(start?.textContent?.trim(), 'Open terminal', 'and the send says what it does in words')
 
       // The choice is a tag beside the "+", and its × goes back to a conversation;
       // the "+" still offers the terminal agent.
@@ -796,7 +798,10 @@ test('NewAgentPanel', async () => {
       })
       const view = await render({ initialSelection: { kind: 'conversation' } })
       assert.ok(view.text().includes('No agent CLI on this machine can run as a chat.'))
-      assert.ok(composerField(view.container).closest('.hidden'), 'and hides the prompt that cannot run')
+      assert.ok(
+        view.container.querySelector('[data-new-chat-composer]')?.classList.contains('hidden'),
+        'and hides the prompt that cannot run',
+      )
       view.unmount()
     })
 
@@ -1352,7 +1357,10 @@ test('NewAgentPanel', async () => {
       const view = await render({ initialSelection: { kind: 'general' } })
       const text = view.text()
       assert.ok(text.includes('No agent CLI is installed'), 'it says so plainly')
-      assert.ok(composerField(view.container).closest('.hidden'), 'and hides the prompt that cannot run')
+      assert.ok(
+        view.container.querySelector('[data-new-chat-composer]')?.classList.contains('hidden'),
+        'and hides the prompt that cannot run',
+      )
       view.unmount()
     })
 

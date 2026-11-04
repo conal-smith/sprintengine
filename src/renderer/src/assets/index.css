@@ -2856,6 +2856,106 @@ samp,
   }
 }
 
+/* A workbench modal arriving (owner ruling 2026-11-03): a short fade and a
+ * lift from just under its resting scale, so the dialog reads as coming up
+ * over the page rather than replacing it. Opacity and transform only — both
+ * composite without repainting what the scrim covers. */
+@keyframes overlay-shell-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes overlay-scrim-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .overlay-shell-enter {
+    animation: overlay-shell-enter var(--motion-deliberate) var(--motion-ease);
+  }
+  .overlay-scrim-enter {
+    animation: overlay-scrim-enter var(--motion-normal) var(--motion-ease);
+  }
+}
+
+/* The caret New chat draws while it is set to open a plain shell: the box is
+ * a prompt waiting, not a text field turned off. A block, as a terminal's
+ * own cursor is; it holds still for a person who asked for less motion. */
+@keyframes terminal-launch-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+.terminal-launch-caret {
+  display: inline-block;
+  width: 0.6em;
+  height: 1.15em;
+  vertical-align: text-bottom;
+  background-color: var(--text-muted);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .terminal-launch-caret {
+    animation: terminal-launch-caret 1.1s steps(1, end) infinite;
+  }
+}
+
+/* The Extensions pill at the foot of the app rail (owner ruling 2026-11-03):
+ * a square until it is pointed at or focused, when its name slides out of it
+ * over the column beside the rail. The width is what moves, through
+ * `max-width`, because the label's own width is not known to CSS. */
+/* It wears the kit's icon button, and lets it grow: the square's width and
+ * centring give way to the pill's, the glyph held where the square put it. */
+.rail-extensions-pill {
+  width: auto;
+  min-width: var(--sem-size-control-lg);
+  justify-content: flex-start;
+  padding-inline: var(--sem-space-sm);
+  border: 1px solid transparent;
+  border-radius: 999px;
+}
+.rail-extensions-pill:hover,
+.rail-extensions-pill:focus-visible {
+  background-color: var(--bg-surface-raised);
+  border-color: var(--border-subtle);
+  box-shadow: var(--shadow-popover);
+  color: var(--text-strong);
+}
+.rail-extensions-pill-label {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.rail-extensions-pill:hover .rail-extensions-pill-label,
+.rail-extensions-pill:focus-visible .rail-extensions-pill-label {
+  max-width: 14rem;
+  opacity: 1;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rail-extensions-pill,
+  .rail-extensions-pill-label {
+    transition:
+      max-width var(--motion-deliberate) var(--motion-ease),
+      opacity var(--motion-normal) var(--motion-ease),
+      background-color var(--motion-normal) var(--motion-ease),
+      box-shadow var(--motion-normal) var(--motion-ease);
+  }
+}
+
 .popover-enter {
   animation: popover-enter var(--motion-normal) var(--motion-ease);
 }
@@ -3503,6 +3603,7 @@ samp,
     .lifecycle-spin,
     .working-edge,
     .chat-shimmer__band,
+    .terminal-launch-caret,
     .animate-pulse,
     .animate-ping
   ),

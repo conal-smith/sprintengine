@@ -565,14 +565,20 @@ test('extensionsCatalogue', async () => {
       )
     })
 
-    await run('the plus sits after the last tab and offers exactly two ways in', async () => {
+    await run('the plus sits beside the search field and opens a menu', async () => {
       const plus = container.querySelector('button[aria-label="Add source"]') as HTMLElement | null
       assert.ok(plus, 'the plus is named for what it does')
       assert.equal(plus?.getAttribute('aria-haspopup'), 'menu')
-      const strip = plus?.parentElement?.parentElement
+      assert.equal(
+        plus?.closest('button:not([aria-label="Add source"])'),
+        null,
+        'and is one button, not one in another',
+      )
+      let band: HTMLElement | null = plus
+      while (band && !band.querySelector('input')) band = band.parentElement
       assert.ok(
-        strip && strip.querySelector('[role="tablist"]'),
-        'and it shares the tab row’s band rather than floating somewhere else',
+        band?.querySelector('input')?.getAttribute('aria-label')?.startsWith('Search'),
+        'it shares the search field’s row, where the looking is done (owner ruling 2026-11-03)',
       )
     })
 
@@ -580,10 +586,15 @@ test('extensionsCatalogue', async () => {
     // third-party retirement (2026-09-08). Its rows are gone; what is
     // left is the registry's plugins, still grouped by the registry's own
     // categories and still walked by one pager.
-    await run('the app’s tab keeps the registry’s categories as its groups, walked by one pager', () => {
+    await run('the app’s tab keeps the registry’s categories as its groups, a gallery of them', () => {
       assert.ok(text().includes('Stripe'), 'a registry plugin is a row')
       assert.ok(text().includes('Payments'), 'and plugins keep the registry’s own categories as headings')
-      assert.ok(/Showing 1–\d+ of \d+/.test(text()), 'one pager states where you are in the whole tab')
+      assert.equal(
+        /Showing \d+–\d+ of \d+/.test(text()),
+        false,
+        'several groups are a gallery, each shown whole while it fits, with no pager over the tab',
+      )
+      assert.equal(text().includes('Payments, billing, customers'), false, 'and a row carries no summary on its face')
       assert.equal(text().includes('Featured'), false, 'the Featured facet is gone')
       assert.equal(/Show \d+ more/.test(text()), false, 'and so is "Show N more"')
     })
@@ -847,9 +858,17 @@ test('extensionsCatalogue', async () => {
     })
     await settle()
 
-    await run('a repository lists under the folders it keeps its skills in, one page at a time', () => {
+    await run('a repository lists under the folders it keeps its skills in, the first few of each', () => {
       assert.ok(text().includes('Engineering'), 'the folder names are the headings, cased for reading')
-      assert.ok(text().includes('Showing 1–24 of 30'), 'and the pager walks the whole source, not one folder')
+      assert.equal(
+        container.querySelectorAll('ul[aria-label="Engineering"] > li').length,
+        6,
+        'a folder shows its first six in the gallery',
+      )
+      assert.ok(
+        container.querySelector('button[aria-label="View all 10 in Engineering"]'),
+        'and a View all for the rest',
+      )
       assert.equal(text().includes('type="checkbox"'), false)
     })
 
@@ -858,17 +877,21 @@ test('extensionsCatalogue', async () => {
       assert.ok(container.querySelector('button[aria-label^="More actions for"]'), 'Remove and Open are one overflow')
     })
 
-    await run('page 2 continues the source rather than restarting it', async () => {
+    await run('View all opens one folder as a page of its own, with the way back beside its name', async () => {
       await act(async () => {
-        ;(container.querySelector('button[aria-label="Page 2"]') as HTMLElement).click()
+        ;(container.querySelector('button[aria-label="View all 10 in Engineering"]') as HTMLElement).click()
       })
       await settle()
-      assert.ok(text().includes('Showing 25–30 of 30'))
-      assert.equal(
-        container.querySelector('button[aria-label="Page 2"]')?.getAttribute('aria-current'),
-        'page',
-        'and the page you are on says so the way a page does',
-      )
+      assert.equal(container.querySelector('h3')?.textContent, 'Engineering', 'the folder is the page’s name')
+      assert.equal(container.querySelectorAll('ul[aria-label="Engineering"] > li').length, 10, 'with all of it')
+      assert.ok(text().includes('Showing 1–10 of 10'), 'and a pager over that folder alone')
+      assert.equal(text().includes('Writing'), false, 'the other folders wait behind it')
+      await act(async () => {
+        ;(container.querySelector('button[aria-label="Back to acme/skills"]') as HTMLElement).click()
+      })
+      await settle()
+      assert.ok(text().includes('Writing'), 'Back lands on the gallery again')
+      assert.ok(container.querySelector('button[aria-label="View all 10 in Engineering"]'))
     })
 
     await run('the search field is bound to the tab it filters', () => {

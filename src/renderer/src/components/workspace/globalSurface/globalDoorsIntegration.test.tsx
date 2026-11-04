@@ -591,7 +591,7 @@ test('globalDoorsIntegration', async () => {
         'Installed leads, the app’s own catalogue is the first source, and it is named for the product',
       )
       const plus = container.querySelector('button[aria-label="Add source"]')
-      assert.ok(plus, 'the plus sits after the last tab')
+      assert.ok(plus, 'the plus sits beside the search field')
 
       // ── Inside the app’s tab: the registry’s categories as the groups ────────
       const bodyText = () => container.textContent ?? ''
@@ -601,7 +601,10 @@ test('globalDoorsIntegration', async () => {
       // until it was deleted.
       assert.ok(bodyText().includes('Stripe'), 'a registry plugin renders as a row')
       assert.ok(bodyText().includes('Payments'), 'and plugins keep the registry’s categories as headings')
-      assert.ok(bodyText().includes('Showing 1'), 'one pager walks the whole tab')
+      assert.ok(
+        container.querySelector('[role="tablist"] [role="tab"][aria-selected="true"]'),
+        'the sources are a line of pills, one of them open (owner ruling 2026-11-03)',
+      )
       assert.ok(!bodyText().includes('Featured'), 'the Featured facet is gone')
       assert.ok(!bodyText().includes('more'), 'and so is "Show N more"')
 

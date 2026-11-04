@@ -44,7 +44,7 @@ import { FOCUS_RING_CLASS } from './tokens'
  *   tint and thrown states, which are what a button has no vocabulary for.
  *   The name predates the ruling and stays because callers import it.
  */
-export type ChipVariant = 'ghost' | 'outline' | 'overlay' | 'raised'
+export type ChipVariant = 'ghost' | 'outline' | 'overlay' | 'raised' | 'pill'
 
 /**
  * The chip's ink at rest, and the ONE reason `tone` is a prop rather than a
@@ -90,6 +90,7 @@ const EDGE: Record<ChipVariant, string> = {
     'border border-[color:var(--border-default)] hover:border-[color:var(--border-strong)] ' +
     'disabled:hover:border-[color:var(--border-default)]',
   raised: '',
+  pill: '',
 }
 
 // The ground it rests on while NOT thrown. Each branch declares `bg-` and
@@ -107,6 +108,9 @@ const RESTING_GROUND: Record<ChipVariant, string> = {
   raised:
     'bg-transparent hover:bg-[color:var(--bg-hover)] enabled:active:bg-[color:var(--bg-active)] ' +
     'disabled:hover:bg-transparent',
+  // A filter pill rests on the well, so a line of them reads as a set of
+  // choices before any is chosen; the chosen one takes the selection fill.
+  pill: 'bg-[color:var(--bg-well)] hover:bg-[color:var(--bg-hover)] disabled:hover:bg-[color:var(--bg-well)]',
 }
 
 // The toolbar chip's default ink is the ghost button's, not the inline chip's:
@@ -119,7 +123,7 @@ const TOOLBAR_INK =
   'disabled:hover:text-[color:var(--text-muted)]'
 
 function restingInk(variant: ChipVariant, tone: ChipTone): string {
-  return variant === 'raised' && tone === 'subtle' ? TOOLBAR_INK : RESTING_INK[tone]
+  return (variant === 'raised' || variant === 'pill') && tone === 'subtle' ? TOOLBAR_INK : RESTING_INK[tone]
 }
 
 /**
@@ -137,6 +141,10 @@ const SHAPE: Record<ChipVariant, string> = {
   outline: 'rounded-xs px-1.5 py-0.5 gap-1 text-micro',
   overlay: 'rounded-md px-1.5 py-0.5 gap-1 text-micro',
   raised: 'rounded-sm h-control-xs px-2 gap-1.5 text-meta',
+  // The filter pill (owner ruling 2026-11-03): a line of sources or
+  // categories over a gallery. A control-ramp height like `raised`, because
+  // it stands in a row of its own rather than inside a line of text.
+  pill: 'rounded-full h-control-sm px-3 gap-1.5 text-meta whitespace-nowrap',
 }
 
 /** The toolbar chip's box, for a composite that has to wear it (see `SHAPE`).

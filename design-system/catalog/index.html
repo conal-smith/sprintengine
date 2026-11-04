@@ -3025,6 +3025,27 @@ code {
   color: var(--sem-color-text-primary);
 }
 
+/* pill — the FILTER pill (owner ruling 2026-11-03): a line of sources or
+ * categories over a gallery, the Extensions catalogue's. A control-ramp height
+ * like raised, because it stands in a row of its own; a full radius, because a
+ * line of choices reads as a set of tokens rather than a row of buttons; and it
+ * rests on the well, so the set is visible before any is chosen. Not
+ * content-height either. */
+.ds-chip-button--pill {
+  height: var(--sem-size-control-sm);
+  padding: 0 var(--sem-space-lg);
+  gap: var(--sem-space-xs);
+  border-radius: 999px;
+  background: var(--sem-color-bg-well);
+  color: var(--sem-color-text-muted);
+  font-size: var(--sem-font-size-meta);
+  white-space: nowrap;
+}
+
+.ds-chip-button--pill:hover:not(:disabled):not([aria-pressed='true']):not([aria-current='true']) {
+  color: var(--sem-color-text-primary);
+}
+
 /* The two tone tints. A STANDING warning the chip itself carries — scripts are
  * running in this preview, permissions are bypassed on this preset — never a
  * second way of saying what a status mark already says.
@@ -20457,6 +20478,12 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
     <button type="button" class="ds-chip-button ds-chip-button--raised" aria-label="More options">⋯</button>
     <button type="button" class="ds-chip-button ds-chip-button--raised" disabled>Unavailable</button>
   </div>
+  <div class="demo-row">
+    <button type="button" class="ds-chip-button ds-chip-button--pill" aria-current="true">Installed</button>
+    <button type="button" class="ds-chip-button ds-chip-button--pill">Studio</button>
+    <button type="button" class="ds-chip-button ds-chip-button--pill">acme/skills</button>
+    <button type="button" class="ds-chip-button ds-chip-button--pill">More</button>
+  </div>
 </div>
 <div class="demo-stage" data-mode="dark">
   <p class="demo-label">Dark</p>
@@ -20488,7 +20515,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <p><strong>Why it is not a [micro chip](../micro-chip/component.md).</strong> That mark is display-only and takes no state at all: it says something that was already true before the person arrived. This is a <strong>control</strong>. If the mark would never react to the pointer, it is a micro chip; if it toggles, filters, or navigates, it is this.</p>
 <p><strong>Why it is not a [segmented control](../segmented-control/component.md).</strong> That is a bar of mutually exclusive options sharing one track. Chips are individual — they appear alone, in unlike company, and in numbers the bar could not hold.</p>
 <h4>Anatomy</h4>
-<p>| Part | Class | Required | |---|---|---| | Chip | <code>.ds-chip-button</code> | yes — a <code>&lt;button&gt;</code> | | Variant | <code>--outline</code> / <code>--overlay</code> | no | | Tone | <code>--warn</code> / <code>--error</code> | no | | Leading mark | — | no — an identity colour dot or a glyph, sized by the caller. Never a status mark: the tone tints say the chip's state | | Label | — | yes, <code>font.size.micro</code>, sentence case |</p>
+<p>| Part | Class | Required | |---|---|---| | Chip | <code>.ds-chip-button</code> | yes — a <code>&lt;button&gt;</code> | | Variant | <code>--outline</code> / <code>--overlay</code> / <code>--raised</code> / <code>--pill</code> | no | | Tone | <code>--warn</code> / <code>--error</code> | no | | Leading mark | — | no — an identity colour dot or a glyph, sized by the caller. Never a status mark: the tone tints say the chip's state | | Label | — | yes, <code>font.size.micro</code>, sentence case |</p>
 <p><code>font.size.micro</code> and no lower. A chip is a label *about* the thing beside it, and it must not outweigh what it qualifies.</p>
 <h4>Variants</h4>
 <ul><li><strong>Default (ghost)</strong> — no edge, no ground. A toggle in a chrome strip.</li><li><strong><code>--outline</code></strong> — a <code>border.default</code> hairline over <code>bg.surface-raised</code>. For a chip that must be findable on a busy surface: a wizard's branch step, a related-node chip on a canvas.</li><li><strong><code>--overlay</code></strong> — the form a chip takes when it <strong>floats over content</strong> rather than sitting in the flow: a canvas HUD control, a badge over a pan/zoom surface. <code>radius.overlay</code> and a <code>border.default</code> edge over <code>bg.surface</code>, so it reads as a small floating surface rather than as part of what is underneath. Still <strong>no shadow</strong>: the elevation ramp is for surfaces a person opened, not for chrome that was always there.</li></ul>
@@ -20498,6 +20525,10 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <p>It is the <strong>one chip variant that is not content-height</strong>, and that is the whole reason it is a variant rather than a re-skin of the default: a toolbar row has already decided it is a row of controls, so riding a line box there is the defect, not the virtue. A chip inside a sentence, a card's meta line or a canvas HUD stays on one of the three inline variants.</p>
 <p>The name is the 2026-10-01 one and stays, because modules import it; since 2026-10-04 it draws flat. From 2026-10-01 to 2026-10-04 it wore the outline button's border and the retired lit lip, drop and sheen.</p>
 <p>A composite that has to wear the same box without being one button — the worktree switch is a glyph button and a name field in one box — takes the shell from the shipped primitive's <code>RAISED_CHIP_SHELL</code> export rather than spelling it, so it cannot drift a pixel from the chips beside it.</p>
+<h5>The filter pill, <code>--pill</code> (owner ruling 2026-11-03)</h5>
+<p><strong><code>--pill</code></strong> is a chip that picks <strong>which part of a gallery is shown</strong>: the Extensions catalogue's line of Installed and its sources. The strip of tabs it replaced scrolled sideways once a person had more than a few sources, and the ones off its edge were sources nobody found.</p>
+<p>It takes <code>size.control.sm</code>, a full radius, the <code>space.lg</code> inset and a <code>font.size.meta</code> label, and rests on <code>bg.well</code> so the line reads as a set of choices before any is chosen. The chosen pill takes the neutral selection fill, as every thrown chip does. A line of them holds as many as fit and folds the rest into a <strong>More</strong> pill that opens a menu; it never scrolls.</p>
+<p>A line of pills that switches a panel is a <strong>tablist</strong>: each pill is a <code>role=&quot;tab&quot;</code> with <code>aria-selected</code> and <code>aria-controls</code>, the arrow keys walk the pills the line shows, and <code>aria-current</code> is not used.</p>
 <h5>A row too narrow for its chips</h5>
 <p>A row of raised chips never answers a narrow panel by crushing every chip to a sliver. From 2026-10-01 to 2026-10-04 the conversation composer folded its secondary chips behind a chevron; it no longer needs to. Its row is now the New chat composer's — the &quot;+&quot;, the attached tags, the engine chip and send — short enough to wrap only in a pane narrower than any it is drawn in, and its facts moved to the strip under the box, which keeps to one line by moving what does not fit into a &quot;⋮&quot; menu in a fixed order (the conversation strip in <code>src/renderer/src/components/panels/agentChat/conversationStrip.tsx</code>). The rules the fold kept still hold for whatever answers a narrow row next:</p>
 <ul><li><strong>Measured against the row, not the window.</strong> The same panel width is a different budget depending on what sits beside the panel.</li><li><strong>Nothing is dropped.</strong> A control that leaves the row is reachable from the menu it moved to, doing what it did on the row.</li><li><strong>Mounted once.</strong> A control moves; it is not drawn twice, so there are never two focus targets or two accessible names for one control.</li><li><strong>A standing warning survives.</strong> A chip carrying the warn tone (permissions bypassed) keeps it wherever the control goes — the engine chip wears it now that the permissions are inside its picker.</li></ul>
@@ -20637,6 +20668,27 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
   color: var(--sem-color-text-primary);
 }
 
+/* pill — the FILTER pill (owner ruling 2026-11-03): a line of sources or
+ * categories over a gallery, the Extensions catalogue's. A control-ramp height
+ * like raised, because it stands in a row of its own; a full radius, because a
+ * line of choices reads as a set of tokens rather than a row of buttons; and it
+ * rests on the well, so the set is visible before any is chosen. Not
+ * content-height either. */
+.ds-chip-button--pill {
+  height: var(--sem-size-control-sm);
+  padding: 0 var(--sem-space-lg);
+  gap: var(--sem-space-xs);
+  border-radius: 999px;
+  background: var(--sem-color-bg-well);
+  color: var(--sem-color-text-muted);
+  font-size: var(--sem-font-size-meta);
+  white-space: nowrap;
+}
+
+.ds-chip-button--pill:hover:not(:disabled):not([aria-pressed='true']):not([aria-current='true']) {
+  color: var(--sem-color-text-primary);
+}
+
 /* The two tone tints. A STANDING warning the chip itself carries — scripts are
  * running in this preview, permissions are bypassed on this preset — never a
  * second way of saying what a status mark already says.
@@ -20737,6 +20789,12 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
     &lt;button type=&quot;button&quot; class=&quot;ds-chip-button ds-chip-button--raised ds-chip-button--warn&quot;&gt;Bypass&lt;/button&gt;
     &lt;button type=&quot;button&quot; class=&quot;ds-chip-button ds-chip-button--raised&quot; aria-label=&quot;More options&quot;&gt;⋯&lt;/button&gt;
     &lt;button type=&quot;button&quot; class=&quot;ds-chip-button ds-chip-button--raised&quot; disabled&gt;Unavailable&lt;/button&gt;
+  &lt;/div&gt;
+  &lt;div class=&quot;demo-row&quot;&gt;
+    &lt;button type=&quot;button&quot; class=&quot;ds-chip-button ds-chip-button--pill&quot; aria-current=&quot;true&quot;&gt;Installed&lt;/button&gt;
+    &lt;button type=&quot;button&quot; class=&quot;ds-chip-button ds-chip-button--pill&quot;&gt;Studio&lt;/button&gt;
+    &lt;button type=&quot;button&quot; class=&quot;ds-chip-button ds-chip-button--pill&quot;&gt;acme/skills&lt;/button&gt;
+    &lt;button type=&quot;button&quot; class=&quot;ds-chip-button ds-chip-button--pill&quot;&gt;More&lt;/button&gt;
   &lt;/div&gt;
 &lt;/div&gt;
 &lt;div class=&quot;demo-stage&quot; data-mode=&quot;dark&quot;&gt;

@@ -27,7 +27,7 @@ they appear alone, in unlike company, and in numbers the bar could not hold.
 | Part | Class | Required |
 |---|---|---|
 | Chip | `.ds-chip-button` | yes — a `<button>` |
-| Variant | `--outline` / `--overlay` | no |
+| Variant | `--outline` / `--overlay` / `--raised` / `--pill` | no |
 | Tone | `--warn` / `--error` | no |
 | Leading mark | — | no — an identity colour dot or a glyph, sized by the caller. Never a status mark: the tone tints say the chip's state |
 | Label | — | yes, `font.size.micro`, sentence case |
@@ -79,6 +79,23 @@ A composite that has to wear the same box without being one button — the
 worktree switch is a glyph button and a name field in one box — takes the shell
 from the shipped primitive's `RAISED_CHIP_SHELL` export rather than spelling
 it, so it cannot drift a pixel from the chips beside it.
+
+### The filter pill, `--pill` (owner ruling 2026-11-03)
+
+**`--pill`** is a chip that picks **which part of a gallery is shown**: the
+Extensions catalogue's line of Installed and its sources. The strip of tabs it
+replaced scrolled sideways once a person had more than a few sources, and the
+ones off its edge were sources nobody found.
+
+It takes `size.control.sm`, a full radius, the `space.lg` inset and a
+`font.size.meta` label, and rests on `bg.well` so the line reads as a set of
+choices before any is chosen. The chosen pill takes the neutral selection fill,
+as every thrown chip does. A line of them holds as many as fit and folds the
+rest into a **More** pill that opens a menu; it never scrolls.
+
+A line of pills that switches a panel is a **tablist**: each pill is a
+`role="tab"` with `aria-selected` and `aria-controls`, the arrow keys walk the
+pills the line shows, and `aria-current` is not used.
 
 ### A row too narrow for its chips
 

@@ -10,7 +10,7 @@ import {
   unseenCardCount,
 } from '../../utils/railBadges'
 import type { RailBadges } from './AppRail'
-import { openExtensionsDrawerRow } from './extensionsDrawer'
+import { EXTENSIONS_CATALOGUE_SURFACE_ID, openExtensionsDrawerRow } from './extensionsDrawer'
 import { useSurfaceView } from './surfaceView'
 import { doorBadgeSourceRows, useDoorBadgeContributions } from './useDoorBadges'
 import { useExtensionsRowBadges, useModuleNotificationRows } from './useExtensionsRowBadges'
@@ -82,8 +82,13 @@ export function useRailBadges(input: {
   // of one surface, the view it stands on, so opening Plugins reads Plugins
   // and not the Skills news beside it. An installed door is one row whichever
   // view is up.
-  const activeView = useSurfaceView(activeGlobalSurface ?? '')
-  const openRow = openExtensionsDrawerRow(activeGlobalSurface, activeView, moduleRows.doors)
+  //
+  // The Plugins and Skills catalogue is on screen as a modal rather than a
+  // door (owner ruling 2026-11-03), so while it is up it is the open surface.
+  const catalogueModalOpen = useWorkspaceStore((s) => s.activeModalSurface === EXTENSIONS_CATALOGUE_SURFACE_ID)
+  const openSurface = catalogueModalOpen ? EXTENSIONS_CATALOGUE_SURFACE_ID : activeGlobalSurface
+  const activeView = useSurfaceView(openSurface ?? '')
+  const openRow = openExtensionsDrawerRow(openSurface, activeView, moduleRows.doors)
 
   const extensionsSeenAt = sectionSeenAt.extensions
   const unseenCards = useMemo(() => unseenCardCount(cards, extensionsSeenAt), [cards, extensionsSeenAt])

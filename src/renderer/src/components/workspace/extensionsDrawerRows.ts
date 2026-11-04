@@ -8,7 +8,7 @@ import type {
   SurfaceIconComponent,
 } from '../../modules/renderer-host'
 import { useWorkspaceStore } from '../../store/workspaceStore'
-import { DRAWER_ROWS } from './extensionsDrawer'
+import { DRAWER_ROWS, EXTENSIONS_CATALOGUE_SURFACE_ID } from './extensionsDrawer'
 import { extensionContributionRows } from './extensionContributionRows'
 import { useSurfaceView } from './surfaceView'
 
@@ -79,6 +79,10 @@ export type ExtensionsDrawerRowView = {
 export function useExtensionsDrawerRows(): ExtensionsDrawerRowView[] {
   const moduleOverrides = useWorkspaceStore((s) => s.appSettings.modules)
   const activeGlobalSurface = useWorkspaceStore((s) => s.activeGlobalSurface)
+  // The Plugins and Skills catalogue is open as a modal, not a door (owner
+  // ruling 2026-11-03), and its rows read selected while it shows their view.
+  const catalogueModalOpen = useWorkspaceStore((s) => s.activeModalSurface === EXTENSIONS_CATALOGUE_SURFACE_ID)
+  const openSurfaceId = catalogueModalOpen ? EXTENSIONS_CATALOGUE_SURFACE_ID : activeGlobalSurface
   const openGlobalSurface = useWorkspaceStore((s) => s.openGlobalSurface)
   const setSidebarSection = useWorkspaceStore((s) => s.setSidebarSection)
   // Which view the OPEN surface is standing on, so exactly one of a
@@ -86,7 +90,7 @@ export function useExtensionsDrawerRows(): ExtensionsDrawerRowView[] {
   // with the surface's own rail rather than by clicking a row. Only the open
   // surface can own a selected row, so one subscription answers for the whole
   // list.
-  const activeView = useSurfaceView(activeGlobalSurface ?? '')
+  const activeView = useSurfaceView(openSurfaceId ?? '')
   // Third-party renderer modules can finish loading after first render (the
   // boot timeout race WorkspaceManager's moduleRegistryGeneration handles):
   // without this bump an SDK module's registerGlobalSurface would mount fine
@@ -166,7 +170,7 @@ export function useExtensionsDrawerRows(): ExtensionsDrawerRowView[] {
           Icon: view.Icon,
           // Selected while the surface is open ON THIS VIEW — not merely while
           // it is open, which would light all three of its rows.
-          active: activeGlobalSurface === surface.id && activeView === view.id,
+          active: openSurfaceId === surface.id && activeView === view.id,
           open: () => {
             // The view latches its target first and the shell opens second,
             // the order every deep-link opener uses: the surface drains the
@@ -189,5 +193,13 @@ export function useExtensionsDrawerRows(): ExtensionsDrawerRowView[] {
         openGlobalSurface,
       }),
     ]
-  }, [activeGlobalSurface, activeView, hostNavEntries, globalSurfaces, openGlobalSurface, setSidebarSection])
+  }, [
+    activeGlobalSurface,
+    activeView,
+    hostNavEntries,
+    globalSurfaces,
+    openGlobalSurface,
+    openSurfaceId,
+    setSidebarSection,
+  ])
 }
