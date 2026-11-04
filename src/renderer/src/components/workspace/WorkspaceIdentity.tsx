@@ -17,6 +17,7 @@
 // draggable span) to preserve the window grab area.
 
 import React from 'react'
+import { displayBranchName } from '../../utils/branchLabel'
 import { GhostButton, IconButton, OverflowMenu, StarGlyph, Tooltip, type OverflowMenuItem } from '../ui'
 
 // The card that says the workspace folder could not be revealed. It exists
@@ -167,7 +168,8 @@ export function WorkspaceIdentity({
   // conversation peek's rows and the diff viewer).
   const gitSummary = useCheckoutChangeSummary(gitProbePath, CHIP_SUMMARY_ID)
   const branchIsRepo = followed?.isRepo ?? gitBranch.isRepo
-  const branchName = followed?.branch ?? gitBranch.branch
+  const rawBranchName = followed?.branch ?? gitBranch.branch
+  const branchName = rawBranchName ? displayBranchName(rawBranchName) : rawBranchName
   // Who the chip is describing, for its mark and its words; null means the
   // workspace's own checkout, said the way it always was.
   const followedAgent = followed?.agent ?? null

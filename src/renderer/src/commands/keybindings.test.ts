@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  keybindingSearchText,
   collapseDuplicateKeybindings,
   isModifierTapChord,
   keybindingToKbdKeys,
@@ -32,13 +33,17 @@ test('keybindings', async () => {
   assert.equal(parseKeybinding('Ctrl+Shift').ok, false)
   assert.equal(parseKeybinding('Hyper+K').ok, false)
 
-  assert.equal(renderKeybinding('Primary+K', 'darwin'), 'Cmd+K')
+  assert.equal(renderKeybinding('Primary+K', 'darwin'), '⌘K')
   assert.equal(renderKeybinding('Primary+K', 'windows'), 'Ctrl+K')
-  assert.equal(renderKeybinding('Alt+ArrowLeft', 'darwin'), 'Option+Left')
+  assert.equal(renderKeybinding('Alt+ArrowLeft', 'darwin'), '⌥←')
   assert.equal(renderKeybinding('Primary++', 'windows'), 'Ctrl++')
   assert.equal(renderKeybinding('g i', 'linux'), 'G then I')
-  assert.deepEqual(keybindingToKbdKeys('Primary+Shift+P then Enter', 'darwin'), [['Cmd', 'Shift', 'P'], ['Enter']])
+  assert.deepEqual(keybindingToKbdKeys('Primary+Shift+P then Enter', 'darwin'), [['⌘', '⇧', 'P'], ['↩']])
   assert.deepEqual(keybindingToKbdKeys('Primary++', 'windows'), [['Ctrl', '+']])
+  // Search finds a glyph by its name: "cmd" and "shift" reach "⌘⇧P".
+  assert.ok(keybindingSearchText('Primary+Shift+P', 'darwin').includes('cmd'))
+  assert.ok(keybindingSearchText('Primary+Shift+P', 'darwin').includes('shift'))
+  assert.equal(keybindingSearchText('Primary+K', 'windows'), 'Ctrl+K')
 
   // --- Lone-modifier tap chords (Search Everywhere) ---------------------------
   // A modifier standing alone as a whole stroke is the key of that stroke, so
@@ -78,10 +83,10 @@ test('keybindings', async () => {
 
   // Display: a modifier-as-key wears the modifier's own platform label, and a
   // tap chord joins with a space rather than the two-stroke "then".
-  assert.equal(renderKeybinding('Shift Shift', 'darwin'), 'Shift Shift')
+  assert.equal(renderKeybinding('Shift Shift', 'darwin'), '⇧ ⇧')
   assert.equal(renderKeybinding('Shift Shift', 'windows'), 'Shift Shift')
-  assert.equal(renderKeybinding('Alt Alt', 'darwin'), 'Option Option')
-  assert.deepEqual(keybindingToKbdKeys('Shift Shift', 'darwin'), [['Shift'], ['Shift']])
+  assert.equal(renderKeybinding('Alt Alt', 'darwin'), '⌥ ⌥')
+  assert.deepEqual(keybindingToKbdKeys('Shift Shift', 'darwin'), [['⇧'], ['⇧']])
   assert.equal(isModifierTapChord('Shift Shift'), true)
   assert.equal(isModifierTapChord('g i'), false)
   assert.equal(isModifierTapChord('Primary+K'), false)
