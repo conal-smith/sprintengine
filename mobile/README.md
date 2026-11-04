@@ -82,6 +82,15 @@ cd android && ./gradlew assembleRelease
 # android/app/build/outputs/apk/release/app-release.apk
 ```
 
+CI builds the same APK for every pull request and every push to `main`: the
+**Android APK** job uploads it as the `SprintEngine-mobile-android-<commit>`
+artifact, kept 14 days. To put one on a connected phone:
+
+```bash
+gh run download <run-id> -n SprintEngine-mobile-android-<commit> -D /tmp/apk
+adb install -r /tmp/apk/app-release.apk
+```
+
 **Release builds are signed with the debug keystore** (`android/app/debug.keystore`,
 the stock React Native one) unless you configure your own. To ship a build,
 create a release keystore and point `signingConfigs` in `android/app/build.gradle`

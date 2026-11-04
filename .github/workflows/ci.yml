@@ -168,8 +168,8 @@ jobs:
 
   # The phone app under mobile/: its own package and lockfile, so its own
   # install and its own gate (mobile/package.json's `ci`): typecheck, ESLint,
-  # the token lint and the regression suite. No native build; those need Xcode
-  # and the Android SDK, and the JS is what a pull request here changes.
+  # the token lint and the regression suite. The Android build is the job
+  # below; there is no iOS build, which needs Xcode and a signing team.
   # Skipped under the release gate: the desktop release does not ship it.
   mobile:
     name: Mobile app (ubuntu-latest)
@@ -196,6 +196,57 @@ jobs:
 
       - name: Typecheck, lint and test
         run: npm run ci
+
+  # The phone app's release APK, uploaded as a workflow artifact so a phone can
+  # be given the build of a pull request or of main without building it on a
+  # Mac. Signed with the committed debug keystore, like a local release build
+  # (mobile/README.md), so it installs over one with `adb install -r` and keeps
+  # its pairings. Skipped under the release gate, like the job above.
+  android:
+    name: Android APK (ubuntu-latest)
+    if: ${{ !inputs.release_gate && (github.event_name == 'workflow_dispatch' || github.event.repository.private == false) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      # React Native's Gradle build wants JDK 17. The Android SDK comes with the
+      # hosted runner (ANDROID_HOME), and Gradle fetches the NDK it names.
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the release APK
+        working-directory: mobile/android
+        run: ./gradlew assembleRelease --console=plain
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: SprintEngine-mobile-android-${{ github.event.pull_request.head.sha || github.sha }}
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
 
   # SSH machines against a real sshd (phase 8 spec, 9.3): a container with
   # forwarding turned off, the system ssh, the askpass shim, the pinned Node
