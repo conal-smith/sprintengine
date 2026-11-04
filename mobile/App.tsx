@@ -13,6 +13,7 @@ import { NoticesProvider } from "./src/features/notices/NoticesContext";
 import { readTailnetIdentity, withTailnetScopes } from "./src/api/tailnetControlClient";
 import { withMachineMark, withTransportDeclaration } from "./src/api/tailnetTransport";
 import { ToastProvider } from "./src/components/Toast";
+import { AppUpdateProvider } from "./src/features/updates/useAppUpdate";
 import { startSentPhotoCopies } from "./src/storage/sentPhotoCopies";
 import { RichRendererHost } from "./src/components/document/rich/RichRendererHost";
 import {
@@ -199,6 +200,9 @@ function AppShell() {
     <PairingLinkProvider value={pairingLink}>
       <StatusBar barStyle={theme.isDark ? "light-content" : "dark-content"} />
       <ToastProvider>
+      {/* Android's in-app updater: checks on open and on foreground, and
+          lights the chat list's update glyph. Inert on iOS. */}
+      <AppUpdateProvider>
       <SessionDataProvider
         activeDeviceId={activeDeviceId}
         // State first, storage second: the app must follow the tap even on a
@@ -247,6 +251,7 @@ function AppShell() {
           </NoticesProvider>
         </ChatsProvider>
       </SessionDataProvider>
+      </AppUpdateProvider>
       </ToastProvider>
     </PairingLinkProvider>
   );

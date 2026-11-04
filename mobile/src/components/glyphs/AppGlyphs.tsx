@@ -189,6 +189,43 @@ export function RefreshIcon({ tone, size = iconSize.md, label }: AppGlyphProps) 
   );
 }
 
+/**
+ * An arrow into a tray — an update waiting to be downloaded. The desktop rail's
+ * update glyph (lucide "download"), scaled onto the 16 grid at the house stroke.
+ */
+export function DownloadIcon({ tone, size = iconSize.md, label }: AppGlyphProps) {
+  return (
+    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone)} size={size} label={label}>
+      <Path d="M8 10V2M4.67 6.67 8 10l3.33-3.33" stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round" strokeLinejoin="round" />
+      <Path
+        d="M14 10v2.67A1.33 1.33 0 0112.67 14H3.33A1.33 1.33 0 012 12.67V10"
+        stroke="currentColor"
+        strokeWidth={STROKE}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </GlyphFrame>
+  );
+}
+
+/**
+ * A clockwise arrow coming round — a downloaded update, ready to install over
+ * this one. The desktop rail's restart glyph (lucide "rotate-cw"), on the 16 grid.
+ */
+export function InstallUpdateIcon({ tone, size = iconSize.md, label }: AppGlyphProps) {
+  return (
+    <GlyphFrame viewBox="0 0 16 16" color={useInk(tone)} size={size} label={label}>
+      <Path
+        d="M14 8a6 6 0 11-6-6c1.68 0 3.29.67 4.49 1.83L14 5.33M14 2v3.33h-3.33"
+        stroke="currentColor"
+        strokeWidth={STROKE}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </GlyphFrame>
+  );
+}
+
 /** An arrow leaving a box — push. */
 export function PushIcon({ tone, size = iconSize.md, label }: AppGlyphProps) {
   return (

@@ -87,6 +87,7 @@
     "src/features/diff/unifiedDiff.ts",
     "src/features/fleet/fleetLogic.ts",
     "src/features/web/webTargetsLogic.ts",
+    "src/features/updates/apkUpdateLogic.ts",
     "src/features/pairing/pairingPayload.ts",
     "src/features/pairing/pairingSession.ts",
     "src/navigation/sessionFlow.ts",

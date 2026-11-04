@@ -21,6 +21,12 @@ interface CircleButtonProps {
   active?: boolean;
   /** A red dot at the top-right — the bell with something waiting behind it. */
   badge?: boolean;
+  /**
+   * On the accent's soft ground: the one control in the bar asking to be
+   * pressed (an app update waiting), like the desktop rail's lit update glyph.
+   * The glyph passed in wears `accentPrimary` ink; the disc is never green.
+   */
+  lit?: boolean;
   /** 40 for the top bar, 60 for the floating compose button. */
   size?: number;
 }
@@ -43,6 +49,7 @@ export function CircleButton({
   variant = "raised",
   active = false,
   badge = false,
+  lit = false,
   size = 40,
 }: CircleButtonProps) {
   const styles = useThemedStyles(createStyles);
@@ -69,7 +76,8 @@ export function CircleButton({
             variant === "quiet" ? styles.quiet : null,
             variant === "inverse" ? styles.inverse : null,
             active ? styles.active : null,
-            pressed && !disabled ? styles.pressed : null,
+            lit ? styles.lit : null,
+            pressed && !disabled ? (lit ? styles.litPressed : styles.pressed) : null,
             disabled ? styles.disabled : null,
           ]}
         >
@@ -102,6 +110,12 @@ const createStyles = ({ colors }: Theme) =>
     },
     pressed: {
       backgroundColor: colors.bgActive,
+    },
+    lit: {
+      backgroundColor: colors.accentPrimarySoft,
+    },
+    litPressed: {
+      backgroundColor: colors.accentPrimarySoftStrong,
     },
     disabled: {
       opacity: 0.4,

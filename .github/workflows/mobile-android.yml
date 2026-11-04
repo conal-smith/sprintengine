@@ -1,0 +1,335 @@
+name: Android build of main
+
+# Every push to main builds the phone app's APK, signs it with the release key
+# and publishes it where the app's in-app updater looks
+# (mobile/src/features/updates/apkUpdateLogic.ts). Pull requests never run this
+# workflow; ci.yml's Android job builds their debug-signed artifact, and stays
+# read-only so release.yml can keep calling it as its quality gate.
+#
+# Three jobs, so the key and the write token each sit where nothing else runs:
+#
+#   build    the repository's code: npm ci and Gradle, with no secret and a
+#            read-only token. Leaves the APK unsigned.
+#   sign     the `android-release` environment, which only main may deploy to
+#            and which alone holds the four ANDROID_RELEASE_* secrets. No
+#            checkout and no npm: zipalign, apksigner and a certificate check,
+#            from the runner's own Android SDK.
+#   publish  the one job with contents: write. No secret, no checkout: writes
+#            the manifest and replaces the release's assets.
+#
+# Where it publishes: the assets of ONE release, tag `mobile-android`, on this
+# repository, which is also where the desktop publishes (package.json
+# build.publish). The tag is created once and never moved. Each run uploads the
+# APK under a name carrying its versionCode, then swaps in android-update.json,
+# the manifest the app reads (versionCode, versionName, commit, sha256, size,
+# url).
+#
+# Why this cannot touch desktop updates:
+#   - The release is a prerelease created with --latest=false, and GitHub never
+#     makes a prerelease "latest". An installed stable desktop build resolves its
+#     update through /releases/latest (electron-updater's GitHubProvider with
+#     allowPrerelease off), so it can never be pointed here.
+#   - An installed nightly build sets channel=nightly with allowPrerelease
+#     (src/main/update-service.ts) and walks the releases feed, skipping every
+#     tag that is not valid semver; `mobile-android` is not.
+#   - release.yml's scripts (scripts/release/) only ever look at tags that parse
+#     as vX.Y.Z[-nightly...]: anything else falls out of the nightly gate,
+#     promotion, version resolution and "Delete the older nightly releases"
+#     (nightliesToPrune keeps to the nightly train). Its tag trigger is `v*`,
+#     and a tag made with a workflow's own token starts no workflow anyway.
+#   - A release's date is its tag's commit date, and this tag never moves, so
+#     the release sinks below newer desktop releases in the feed.
+#   scripts/release/mobile-release.test.mjs runs the desktop's real updater and
+#   the release scripts against a feed with this release on top.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# One at a time, and never cancelled: a publish stopped halfway could leave the
+# release without its manifest. A newer push waits; GitHub keeps only the
+# newest waiting run, so a burst of merges publishes the last one.
+concurrency:
+  group: mobile-android-main
+  cancel-in-progress: false
+
+env:
+  # versionCode = offset + this workflow's run number, so it only grows. The run
+  # number restarts if this workflow is renamed or recreated: raise the offset
+  # above the last published versionCode when that happens, or phones will not
+  # be offered the new builds (and the publish job refuses to go backwards).
+  VERSION_CODE_OFFSET: 10000
+  # The release certificate's SHA-256, as apksigner prints it. Pinned in the
+  # app too (RELEASE_CERT_SHA256 in apkUpdateLogic.ts).
+  RELEASE_CERT_SHA256: ed4401c2e8b6753e25338435526ece0ea6945904d2b153fe9f1f5c2b404ea7d7
+
+jobs:
+  build:
+    name: Build (unsigned)
+    if: ${{ github.repository == 'sprintengine/sprintengine' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version_code: ${{ steps.version.outputs.code }}
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Version
+        id: version
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          code=$((VERSION_CODE_OFFSET + RUN_NUMBER))
+          base_version="$(node -p "require('./package.json').version")"
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          echo "name=${base_version}-main.${code}+${SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the release APK, unsigned
+        working-directory: mobile/android
+        env:
+          SPRINTENGINE_UNSIGNED_RELEASE: '1'
+          SPRINTENGINE_VERSION_CODE: ${{ steps.version.outputs.code }}
+          SPRINTENGINE_VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: ./gradlew assembleRelease --console=plain
+
+      - name: Upload the unsigned APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-unsigned
+          path: mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+          # A re-run of this run uploads under the same name.
+          overwrite: true
+          retention-days: 1
+
+  sign:
+    name: Sign with the release key
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: android-release
+    steps:
+      - name: Download the unsigned APK
+        uses: actions/download-artifact@v8
+        with:
+          name: android-unsigned
+          path: unsigned
+
+      # Nothing from the repository runs here: the runner's SDK tools only.
+      - name: Align, sign and check the certificate
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "A release signing secret (${name}) is empty: set the four ANDROID_RELEASE_* secrets on the android-release environment." >&2
+              exit 1
+            fi
+          done
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          keystore="$RUNNER_TEMP/release.keystore"
+          trap 'rm -f "$keystore"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          mkdir signed
+          # Gradle's output is already aligned (16 KB pages for the native
+          # libraries); realign only if it is not.
+          if "$build_tools/zipalign" -c -P 16 4 unsigned/app-release-unsigned.apk >/dev/null; then
+            cp unsigned/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          else
+            "$build_tools/zipalign" -P 16 -f 4 unsigned/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          fi
+          "$build_tools/apksigner" sign --ks "$keystore" --ks-type PKCS12 \
+            --ks-key-alias "$KEY_ALIAS" --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
+            --out signed/app-release.apk "$RUNNER_TEMP/aligned.apk"
+          # apksigner prints a line per signing scheme ("Signer #1 ..." or "V2
+          # Signer: ..." depending on its version); one distinct digest is one key.
+          certs="$("$build_tools/apksigner" verify --print-certs signed/app-release.apk)"
+          digests="$(printf '%s\n' "$certs" | grep -oE 'certificate SHA-256 digest: [0-9a-f]{64}' | awk '{print $4}' | sort -u)"
+          if [ "$digests" != "$RELEASE_CERT_SHA256" ]; then
+            echo "The APK is signed with ${digests:-nothing}, not the release key ${RELEASE_CERT_SHA256}." >&2
+            exit 1
+          fi
+          echo "Signed with the release key ${RELEASE_CERT_SHA256}."
+
+      - name: Upload the signed APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: SprintEngine-mobile-android-release-${{ github.sha }}
+          path: signed/app-release.apk
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  publish:
+    name: Publish to the mobile-android release
+    needs: [build, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # To create the mobile-android release and replace its assets.
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: mobile-android
+      SHA: ${{ github.sha }}
+      VERSION_CODE: ${{ needs.build.outputs.version_code }}
+
+    steps:
+      - name: Download the signed APK
+        uses: actions/download-artifact@v8
+        with:
+          name: SprintEngine-mobile-android-release-${{ github.sha }}
+          path: apk
+
+      - name: Write the manifest
+        run: |
+          set -euo pipefail
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          digests="$("$build_tools/apksigner" verify --print-certs apk/app-release.apk \
+            | grep -oE 'certificate SHA-256 digest: [0-9a-f]{64}' | awk '{print $4}' | sort -u)"
+          if [ "$digests" != "$RELEASE_CERT_SHA256" ]; then
+            echo "Refusing to publish an APK signed with ${digests:-nothing}." >&2
+            exit 1
+          fi
+          # Whole output first: `| head` would SIGPIPE aapt2 under pipefail.
+          badging="$("$build_tools/aapt2" dump badging apk/app-release.apk)"
+          badging="$(sed -n 1p <<<"$badging")"
+          echo "$badging"
+          package="$(sed -n "s/.*package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
+          code="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
+          name="$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$badging")"
+          if [ "$package" != "ai.sprintengine.mobile" ] || [ "$code" != "$VERSION_CODE" ]; then
+            echo "The APK is ${package} ${code}, not ai.sprintengine.mobile ${VERSION_CODE}." >&2
+            exit 1
+          fi
+          mkdir dist
+          apk_name="sprintengine-mobile-${VERSION_CODE}.apk"
+          cp apk/app-release.apk "dist/${apk_name}"
+          jq -n \
+            --argjson versionCode "$VERSION_CODE" \
+            --arg versionName "$name" \
+            --arg commit "$SHA" \
+            --arg sha256 "$(sha256sum "dist/${apk_name}" | cut -d' ' -f1)" \
+            --argjson size "$(stat -c %s "dist/${apk_name}")" \
+            --arg url "https://github.com/${REPO}/releases/download/${TAG}/${apk_name}" \
+            --arg certSha256 "${RELEASE_CERT_SHA256^^}" \
+            --arg publishedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{schema: 1, packageName: "ai.sprintengine.mobile", versionCode: $versionCode, versionName: $versionName,
+              commit: $commit, sha256: $sha256, size: $size, url: $url, certSha256: $certSha256, publishedAt: $publishedAt}' \
+            > dist/android-update.json
+          cp dist/android-update.json "dist/android-update-${VERSION_CODE}.json"
+          cat dist/android-update.json
+          echo "APK_NAME=${apk_name}" >> "$GITHUB_ENV"
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          notes="The phone app's build of main, for its in-app updater. Not a desktop release: nothing in the desktop's update path reads it. Every push to main replaces the APK and android-update.json here; this tag is never moved, and android-update.json names the commit and the APK's SHA-256."
+          if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
+              --title "Sprint Engine for Android (main)" --notes "$notes"
+          fi
+          state="$(gh release view "$TAG" --repo "$REPO" --json isPrerelease,isDraft,tagName)"
+          if ! jq -e --arg tag "$TAG" '.isPrerelease == true and .isDraft == false and .tagName == $tag' <<<"$state" >/dev/null; then
+            echo "The ${TAG} release must be a published prerelease: ${state}" >&2
+            exit 1
+          fi
+
+          # Never replace a newer build.
+          published="$(curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/android-update.json" 2>/dev/null | jq -r '.versionCode // 0' 2>/dev/null || echo 0)"
+          if [ "${published:-0}" -gt "$VERSION_CODE" ]; then
+            echo "${TAG} already carries versionCode ${published}, newer than ${VERSION_CODE}; nothing to publish."
+            echo "SKIPPED=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          # The APK first, under its own name, so the manifest never names a
+          # file that is not there. Then the manifest, uploaded under a name of
+          # its own and renamed into place: the old one is deleted only once the
+          # new one is fully uploaded, so a failed upload leaves the old
+          # manifest (and the APK it names) standing.
+          gh release upload "$TAG" "dist/${APK_NAME}" --repo "$REPO" --clobber
+          gh release upload "$TAG" "dist/android-update-${VERSION_CODE}.json" --repo "$REPO" --clobber
+          release_id="$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .id)"
+          assets="$(gh api --paginate "repos/${REPO}/releases/${release_id}/assets?per_page=100" --jq '.[] | [.id, .name] | @tsv')"
+          new_id="$(awk -F'\t' -v n="android-update-${VERSION_CODE}.json" '$2 == n {print $1}' <<<"$assets")"
+          old_id="$(awk -F'\t' '$2 == "android-update.json" {print $1}' <<<"$assets")"
+          if [ -z "$new_id" ]; then
+            echo "The uploaded android-update-${VERSION_CODE}.json is not listed on ${TAG}; leaving the old manifest in place." >&2
+            exit 1
+          fi
+          if [ -n "$old_id" ]; then gh api -X DELETE "repos/${REPO}/releases/assets/${old_id}"; fi
+          gh api -X PATCH "repos/${REPO}/releases/assets/${new_id}" -f name=android-update.json >/dev/null
+
+          # Keep this APK and the one before it (a phone may be mid-download of
+          # it); older APKs and stray versioned manifests are deleted.
+          assets="$(gh api --paginate "repos/${REPO}/releases/${release_id}/assets?per_page=100" --jq '.[] | [.id, .name] | @tsv')"
+          keep="$(awk -F'\t' '$2 ~ /^sprintengine-mobile-[0-9]+\.apk$/ {print $2}' <<<"$assets" \
+            | sed -E 's/^sprintengine-mobile-([0-9]+)\.apk$/\1/' | sort -n | tail -n 2 | tr '\n' ' ')"
+          awk -F'\t' '$2 ~ /^sprintengine-mobile-[0-9]+\.apk$/ || $2 ~ /^android-update-[0-9]+\.json$/ {print $1 "\t" $2}' <<<"$assets" \
+            | while IFS=$'\t' read -r id name; do
+                number="$(sed -E 's/^[a-z-]+-([0-9]+)\.(apk|json)$/\1/' <<<"$name")"
+                if [[ "$name" == *.apk && " $keep " == *" $number "* ]]; then continue; fi
+                echo "Deleting ${name}"
+                gh api -X DELETE "repos/${REPO}/releases/assets/${id}"
+              done
+
+      # Without credentials, as the phone reads it: the manifest is the one just
+      # written, the APK it names hashes to what it says, and /releases/latest
+      # is still a desktop release.
+      - name: Verify the published build, without credentials
+        if: env.SKIPPED != 'true'
+        run: |
+          set -euo pipefail
+          expected="$(jq -cS . dist/android-update.json)"
+          for attempt in 1 2 3 4 5 6; do
+            got="$(curl -fsSL -H 'Cache-Control: no-cache' "https://github.com/${REPO}/releases/download/${TAG}/android-update.json" | jq -cS . || true)"
+            [ "$got" = "$expected" ] && break
+            [ "$attempt" = 6 ] && { echo "The published manifest is ${got:-unreadable}, not ${expected}." >&2; exit 1; }
+            sleep 10
+          done
+          curl -fsSL -o downloaded.apk "$(jq -r .url dist/android-update.json)"
+          [ "$(sha256sum downloaded.apk | cut -d' ' -f1)" = "$(jq -r .sha256 dist/android-update.json)" ] \
+            || { echo "The published APK does not match the manifest's sha256." >&2; exit 1; }
+          latest="$(curl -fsSL -H 'Accept: application/json' "https://github.com/${REPO}/releases/latest" | jq -r '.tag_name // empty' || true)"
+          if [ "$latest" = "$TAG" ]; then
+            echo "/releases/latest resolves to ${TAG}: installed desktop builds would be pointed at it." >&2
+            exit 1
+          fi
+          echo "Published $(jq -r .versionName dist/android-update.json); /releases/latest is ${latest:-none}."
