@@ -33,6 +33,16 @@ import type { RegisteredGlobalSurface } from '../../modules/renderer-host'
  */
 export const EXTENSIONS_HOME_SURFACE_ID = 'extensions-home'
 
+/**
+ * The Plugins and Skills catalogue: the one surface the drawer's Plugins and
+ * Skills rows are views of. Registered as a door by the agent runtime module,
+ * but it opens as a MODAL over whatever owns the card region (owner ruling
+ * 2026-11-03), the way Settings does — choosing an extension is a
+ * pick-and-close task over work that stays put, and a takeover of the card
+ * region was a heavy way in for it. `openGlobalSurface` routes the id there.
+ */
+export const EXTENSIONS_CATALOGUE_SURFACE_ID = 'extensions'
+
 // Where a row comes from. Three kinds, because the registry has three shapes of
 // contribution and the drawer must not flatten them into one hand-written list
 // of components:

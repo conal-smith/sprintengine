@@ -798,6 +798,21 @@ export function ExtensionsGlyph({ className }: IconProps) {
   )
 }
 
+// Three of the Extensions tiles and a plus where the fourth would be: the
+// rail foot's way to add to what is connected (owner ruling 2026-11-03), told
+// apart from the Extensions square at the top of the rail, which is the
+// drawer of everything already there.
+export function AddExtensionsGlyph({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <rect x="2.5" y="2.5" width="4.6" height="4.6" rx="1.1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="8.9" y="2.5" width="4.6" height="4.6" rx="1.1" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="2.5" y="8.9" width="4.6" height="4.6" rx="1.1" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M11.2 8.9v4.6M8.9 11.2h4.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 export function ModulesSettingsIcon({ className }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">

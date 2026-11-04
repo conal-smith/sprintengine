@@ -124,7 +124,11 @@ import WorkspaceLayout from './WorkspaceLayout'
 import WorkspaceSidebar from './WorkspaceSidebar'
 import { AppRail, railSurfacesOf, type RailSurface } from './AppRail'
 import { useRailBadges } from './useRailBadges'
-import { EXTENSIONS_HOME_SURFACE_ID, surfaceTakesSidebarColumn } from './extensionsDrawer'
+import {
+  EXTENSIONS_CATALOGUE_SURFACE_ID,
+  EXTENSIONS_HOME_SURFACE_ID,
+  surfaceTakesSidebarColumn,
+} from './extensionsDrawer'
 import { dispatchExtensionsSurfaceTarget } from './globalSurface/extensions/extensionsSurfaceTarget'
 import { resolveDefaultParentPath } from './newWorkspace/folderCreation'
 import SidebarAccountBar from './SidebarAccountBar'
@@ -1024,6 +1028,20 @@ export default function WorkspaceManager() {
     if (!activeModalSurface) return null
     if (activeModalSurface === 'settings') return CORE_SETTINGS_MODAL_SURFACE
     if (activeModalSurface === 'usage') return CORE_USAGE_MODAL_SURFACE
+    // The Plugins and Skills catalogue is registered as a door but opens here
+    // (owner ruling 2026-11-03; `openGlobalSurface` routes it). Resolved by
+    // the door rule, so a disabled agent runtime module still opens on the
+    // named explainer rather than nothing, and titled for the whole of it:
+    // the dialog holds both catalogues.
+    if (activeModalSurface === EXTENSIONS_CATALOGUE_SURFACE_ID) {
+      const door = resolveActiveDoorSurface(
+        EXTENSIONS_CATALOGUE_SURFACE_ID,
+        (id) => getRendererHost().getGlobalSurface(id),
+        (moduleId) => selectModuleEnabled(moduleEnablement, moduleId),
+        (target) => openExtensionsSurface(target),
+      )
+      return { id: door.id, moduleId: door.moduleId, label: 'Extensions', Component: door.Component }
+    }
     return resolveActiveModalSurface(
       activeModalSurface,
       (id) => getRendererHost().getModalSurface(id),
@@ -3316,7 +3334,7 @@ export default function WorkspaceManager() {
             view: route.view,
             ...(result.surface.installed ? { installed: true } : {}),
           })
-          openGlobalSurface('extensions')
+          openGlobalSurface(EXTENSIONS_CATALOGUE_SURFACE_ID)
         }
       }
 
@@ -5128,6 +5146,12 @@ export default function WorkspaceManager() {
                 updateButton={<AppUpdateRailButton />}
                 usageOpen={usageOpen}
                 openUsage={() => (usageOpen ? closeModalSurface() : openModalSurface('usage'))}
+                extensionsOpen={activeModalSurface === EXTENSIONS_CATALOGUE_SURFACE_ID}
+                openExtensions={() =>
+                  activeModalSurface === EXTENSIONS_CATALOGUE_SURFACE_ID
+                    ? closeModalSurface()
+                    : openExtensionsSurface({ view: 'plugins' })
+                }
               />
             }
           />
@@ -5523,8 +5547,8 @@ export default function WorkspaceManager() {
                   {/* Fifth mount kind (doors→modals, 2026-09-01): a modal surface floats
             over whatever owns the region — a workspace, a door, the empty state
             — in the shipped Modal shell: workbench width, panel layout, the
-            flat darkening scrim (NEVER backdrop-filter — terminals render at
-            60fps behind it), FocusTrap, Escape/scrim close, focus restored to
+            darkening scrim (blurred only while no terminal is in view —
+            terminals render at 60fps behind it), FocusTrap, Escape/scrim close, focus restored to
             the element that opened it. Settings and Reviews live here —
             pick-and-close tasks over work that stays put; every
             destination the shell's own chrome offers is a door in the mount
@@ -5544,6 +5568,10 @@ export default function WorkspaceManager() {
                       label={activeModalSurfaceEntry.label}
                       size="workbench"
                       layout="panel"
+                      // The page recedes behind a workbench (owner ruling
+                      // 2026-11-03): blurred as well as dimmed, on the
+                      // palette's terms — never over a terminal in view.
+                      backdrop="glass"
                     >
                       {/* The frame owns the modal chrome contract (owner, 2026-09-01:
                 one close mechanism — an X in the title bar): it provides the

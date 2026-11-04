@@ -12,6 +12,8 @@ import {
 } from '../ui'
 import type { SprintEngineAuthState } from '../../../../shared/electron-api'
 import { AccountAvatar, AccountUserGlyph } from './AccountAvatar'
+import { AddExtensionsGlyph } from '../AppIcons'
+import { InstalledStack } from './globalSurface/extensions/catalogue/InstalledStack'
 import type { RailBadge } from './AppRail'
 
 // The account + Settings cluster lives at the sidebar bottom, relocated from
@@ -197,6 +199,9 @@ export type SidebarAccountBarProps = {
   /** The usage dashboard's open state, and the toggle the chart glyph calls. */
   usageOpen?: boolean
   openUsage?: () => void
+  /** The Extensions modal's open state, and the way the rail's pill opens it. */
+  extensionsOpen?: boolean
+  openExtensions?: () => void
 }
 
 // Sidebar-bottom account + Settings row. Expanded: the account avatar opens the
@@ -217,6 +222,8 @@ export default function SidebarAccountBar({
   updateButton,
   usageOpen = false,
   openUsage,
+  extensionsOpen = false,
+  openExtensions,
 }: SidebarAccountBarProps) {
   const accountName = authState.user?.displayName ?? authState.user?.email ?? 'Your account'
 
@@ -282,6 +289,31 @@ export default function SidebarAccountBar({
       </IconButton>
     </Tooltip>
   ) : null
+
+  // The Extensions pill (owner ruling 2026-11-03): a square like the others
+  // until it is pointed at or focused, when its name and the marks of what is
+  // installed slide out of it over the column beside the rail. On the rail
+  // only — it stands with the account because what is connected to the
+  // product is the person's, like the account is.
+  const extensionsButton =
+    openExtensions && collapsed ? (
+      <div className="relative size-control-lg shrink-0">
+        <IconButton
+          size="lg"
+          pressed={extensionsOpen}
+          onClick={openExtensions}
+          aria-label="Extensions"
+          className="rail-extensions-pill absolute left-0 top-0 z-[var(--z-float)]"
+        >
+          <AddExtensionsGlyph className="size-icon-lg shrink-0" />
+          <span className="rail-extensions-pill-label inline-flex items-center gap-2 text-body font-medium">
+            <span className="pl-2.5">Extensions</span>
+            <InstalledStack size={18} />
+            <span className="w-1" />
+          </span>
+        </IconButton>
+      </div>
+    ) : null
 
   // Icon-only in BOTH sidebar states (owner, 2026-09-01): the footer spends no
   // width on the account name — the badge (provider photo when the session
@@ -357,6 +389,7 @@ export default function SidebarAccountBar({
           a row they sit with the gear at the right edge, the account holding
           the left. */}
       {collapsed ? updateButton : null}
+      {extensionsButton}
       {collapsed ? usageButton : null}
       {accountControl}
       {collapsed ? (

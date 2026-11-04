@@ -2187,21 +2187,27 @@ export default function NewAgentPanel({
   }
 
   // A plain shell runs nothing on its behalf: there is no prompt to give it and
-  // no suggested task to start it with. Saying so beats a field that silently
-  // drops what was typed.
+  // no suggested task to start it with, so the box draws the shell's prompt
+  // instead of a field (see the box below).
   const isTerminalLaunch = selection.kind === 'terminal'
+  const terminalPromptRef = React.useRef<HTMLButtonElement>(null)
+  // Picking Terminal hands focus to Open terminal, so the next Enter opens
+  // the shell. The field it replaces held focus before; without this the key
+  // landed on nothing and only the pointer could open one.
+  React.useEffect(() => {
+    if (!isTerminalLaunch) return
+    const frame = window.requestAnimationFrame(() => terminalPromptRef.current?.focus({ preventScroll: true }))
+    return () => window.cancelAnimationFrame(frame)
+  }, [isTerminalLaunch])
   // The skills picker is where skills are offered; the inline `$`/`/`
-  // type-ahead still works, it just no longer needs advertising. A plain shell
-  // takes no prompt: nothing types a command into it for you.
-  const placeholder = isTerminalLaunch
-    ? 'A shell opens with nothing typed'
-    : scheduled
-      ? 'What each run should do…'
-      : extensionMode
-        ? 'Describe the extension…'
-        : selection.kind === 'general'
-          ? 'Describe the task. It runs in a terminal you can take over.'
-          : 'Describe the task…'
+  // type-ahead still works, it just no longer needs advertising.
+  const placeholder = scheduled
+    ? 'What each run should do…'
+    : extensionMode
+      ? 'Describe the extension…'
+      : selection.kind === 'general'
+        ? 'Describe the task. It runs in a terminal you can take over.'
+        : 'Describe the task…'
   // No agent CLI at all, or (for a chat agent) none with a chat runtime: the
   // same install route either way, because installing a CLI is the answer to
   // both.
@@ -2607,56 +2613,74 @@ export default function NewAgentPanel({
             className="px-5 pt-4"
           />
 
-          <div className="px-5 pb-1 pt-4">
-            {/* Grows with its content from the three-row floor to a ceiling,
+          {isTerminalLaunch ? (
+            // A plain shell takes no prompt, so the box is not a text field
+            // turned off (owner ruling 2026-11-03): it draws the prompt the
+            // shell will open on — the project, the mark, a caret. The send
+            // beside it takes focus when Terminal is picked, so Enter opens
+            // the shell from the keyboard as a click does from the pointer.
+            <div
+              aria-hidden="true"
+              data-terminal-launch-prompt=""
+              className="flex min-w-0 items-center gap-2 px-5 pb-2 pt-5 font-mono text-body"
+            >
+              {projectLabel ? (
+                <span className="min-w-0 truncate text-[color:var(--text-muted)]">{projectLabel}</span>
+              ) : null}
+              <span className="shrink-0 text-[color:var(--accent-primary)]">$</span>
+              <span className="terminal-launch-caret shrink-0" />
+            </div>
+          ) : (
+            <div className="px-5 pb-1 pt-4">
+              {/* Grows with its content from the three-row floor to a ceiling,
                 then scrolls — a box that showed two lines of a six-line prompt
                 was hiding what the person was about to send. The chat
                 composer's field, drawing the prompt's markdown in place, with
                 no box of its own: `COMPOSER_SURFACE_CLASS` around it draws the
                 border, the ground and the ring. */}
-            <ComposerField
-              ref={promptRef}
-              value={prompt}
-              leavesDrop={dataTransferHasDroppableFiles}
-              onPaste={(event, field) => {
-                // A pasted screenshot only exists as a clipboard item; a text
-                // paste reports no image and falls through to the default —
-                // unless the text is only paths to images outside the project,
-                // which attach instead. A chat starting on another machine
-                // cannot open this one's project, so there every path attaches.
-                // A file copied in Finder or Explorer pastes as the file, and
-                // is taken as a drop of it would be. A paste of nothing that
-                // attaches is left to the default, as it always was; once one
-                // is taken, everything that came with it is taken as a drop's
-                // is — a path typed, a file with no path uploaded or said.
-                const pasted = sortFiles(filesFromDataTransfer(event.clipboardData), fileSorting)
-                if (pasted.images.length > 0 || pasted.files.length > 0) {
+              <ComposerField
+                ref={promptRef}
+                value={prompt}
+                leavesDrop={dataTransferHasDroppableFiles}
+                onPaste={(event, field) => {
+                  // A pasted screenshot only exists as a clipboard item; a text
+                  // paste reports no image and falls through to the default —
+                  // unless the text is only paths to images outside the project,
+                  // which attach instead. A chat starting on another machine
+                  // cannot open this one's project, so there every path attaches.
+                  // A file copied in Finder or Explorer pastes as the file, and
+                  // is taken as a drop of it would be. A paste of nothing that
+                  // attaches is left to the default, as it always was; once one
+                  // is taken, everything that came with it is taken as a drop's
+                  // is — a path typed, a file with no path uploaded or said.
+                  const pasted = sortFiles(filesFromDataTransfer(event.clipboardData), fileSorting)
+                  if (pasted.images.length > 0 || pasted.files.length > 0) {
+                    event.preventDefault()
+                    takeFiles(pasted)
+                    return
+                  }
+                  const text = event.clipboardData?.getData('text/plain') ?? ''
+                  const paths = pastedImagePaths(text, !remoteTarget && workspaceRoot ? [workspaceRoot] : [])
+                  if (!paths) return
                   event.preventDefault()
-                  takeFiles(pasted)
-                  return
-                }
-                const text = event.clipboardData?.getData('text/plain') ?? ''
-                const paths = pastedImagePaths(text, !remoteTarget && workspaceRoot ? [workspaceRoot] : [])
-                if (!paths) return
-                event.preventDefault()
-                void attachPastedPaths(paths, text, field.selectionStart, field.selectionEnd)
-              }}
-              onChange={(value, caret) => {
-                setPrompt(value)
-                setPromptCaretAt({ value, caret })
-                setMentionEmpty(false)
-              }}
-              // The field's own text, not this render's `prompt`: a caret
-              // moved straight after an edit arrives before the re-render.
-              onSelectionChange={(caret) => setPromptCaretAt({ value: promptRef.current?.value ?? prompt, caret })}
-              onKeyDown={onPromptKeyDown}
-              placeholder={placeholder}
-              disabled={isTerminalLaunch}
-              adoptInput={bootComposer ? adoptBootInput : undefined}
-              contentAttributes={{ 'aria-label': 'What this agent should do', ...stashPicker.comboboxProps }}
-              className="max-h-[280px] min-h-[66px] w-full font-mono text-body"
-            />
-          </div>
+                  void attachPastedPaths(paths, text, field.selectionStart, field.selectionEnd)
+                }}
+                onChange={(value, caret) => {
+                  setPrompt(value)
+                  setPromptCaretAt({ value, caret })
+                  setMentionEmpty(false)
+                }}
+                // The field's own text, not this render's `prompt`: a caret
+                // moved straight after an edit arrives before the re-render.
+                onSelectionChange={(caret) => setPromptCaretAt({ value: promptRef.current?.value ?? prompt, caret })}
+                onKeyDown={onPromptKeyDown}
+                placeholder={placeholder}
+                adoptInput={bootComposer ? adoptBootInput : undefined}
+                contentAttributes={{ 'aria-label': 'What this agent should do', ...stashPicker.comboboxProps }}
+                className="max-h-[280px] min-h-[66px] w-full font-mono text-body"
+              />
+            </div>
+          )}
 
           {/* The controls, on the box's own ground with no rule above them:
               the "+", a tag for every choice that is not the default, the
@@ -2846,12 +2870,27 @@ export default function NewAgentPanel({
                   {editing ? 'Save' : 'Schedule'}
                   <SendGlyph className="icon-sm" />
                 </SendButton>
+              ) : isTerminalLaunch ? (
+                // Said in words: an arrow reads as "send this message", and a
+                // shell has no message to send.
+                <SendButton
+                  ref={terminalPromptRef}
+                  size="sm"
+                  onClick={() => launch(prompt)}
+                  disabled={!canLaunch}
+                  aria-label="Open terminal"
+                  aria-keyshortcuts="Enter"
+                  className="shrink-0 gap-1.5 pl-3 pr-2.5"
+                >
+                  Open terminal
+                  <SendGlyph className="icon-sm" />
+                </SendButton>
               ) : (
                 <SendButton
                   size="sm"
                   onClick={() => launch(prompt)}
                   disabled={!canLaunch || !extensionReady || !chatHasMessage(prompt)}
-                  aria-label={isTerminalLaunch ? 'Open terminal' : 'Start agent'}
+                  aria-label="Start agent"
                   aria-keyshortcuts="Enter"
                   className="w-control-sm shrink-0 px-0"
                 >

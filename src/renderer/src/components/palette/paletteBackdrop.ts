@@ -34,3 +34,14 @@ export function paletteBackdropIsConversation(root: ParentNode = document): bool
   if (Array.from(root.querySelectorAll(TERMINAL)).some(drawn)) return false
   return Array.from(root.querySelectorAll(CONVERSATION)).some(drawn)
 }
+
+/**
+ * True when no terminal is drawn under the backdrop — the Modal primitive's
+ * `backdrop="glass"` question (owner ruling 2026-11-03). Wider than the
+ * palette's: a workbench modal blurs whatever page it opens over, New chat
+ * and the doors included, because the cost the blur ban measured is a
+ * terminal's repaint, and that is the one thing this still refuses to blur.
+ */
+export function backdropHasNoTerminal(root: ParentNode = document): boolean {
+  return !Array.from(root.querySelectorAll(TERMINAL)).some(drawn)
+}

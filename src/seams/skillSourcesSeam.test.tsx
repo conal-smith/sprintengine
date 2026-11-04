@@ -461,13 +461,33 @@ test('skillSourcesSeam', async () => {
       })
       await settle(3)
     }
-    /** Open a source by its TAB — the sources are the tab row now, not a rail. */
+    /**
+     * Open a source by its pill — or, for one the line had no room for, from
+     * the More menu the rest fold into (owner ruling 2026-11-03).
+     */
     const openSource = async (tabName: string): Promise<void> => {
       const tab = [...container.querySelectorAll('[role="tab"]')].find((candidate) =>
         (candidate.textContent ?? '').startsWith(tabName),
       )
-      assert.ok(tab, `no tab for "${tabName}" is on screen`)
-      await click(tab as unknown as HTMLButtonElement)
+      if (tab) {
+        await click(tab as unknown as HTMLButtonElement)
+        return
+      }
+      const more = container.querySelector('button[aria-label="More sources"]')
+      assert.ok(more, `no tab for "${tabName}" is on screen, and no More to find it in`)
+      await click(more as HTMLButtonElement)
+      const item = [...dom.window.document.querySelectorAll('[role="menuitem"]')].find((candidate) =>
+        (candidate.textContent ?? '').startsWith(tabName),
+      )
+      assert.ok(item, `"${tabName}" is in neither the pills nor the More menu`)
+      await click(item as unknown as HTMLButtonElement)
+      assert.equal(
+        [...container.querySelectorAll('[role="tab"][aria-selected="true"]')].some((candidate) =>
+          (candidate.textContent ?? '').startsWith(tabName),
+        ),
+        true,
+        'a source picked from More takes a pill of its own, open',
+      )
     }
     /**
      * The rows ONE source lists under a search. A query reads every source at
@@ -533,7 +553,9 @@ test('skillSourcesSeam', async () => {
     assert.equal(mattpocock.groupingSignal, 'folders')
     await openSource('mattpocock/skills')
     assert.ok(markup().includes('>Engineering<'), 'the repository’s folders are the headings')
-    assert.ok(markup().includes('Showing 1–24 of 41'), 'and one pager walks the whole source')
+    // A source of several groups is a gallery (owner ruling 2026-11-03): each
+    // folder its first few, and a View all for the rest.
+    assert.ok(markup().includes('View all'), 'and a folder holding more than a glance offers the rest')
 
     // 20 skills the repository's own manifest authors five groups for — the
     // manifest wins over the (flat) folders, and the one directory it does not
@@ -554,9 +576,8 @@ test('skillSourcesSeam', async () => {
     assert.equal(anthropics.skills.find((skill) => skill.id === 'template')?.group, 'Everything else')
     await openSource('anthropics/skills')
     assert.ok(markup().includes('>Document skills<'), 'the manifest’s groups are the headings')
-    assert.ok(markup().includes('Showing 1–20 of 20'), 'twenty fit on one page of twenty-four')
-    // Every group is on that page — the pager walks the source, so a group is
-    // reached rather than hidden, and here none has to wait for page 2.
+    // Every group is in the gallery, so a group is reached rather than hidden
+    // behind another one's rows.
     assert.ok(markup().includes('>Claude api<'), 'the later groups are on the page too')
     assert.ok(markup().includes('>Everything else<'), 'including the skills the manifest forgot')
 
@@ -565,7 +586,10 @@ test('skillSourcesSeam', async () => {
     const browserAct = await scanOf('github:browser-act/skills')
     assert.equal(browserAct.skills.length, 103)
     await openSource('browser-act/skills')
-    assert.ok(markup().includes('Showing 1–24 of 103'))
+    assert.ok(
+      markup().includes('View all') || markup().includes('Showing 1–24 of 103'),
+      'every one of them reachable from the first view',
+    )
     assert.equal(markup().includes('Pick a category, or search.'), false)
 
     // One skill across 3,143 tree entries, mirrored per harness and collapsed to
@@ -1026,7 +1050,7 @@ test('skillSourcesSeam', async () => {
 
       slice.openSettingsOverlay({ initialTab: tab })
 
-      assert.equal(carrier.activeGlobalSurface, 'extensions', `${tab} opens the Plugins door`)
+      assert.equal(carrier.activeModalSurface, 'extensions', `${tab} opens the Extensions modal`)
       assert.equal(carrier.settingsOverlay.open, false, `${tab} does not open a settings tab that no longer exists`)
       assert.deepEqual(
         consumePendingExtensionsSurfaceTarget(),
