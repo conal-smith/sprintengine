@@ -43,10 +43,10 @@ different target*. Two unrelated actions welded together are two buttons.
   the `size.control.sm` step. **For a split action on a row's meta line** — a
   card's head line, a list row's trailing slot — where the bordered 30px group
   out-weighs the line it sits on and reads as a form control dropped into a
-  sentence. It keeps the single internal hairline, and that is deliberate: it
-  is what still says *one object, two halves* once the border is gone. Without
-  it this would be two bare buttons side by side, which is a different control
-  and a worse one. Everything that resolves which half is live is inherited
+  sentence. Its single internal hairline shows while the pair is in use —
+  hovered, focused or open — and rests transparent (2026-11-04): in use, it is
+  what says *one object, two halves* once the border is gone; at rest, a
+  divider nobody is about to use only boxes the line. Everything that resolves which half is live is inherited
   unchanged — per-half hover fill, the held `[aria-expanded="true"]` chevron,
   the inset focus ring — because quiet is a chrome level, not a lower
   accessibility bar.

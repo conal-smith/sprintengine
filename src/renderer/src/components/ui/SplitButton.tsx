@@ -123,9 +123,10 @@ export type SplitButtonProps = {
    * slot — where the bordered 30px group out-weighs the line and reads as a
    * form control dropped into a sentence.
    *
-   * It keeps the single internal hairline, which is the point: without it this
-   * would be two bare buttons that happen to be adjacent, and the halves would
-   * stop reading as one control. Hover, the held-open chevron and the inset
+   * Its single internal hairline shows while the pair is in use — hovered,
+   * focused or open — and rests transparent, so a meta line is not boxed by a
+   * divider nobody is about to use (2026-11-04). In use, the hairline is what
+   * says the halves are one control. Hover, the held-open chevron and the inset
    * focus ring are unchanged — quiet is a chrome level, not a lower bar.
    */
   quiet?: boolean
@@ -258,7 +259,7 @@ export function SplitButton({
   // The group's chrome and the primary half, spelled once and worn by both
   // shapes: with a chevron beside it, and — under two targets — on its own.
   const groupClass = [
-    'inline-flex items-stretch overflow-hidden',
+    'group/split inline-flex items-stretch overflow-hidden',
     // Quiet: the chrome comes off and the group comes down to the hit-target
     // floor, for a meta line the bordered group would out-weigh. The overflow
     // clip stays — it is what keeps each half's hover fill inside the corners —
@@ -333,7 +334,13 @@ export function SplitButton({
             aria-controls={triggerProps['aria-controls']}
             className={[
               HALF,
-              'border-l border-[color:var(--border-subtle)] text-[color:var(--text-muted)]',
+              // Quiet: the hairline shows while the pair is in use — under the
+              // pointer, in focus, or open — so a resting meta line reads as
+              // text with a control in it, not as a boxed pair (2026-11-04).
+              quiet
+                ? 'border-l border-transparent group-hover/split:border-[color:var(--border-subtle)] group-focus-within/split:border-[color:var(--border-subtle)] text-[color:var(--text-muted)]'
+                : 'border-l border-[color:var(--border-subtle)] text-[color:var(--text-muted)]',
+              quiet && open ? 'border-[color:var(--border-subtle)]' : '',
               quiet ? 'px-0.5' : 'px-1',
               open ? 'bg-[color:var(--bg-hover)] text-[color:var(--text-strong)]' : '',
             ].join(' ')}

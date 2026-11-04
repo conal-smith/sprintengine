@@ -221,7 +221,9 @@ function chatScale(steps: {
     // `strong` inside it included — and the rule, not an indent, marks it.
     blockquote: `${block} border-l-2 border-[color:var(--border-default)] pl-3 [--markdown-ink:var(--text-muted)] [--markdown-ink-strong:var(--text-default)] ${CHAT_INK}`,
     alert: `${block} ${steps.text}`,
-    hr: `my-4 border-0 border-t border-[color:var(--border-subtle)] first:mt-0 last:mb-0`,
+    // The default hairline, not the subtle one: a rule in a reply is a break the
+    // writer asked for, and at the subtle step it vanished on dark themes.
+    hr: `my-4 border-0 border-t border-[color:var(--border-default)] first:mt-0 last:mb-0`,
     tableBlock: `${steps.gap} last:mb-0`,
     math: `${block} ${MATH_BLOCK_CLASS} ${CHAT_INK}`,
     // Sized to its content, not squeezed to the pane: a squeezed column breaks

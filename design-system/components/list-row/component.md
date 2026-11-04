@@ -40,14 +40,15 @@ work that belongs in the detail pane.
 A surface has **exactly one `--selected` row on screen**. In a rail → list →
 detail layout the other two panes use `--resting`, so the person can always see
 which list their keyboard is driving. The edge is what makes that legible: one
-accent edge on screen, on the pane with focus.
+edge on screen, on the pane with focus.
 
-The accent appears as an **edge, never a fill** (owner ruling 2026-09-05). A
-neutral fill on its own lost to every row wearing a status tint, so the person
-could not find the row they were driving; an accent *fill* would have fixed
-that by making a chosen row outrank the primary button beside it, which is the
-accent's other job. Selection still never carries a left bar or a glow. See
-`patterns/selection`.
+The edge is a **neutral hairline** in `border.default`, 2px inset, and never an
+accent (2026-11-04). It was the accent from 2026-09-05, when a neutral fill on
+its own lost to rows wearing a status tint; as a green outline it then became
+the loudest mark on every list, round whatever the person was reading. The
+hairline keeps the selected row's shape against a tinted neighbour without
+competing with the primary button, which is the accent's job. Selection never
+carries an accent fill, a left bar or a glow. See `patterns/selection`.
 
 ### Attention
 
@@ -63,7 +64,7 @@ fill and the title in the tone's ink:
 
 **Status is the fill; selection is the edge.** Neither attention state draws a
 ring (owner ruling 2026-09-05, removing the one they used to carry). A green
-ring around a finished row is the same mark as the accent edge on the row
+ring around a finished row is the same mark as the selection edge on the row
 being driven, and it was the louder of the two — so "I finished while you were
 out" was read as "this is the one you are in". Two questions, two channels: a
 row can wear a status wash and the selection edge at once, and neither is

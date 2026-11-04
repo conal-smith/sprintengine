@@ -2272,7 +2272,7 @@ code {
 .ds-card-button[aria-pressed='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-accent-primary);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
 }
 
 .ds-card-button--bordered[aria-pressed='true'],
@@ -5524,7 +5524,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
  * Still ruled out, unchanged: an accent fill, a left bar, a glow. */
 .ds-list-row--selected {
   background: var(--sem-color-bg-selected);
-  box-shadow: inset 0 0 0 2px var(--sem-color-accent-primary);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
   color: var(--sem-color-text-primary);
 }
 
@@ -7574,7 +7574,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 .ds-row-button[aria-current='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-accent-primary);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
 }
 
 .ds-row-button:focus-visible {
@@ -8158,8 +8158,13 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
  * setting they cannot decide about. */
 .ds-setting-row-help {
   margin-top: var(--sem-space-3xs);
-  font-size: var(--sem-font-size-body);
+  /* One step under the label (2026-11-04). At the label's own size the two
+     lines read as one paragraph in two inks, and a page of rows had two levels
+     of type where it needs three: the page title, the setting, what it does.
+     Balanced, so a two-line help breaks in the middle, not after one word. */
+  font-size: var(--sem-font-size-meta);
   line-height: var(--sem-font-line-default);
+  text-wrap: balance;
   color: var(--sem-color-text-muted);
 }
 
@@ -8747,6 +8752,15 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 
 .ds-split-button--quiet .ds-split-button__chevron {
   padding: 0 var(--sem-space-3xs);
+  /* The hairline rests transparent and shows while the pair is in use, so a
+     resting meta line is not boxed by a divider (2026-11-04). */
+  border-left-color: transparent;
+}
+
+.ds-split-button--quiet:hover .ds-split-button__chevron,
+.ds-split-button--quiet:focus-within .ds-split-button__chevron,
+.ds-split-button--quiet .ds-split-button__chevron[aria-expanded='true'] {
+  border-left-color: var(--sem-color-border-subtle);
 }
 
 /* Size step for surfaces on the md control row (overlay footers, forms). */
@@ -17774,7 +17788,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 .ds-card-button[aria-pressed='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-accent-primary);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
 }
 
 .ds-card-button--bordered[aria-pressed='true'],
@@ -30135,7 +30149,7 @@ for (const sentinel of root.querySelectorAll('[data-sentinel]')) {
 <p>There is one group header. What changes is how much of it is there: the check, the count, the chip and the trailing slot are each optional, and the band closes up around whichever are absent.</p>
 <h4>States</h4>
 <p>| State | Treatment | |---|---| | Rest | Transparent ground; trailing slot invisible but holding its width | | Hover | <code>bg.hover</code>. The trailing control appears | | Focus-visible (chevron / check / action) | <code>focus.ring</code> on the control itself | | Focus-within (band) | The trailing control appears, exactly as on hover | | Expanded | <code>aria-expanded=&quot;true&quot;</code>; the chevron rotates 90° | | Collapsed | <code>aria-expanded=&quot;false&quot;</code>; the chevron points right — <strong>and the count stays</strong>, which is the whole reason a collapsed group is still useful | | Checked / mixed / unchecked | The checkbox's own three states |</p>
-<p><strong>The band never takes the selection fill or the accent edge.</strong> It is a header, not a row a person picks. A group header that looked selected would be a third answer to &quot;where am I&quot; in a list that already has two.</p>
+<p><strong>The band never takes the selection fill or the selection edge.</strong> It is a header, not a row a person picks. A group header that looked selected would be a third answer to &quot;where am I&quot; in a list that already has two.</p>
 <h4>Usage</h4>
 <ul><li><strong>One trailing control, and make it an overflow menu.</strong> A band that revealed three glyphs would be a second toolbar under the first one. The slot reserves its width at rest so revealing never reflows the band.</li><li><strong>The revealed control appears on focus as well as hover.</strong> A control that only exists under a pointer is unreachable by keyboard and by touch.</li><li><strong>A collapsed group keeps its count.</strong> Folding a group away must not also hide how much was folded — that is the difference between collapsing and hiding.</li><li><strong>One chip, and only for a fact that was true before the person arrived</strong> (&quot;active&quot;). Not a status, not a tone — <code>micro-chip</code>'s own argument.</li><li>The title truncates; the count, the chip and the trailing slot do not. What is cut is the part with the most redundancy in it.</li></ul>
 <h4>Accessibility</h4>
@@ -32965,12 +32979,12 @@ document.querySelectorAll('[data-demo-search]').forEach((input) =&gt; {
 <p>At most <strong>four visual elements at rest</strong>. A fifth means the row is carrying work that belongs in the detail pane.</p>
 <h4>Variants</h4>
 <ul><li><strong>Default</strong> — no modifier. The resting, unselected row.</li><li><strong><code>--selected</code></strong> — the selected row of the pane that currently has focus. Neutral <code>bg.selected</code> fill, a 2px inset <code>accent.primary</code> edge, title lifts to <code>text.primary</code>.</li><li><strong><code>--resting</code></strong> — the selected row of a pane that does not have focus. Quieter <code>bg.selected-resting</code> fill, <strong>no edge</strong>, title stays at <code>text.default</code>.</li></ul>
-<p>A surface has <strong>exactly one <code>--selected</code> row on screen</strong>. In a rail → list → detail layout the other two panes use <code>--resting</code>, so the person can always see which list their keyboard is driving. The edge is what makes that legible: one accent edge on screen, on the pane with focus.</p>
-<p>The accent appears as an <strong>edge, never a fill</strong> (owner ruling 2026-09-05). A neutral fill on its own lost to every row wearing a status tint, so the person could not find the row they were driving; an accent *fill* would have fixed that by making a chosen row outrank the primary button beside it, which is the accent's other job. Selection still never carries a left bar or a glow. See <code>patterns/selection</code>.</p>
+<p>A surface has <strong>exactly one <code>--selected</code> row on screen</strong>. In a rail → list → detail layout the other two panes use <code>--resting</code>, so the person can always see which list their keyboard is driving. The edge is what makes that legible: one edge on screen, on the pane with focus.</p>
+<p>The edge is a <strong>neutral hairline</strong> in <code>border.default</code>, 2px inset, and never an accent (2026-11-04). It was the accent from 2026-09-05, when a neutral fill on its own lost to rows wearing a status tint; as a green outline it then became the loudest mark on every list, round whatever the person was reading. The hairline keeps the selected row's shape against a tinted neighbour without competing with the primary button, which is the accent's job. Selection never carries an accent fill, a left bar or a glow. See <code>patterns/selection</code>.</p>
 <h5>Attention</h5>
 <p>Two states a row can say on its own, each taking the <strong>whole row</strong> — a tinted fill and the title in the tone's ink:</p>
 <ul><li><strong><code>--needs-input</code></strong> — an agent on this row is waiting for the person. <code>status.warn-soft</code> fill, <code>status.warn</code> ink. The loudest thing a row can say.</li><li><strong><code>--finished</code></strong> — a turn on this row finished while the person was looking elsewhere, and they have not opened it since. <code>status.good-faint</code> fill, <code>status.good</code> ink. One notch under needs-input by construction: it asks for a look, not an answer.</li></ul>
-<p><strong>Status is the fill; selection is the edge.</strong> Neither attention state draws a ring (owner ruling 2026-09-05, removing the one they used to carry). A green ring around a finished row is the same mark as the accent edge on the row being driven, and it was the louder of the two — so &quot;I finished while you were out&quot; was read as &quot;this is the one you are in&quot;. Two questions, two channels: a row can wear a status wash and the selection edge at once, and neither is mistaken for the other.</p>
+<p><strong>Status is the fill; selection is the edge.</strong> Neither attention state draws a ring (owner ruling 2026-09-05, removing the one they used to carry). A green ring around a finished row is the same mark as the selection edge on the row being driven, and it was the louder of the two — so &quot;I finished while you were out&quot; was read as &quot;this is the one you are in&quot;. Two questions, two channels: a row can wear a status wash and the selection edge at once, and neither is mistaken for the other.</p>
 <p>When a row is both attention states, needs-input wins. Both hold until the person opens the row and clear the moment it becomes the selected one.</p>
 <p>Both are colour <strong>plus words</strong>: the trailing slot or a visually-hidden clause says &quot;needs input&quot; / &quot;finished&quot; in text. Never a status mark or a chip beside an otherwise quiet row — that was ruled out twice (2026-09-04): the one state that wants the person to look must not be the quietest thing on the row.</p>
 <p>A row <strong>entering</strong> either state plays <code>.ds-list-row-flash</code> once: the &quot;just changed&quot; mark from [liveness](../liveness/component.md), in the tone the row is already wearing. It never loops — what keeps a waiting row loud is ink, not motion.</p>
@@ -33065,7 +33079,7 @@ document.querySelectorAll('[data-demo-search]').forEach((input) =&gt; {
  * Still ruled out, unchanged: an accent fill, a left bar, a glow. */
 .ds-list-row--selected {
   background: var(--sem-color-bg-selected);
-  box-shadow: inset 0 0 0 2px var(--sem-color-accent-primary);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
   color: var(--sem-color-text-primary);
 }
 
@@ -39469,7 +39483,7 @@ window.addEventListener('resize', repositionAll)
 .ds-row-button[aria-current='true'] {
   background: var(--sem-color-bg-selected);
   color: var(--sem-color-text-primary);
-  box-shadow: inset 0 0 0 2px var(--sem-color-accent-primary);
+  box-shadow: inset 0 0 0 2px var(--sem-color-border-default);
 }
 
 .ds-row-button:focus-visible {
@@ -41433,8 +41447,13 @@ document.querySelectorAll('.ds-segmented-control').forEach((group) =&gt; {
  * setting they cannot decide about. */
 .ds-setting-row-help {
   margin-top: var(--sem-space-3xs);
-  font-size: var(--sem-font-size-body);
+  /* One step under the label (2026-11-04). At the label's own size the two
+     lines read as one paragraph in two inks, and a page of rows had two levels
+     of type where it needs three: the page title, the setting, what it does.
+     Balanced, so a two-line help breaks in the middle, not after one word. */
+  font-size: var(--sem-font-size-meta);
   line-height: var(--sem-font-line-default);
+  text-wrap: balance;
   color: var(--sem-color-text-muted);
 }
 
@@ -43507,7 +43526,7 @@ document.querySelectorAll('.ds-segmented-control').forEach((group) =&gt; {
 <h4>Anatomy</h4>
 <ul><li><code>ds-split-button</code> — the group. It owns the border, the radius, the height, and the overflow clip; the halves own nothing structural. One object, not two buttons that touch. Tier 2 of [button → Control tiers](../button/component.md) (owner ruling 2026-10-04): a <code>border.strong</code> hairline on a transparent ground, exactly the outline button's edge, and no depth.</li><li><code>ds-split-button__primary</code> — the default-action half: optional target glyph, then the verb. Padding <code>sem.space.md</code>, label in <code>font.size.meta</code> at <code>font.weight.medium</code>.</li><li><code>ds-split-button__chevron</code> — the menu half, carrying the single internal hairline (<code>color.border.subtle</code>) on its left edge and a chevron at <code>icon.size.xs</code>. Narrower than the label half (<code>sem.space.2xs</code>).</li><li><code>ds-split-button__glyph</code> — the target mark leading the label: a two-letter mono mark or a small glyph, boxed at <code>icon.size.sm</code> on <code>color.bg.active</code> so every target reads at one weight whichever form it takes.</li><li>The menu itself is a standard popover surface, <strong>not</strong> part of this component. It carries one checkable row per target, the current default checked, and any keyboard hint right-aligned.</li></ul>
 <h4>Variants</h4>
-<ul><li>Default (no modifier) — the neutral outlined group at <code>size.control.sm</code>: flat, on the <code>border.strong</code> hairline. This is the only tone the system offers. Until 2026-10-04 the shipped group stood on a <code>bg.surface-raised</code> ground with the retired <code>shadow.control-edge</code>.</li><li><code>ds-split-button--md</code> — the <code>size.control.md</code> step, with the label on <code>font.size.body</code>. For overlay footers and forms, where the surrounding controls sit on that row.</li><li><code>ds-split-button--quiet</code> — the same control with its chrome taken away: no outer border, and <code>size.hit-target-min</code> (24px) instead of the <code>size.control.sm</code> step. <strong>For a split action on a row's meta line</strong> — a card's head line, a list row's trailing slot — where the bordered 30px group out-weighs the line it sits on and reads as a form control dropped into a sentence. It keeps the single internal hairline, and that is deliberate: it is what still says *one object, two halves* once the border is gone. Without it this would be two bare buttons side by side, which is a different control and a worse one. Everything that resolves which half is live is inherited unchanged — per-half hover fill, the held <code>[aria-expanded=&quot;true&quot;]</code> chevron, the inset focus ring — because quiet is a chrome level, not a lower accessibility bar.</li><li><strong>No accent-filled variant, deliberately.</strong> A view gets one primary button (see <code>foundations/principles.md</code>); a control whose whole point is that its action is ambiguous until you read its glyph is not it.</li></ul>
+<ul><li>Default (no modifier) — the neutral outlined group at <code>size.control.sm</code>: flat, on the <code>border.strong</code> hairline. This is the only tone the system offers. Until 2026-10-04 the shipped group stood on a <code>bg.surface-raised</code> ground with the retired <code>shadow.control-edge</code>.</li><li><code>ds-split-button--md</code> — the <code>size.control.md</code> step, with the label on <code>font.size.body</code>. For overlay footers and forms, where the surrounding controls sit on that row.</li><li><code>ds-split-button--quiet</code> — the same control with its chrome taken away: no outer border, and <code>size.hit-target-min</code> (24px) instead of the <code>size.control.sm</code> step. <strong>For a split action on a row's meta line</strong> — a card's head line, a list row's trailing slot — where the bordered 30px group out-weighs the line it sits on and reads as a form control dropped into a sentence. Its single internal hairline shows while the pair is in use — hovered, focused or open — and rests transparent (2026-11-04): in use, it is what says *one object, two halves* once the border is gone; at rest, a divider nobody is about to use only boxes the line. Everything that resolves which half is live is inherited unchanged — per-half hover fill, the held <code>[aria-expanded=&quot;true&quot;]</code> chevron, the inset focus ring — because quiet is a chrome level, not a lower accessibility bar.</li><li><strong>No accent-filled variant, deliberately.</strong> A view gets one primary button (see <code>foundations/principles.md</code>); a control whose whole point is that its action is ambiguous until you read its glyph is not it.</li></ul>
 <h4>States</h4>
 <ul><li>Hover: the hovered half alone takes <code>bg.hover</code> and lifts to <code>text.primary</code>. The other half does not move — the halves are separately clickable and must say so.</li><li>Open: while the menu is on screen the chevron half stays at <code>bg.hover</code> via <code>[aria-expanded=&quot;true&quot;]</code>, tying the surface to the half that opened it.</li><li>Focus-visible: the shared <code>focus.ring</code> outline, at a <strong>negative</strong> <code>focus.ring-offset</code> because the group clips its overflow — an outward gap would be cut off on the joined edge. Each half draws independently.</li><li>Disabled: 45% opacity and <code>not-allowed</code> on both halves. Disable the whole group or neither: a live primary beside a dead menu reads as a bug.</li><li>Pressed: the pressed half alone steps to <code>bg.active</code>. <strong>No press-scale</strong> — the one exception to the family's shared press, because the group would scale as one object while only one half was pressed, and a half that shrank inside the group's clip would pull away from its own border.</li></ul>
 <h4>Usage</h4>
@@ -43663,6 +43682,15 @@ document.querySelectorAll('.ds-segmented-control').forEach((group) =&gt; {
 
 .ds-split-button--quiet .ds-split-button__chevron {
   padding: 0 var(--sem-space-3xs);
+  /* The hairline rests transparent and shows while the pair is in use, so a
+     resting meta line is not boxed by a divider (2026-11-04). */
+  border-left-color: transparent;
+}
+
+.ds-split-button--quiet:hover .ds-split-button__chevron,
+.ds-split-button--quiet:focus-within .ds-split-button__chevron,
+.ds-split-button--quiet .ds-split-button__chevron[aria-expanded='true'] {
+  border-left-color: var(--sem-color-border-subtle);
 }
 
 /* Size step for surfaces on the md control row (overlay footers, forms). */
@@ -50817,9 +50845,11 @@ measureAll()
   <p class="pat-lede">
     Selection answers “what did I pick?”. Focus answers “where am I typing?”.
     They are different questions and never share a treatment. Selection is a
-    neutral fill in two tiers, and the tier with focus adds a 2px accent
-    <em>edge</em> — the accent’s fill is still reserved for the primary action,
-    so a chosen row never outranks the one thing worth clicking.
+    neutral fill in two tiers, and the tier with focus adds a 2px neutral
+    <em>edge</em> in the subtle border. No accent at all: the accent is reserved
+    for the primary action, so a chosen row never outranks the one thing worth
+    clicking. (The edge was the accent until 2026-11-04, when a green outline
+    round the row being read proved the loudest mark on every list.)
   </p>
   <p class="pat-lede">
     The edge is also the channel status may not borrow: a tinted row says
@@ -50874,7 +50904,7 @@ measureAll()
   </div>
   <p class="pat-caption">
     One pane has focus and shows <code>--selected</code> — the neutral fill
-    plus the accent edge. The other two show <code>--resting</code>: the fill
+    plus the neutral edge. The other two show <code>--resting</code>: the fill
     alone, no edge. They remember the choice without competing, so the eye
     lands on the list the keyboard is driving.
   </p>
@@ -50971,8 +51001,8 @@ measureAll()
   <p class="pat-caption">
     Three panes shouting at once, each with an accent <em>fill</em> and a left
     bar. Nothing says which list has focus, three signals carry one state, and
-    the accent no longer means “this is the action”. Selection takes the
-    accent as an edge on one pane only, never as a fill, and never as a left
+    the accent no longer means “this is the action”. Selection takes a
+    neutral edge on one pane only, never an accent fill, and never a left
     bar.
   </p>
 
@@ -51132,9 +51162,11 @@ measureAll()
   &lt;p class=&quot;pat-lede&quot;&gt;
     Selection answers “what did I pick?”. Focus answers “where am I typing?”.
     They are different questions and never share a treatment. Selection is a
-    neutral fill in two tiers, and the tier with focus adds a 2px accent
-    &lt;em&gt;edge&lt;/em&gt; — the accent’s fill is still reserved for the primary action,
-    so a chosen row never outranks the one thing worth clicking.
+    neutral fill in two tiers, and the tier with focus adds a 2px neutral
+    &lt;em&gt;edge&lt;/em&gt; in the subtle border. No accent at all: the accent is reserved
+    for the primary action, so a chosen row never outranks the one thing worth
+    clicking. (The edge was the accent until 2026-11-04, when a green outline
+    round the row being read proved the loudest mark on every list.)
   &lt;/p&gt;
   &lt;p class=&quot;pat-lede&quot;&gt;
     The edge is also the channel status may not borrow: a tinted row says
@@ -51189,7 +51221,7 @@ measureAll()
   &lt;/div&gt;
   &lt;p class=&quot;pat-caption&quot;&gt;
     One pane has focus and shows &lt;code&gt;--selected&lt;/code&gt; — the neutral fill
-    plus the accent edge. The other two show &lt;code&gt;--resting&lt;/code&gt;: the fill
+    plus the neutral edge. The other two show &lt;code&gt;--resting&lt;/code&gt;: the fill
     alone, no edge. They remember the choice without competing, so the eye
     lands on the list the keyboard is driving.
   &lt;/p&gt;
@@ -51286,8 +51318,8 @@ measureAll()
   &lt;p class=&quot;pat-caption&quot;&gt;
     Three panes shouting at once, each with an accent &lt;em&gt;fill&lt;/em&gt; and a left
     bar. Nothing says which list has focus, three signals carry one state, and
-    the accent no longer means “this is the action”. Selection takes the
-    accent as an edge on one pane only, never as a fill, and never as a left
+    the accent no longer means “this is the action”. Selection takes a
+    neutral edge on one pane only, never an accent fill, and never a left
     bar.
   &lt;/p&gt;
 

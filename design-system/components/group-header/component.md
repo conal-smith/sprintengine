@@ -112,7 +112,7 @@ closes up around whichever are absent.
 | Collapsed | `aria-expanded="false"`; the chevron points right — **and the count stays**, which is the whole reason a collapsed group is still useful |
 | Checked / mixed / unchecked | The checkbox's own three states |
 
-**The band never takes the selection fill or the accent edge.** It is a header,
+**The band never takes the selection fill or the selection edge.** It is a header,
 not a row a person picks. A group header that looked selected would be a third
 answer to "where am I" in a list that already has two.
 
