@@ -66,7 +66,7 @@ test('menuConvergence', async () => {
   // The properties the audit measured as divergent, each expressed as the class
   // that carries it. A menu "agrees" when every host answers all six the same way.
   const SURFACE_AXES = [
-    'rounded-[7px]',
+    'rounded-md',
     'border-[color:var(--border-strong)]',
     'bg-[color:var(--bg-surface-raised)]',
     'py-1',

@@ -364,11 +364,11 @@ person with everything at once.
   computed value, off the space scale if need be, with a one-line comment
   saying what it lines up with. Moving it to the nearest step misaligns the
   column it exists to align.
-- At most 2 radii per view. `radius.control` (5px) is the default; larger radii
+- At most 2 radii per view, on the 4/6/8/12/16 ramp. `radius.control` (6px) is the default; larger radii
   belong to overlay and modal shells. Marketing radii (`rounded-2xl` and up)
   never appear on operational chrome.
 - **The composer is the one named exception to that ceiling** (owner ruling
-  2026-10-04). Its box takes `radius.composer` (22px), and the context strip
+  2026-10-04). Its box takes `radius.composer` (16px, softened from 22px on 2026-11-04 so it sits on the ramp's top step), and the context strip
   tucked under it takes `radius.composer-strip` (16px) on its two bottom
   corners only, so the two read as one piece. The cards set against it — the
   tiles under the New chat composer, and the top corners of the tray docked on

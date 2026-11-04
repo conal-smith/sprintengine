@@ -20,7 +20,7 @@ export function MemoryGraphLegend({ nodes }: LegendProps) {
   // Opaque surface + hairline, never a frost: the graph canvas underneath
   // repaints on every pan, and a blur over it re-runs each frame.
   return (
-    <div className="pointer-events-none absolute bottom-3 left-3 rounded-[7px] border border-[color:var(--border-default)] bg-[color:var(--bg-surface)] px-3 py-2 text-micro text-[color:var(--text-default)]">
+    <div className="pointer-events-none absolute bottom-3 left-3 rounded-md border border-[color:var(--border-default)] bg-[color:var(--bg-surface)] px-3 py-2 text-micro text-[color:var(--text-default)]">
       <div className="mb-1.5 text-micro font-semibold text-[color:var(--text-muted)]">Types</div>
       <ul className="space-y-1">
         {entries.map(([bucket, count]) => {

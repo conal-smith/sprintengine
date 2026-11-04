@@ -545,7 +545,7 @@ test('designSystemAxes', async () => {
     const canon = code(MENU_CANON)
     const chrome = code(join(KIT, 'tokens.ts'))
     for (const [pattern, why] of [
-      ['rounded-\\[7px\\]', 'radius.overlay, like every other floating surface'],
+      ['(?:^|\\s)rounded-md(?:\\s|$)', 'radius.overlay (`rounded-md`), like every other floating surface'],
       ['--border-strong', 'the popover border, not border-default'],
       ['--bg-surface-raised', 'the popover ground, not bg-surface'],
       ['--shadow-popover', 'the popover elevation token'],
@@ -558,7 +558,7 @@ test('designSystemAxes', async () => {
     assert.match(canon, /FOCUS_RING_INSET_CLASS/, 'a full-bleed row would clip an outset ring')
     assert.ok(!/\bp-1\b/.test(canon), 'vertical padding only — horizontal surface padding is what forces an inset fill')
     assert.ok(
-      !/\brounded\b/.test(canon.replace(/rounded-\[7px\]/g, '')),
+      !/\brounded\b/.test(canon.replace(/rounded-md/g, '')),
       'a menu item with its own radius is the inset-fill shape the spec rules out',
     )
   })
@@ -576,7 +576,7 @@ test('designSystemAxes', async () => {
         `${file} spells the menu row's own geometry; that is how the five drifted apart`,
       )
       assert.ok(
-        !/rounded-\[7px\]/.test(source),
+        !/rounded-md\b[^']*--shadow-popover|app-no-drag rounded-md border/.test(source),
         `${file} draws its own overlay chrome instead of taking the shared surface`,
       )
       assert.ok(

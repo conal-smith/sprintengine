@@ -79,7 +79,7 @@ export function InlineNotice({ tone, title, hint, detail, children, action, clas
       >
         Show details
       </summary>
-      <pre className="font-mono mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded-[3px] border border-[color:var(--border-default)] bg-[color:var(--bg-surface)] px-2 py-1.5 text-micro leading-[1.5] text-[color:var(--text-muted)]">
+      <pre className="font-mono mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded-xs border border-[color:var(--border-default)] bg-[color:var(--bg-surface)] px-2 py-1.5 text-micro leading-[1.5] text-[color:var(--text-muted)]">
         {detail}
       </pre>
     </details>

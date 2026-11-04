@@ -209,8 +209,11 @@ function chatScale(steps: {
     pre: `${block} overflow-x-auto rounded-md border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] p-3 text-meta leading-[1.6] text-[color:var(--text-default)]`,
     // A neutral pill in strong ink: an identifier is one of the things a reader
     // scans a reply for, so it stands out by contrast, not by a status hue. The
+    // fill alone draws the pill: a hairline round every identifier boxed a
+    // paragraph full of them into a grid (2026-11-04). The transparent border
+    // keeps the box the hairline had, so a line of code does not shift. The
     // mono face runs wide, so it steps under the surrounding text's size.
-    code: `rounded-xs border border-[color:var(--border-subtle)] bg-[color:var(--bg-active)] px-[0.3em] py-[0.05em] text-[0.9em] ${CHAT_INK_STRONG} break-words box-decoration-clone [pre_&]:text-[1em]`,
+    code: `rounded-xs border border-transparent bg-[color:var(--bg-active)] px-[0.3em] py-[0.05em] text-[0.9em] ${CHAT_INK_STRONG} break-words box-decoration-clone [pre_&]:text-[1em]`,
     strong: `font-semibold ${CHAT_INK_STRONG}`,
     // Emphasis is a change of voice, not of importance: it keeps the ink it is in.
     em: 'italic',
@@ -276,7 +279,7 @@ const MARKDOWN_SCALE: Record<MarkdownDensity, MarkdownScale> = {
     pre: 'my-4 overflow-x-auto rounded-md border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] p-3 text-micro leading-[1.7] text-[color:var(--text-default)]',
     // Inline code sits inside running text, so it matches that text's size;
     // inside a fence it takes the fence's, which is already set on the <pre>.
-    code: 'rounded-[3px] bg-[color:var(--bg-active)] px-[0.34em] py-[0.1em] text-[0.92em] text-[color:var(--text-default)] break-words box-decoration-clone [pre_&]:text-[1em]',
+    code: 'rounded-xs bg-[color:var(--bg-active)] px-[0.34em] py-[0.1em] text-[0.92em] text-[color:var(--text-default)] break-words box-decoration-clone [pre_&]:text-[1em]',
     strong: 'font-semibold text-[color:var(--text-strong)]',
     em: 'italic',
     blockquote: 'my-3 border-l border-[color:var(--border-strong)] py-0.5 pl-4 text-[color:var(--text-muted)]',

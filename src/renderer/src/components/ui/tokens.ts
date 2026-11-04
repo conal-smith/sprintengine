@@ -214,7 +214,7 @@ export const LIST_CURSOR_MARK_CLASS =
  * Written out in full, per the literal rule above.
  */
 export const OVERLAY_SURFACE_CLASS =
-  'app-no-drag rounded-[7px] border border-[color:var(--border-strong)] bg-[color:var(--bg-surface-raised)] shadow-[var(--shadow-popover)]'
+  'app-no-drag rounded-md border border-[color:var(--border-strong)] bg-[color:var(--bg-surface-raised)] shadow-[var(--shadow-popover)]'
 
 /**
  * The same chrome without its ground, for the one case where a shell paints
@@ -228,14 +228,14 @@ export const OVERLAY_SURFACE_CLASS =
  * Written out in full, per the literal rule above.
  */
 export const OVERLAY_CHROME_CLASS =
-  'app-no-drag rounded-[7px] border border-[color:var(--border-strong)] shadow-[var(--shadow-popover)]'
+  'app-no-drag rounded-md border border-[color:var(--border-strong)] shadow-[var(--shadow-popover)]'
 
 /**
  * The chat composer's material (remote-sessions-ux /
  * composer-surface-premium), shared by the launch composer and the session
  * composer so the most-looked-at surface in the product is ONE surface:
  *
- * - `radius.composer` (22px) — the one named exception to the radius ceiling
+ * - `radius.composer` (16px) — the one named exception to the radius ceiling
  *   (owner ruling 2026-10-04). It was the shell radius, and before that the two
  *   composers had shipped `rounded-md` on `bg-app` and `rounded-lg` on
  *   `bg-surface`, two materials for one thing.
@@ -262,7 +262,7 @@ export const COMPOSER_SURFACE_CLASS =
  * lit edge of `COMPOSER_SURFACE_CLASS`, and no radius. For a box that is
  * written in like the composer but is not it — the Git pane's commit message
  * (owner ruling 2026-10-01) — which keeps the shell radius: `radius.composer`
- * is the composer's alone, and a square button in a 22px corner pokes out of
+ * is the composer's alone, and a square button in a 16px corner pokes out of
  * the curve.
  */
 export const COMPOSER_MATERIAL_CLASS = 'border bg-[image:var(--composer-fill)] shadow-[var(--shadow-control-raised)]'

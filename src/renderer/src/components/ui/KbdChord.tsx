@@ -46,7 +46,7 @@ export function KbdChord({ keys, chord, platform, separator, ariaLabel, classNam
                   {sep}
                 </span>
               ) : null}
-              <kbd className="font-mono inline-flex h-4 min-w-[16px] items-center justify-center rounded-[3px] border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] px-1 text-micro text-[color:var(--text-muted)]">
+              <kbd className="font-mono inline-flex h-4 min-w-[16px] items-center justify-center rounded-xs border border-[color:var(--border-subtle)] bg-[color:var(--bg-surface-raised)] px-1 text-micro text-[color:var(--text-muted)]">
                 {key}
               </kbd>
             </React.Fragment>

@@ -51,7 +51,7 @@ composed against by other surfaces.
 
 | Axis | Value |
 |---|---|
-| Radius | `radius.shell` (9px) for a dialog-scale shell; `radius.overlay` (7px) for the popover family — anchored menus, flyouts, floating cards. Nothing between the two steps. |
+| Radius | `radius.shell` (12px) for a dialog-scale shell; `radius.overlay` (8px) for the popover family — anchored menus, flyouts, floating cards. Nothing between the two steps. |
 | Border | `color.border.subtle`, 1px |
 | Elevation | `shadow.modal` for a shell, `shadow.popover` for the popover family, `shadow.drawer` for an edge-docked drawer. Every one of them per-theme; a shell is never shadowless. |
 | Inset | `space.3xl` (24px), the step the token's own metadata names as the modal inset |

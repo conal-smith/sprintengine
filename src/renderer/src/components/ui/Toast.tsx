@@ -109,7 +109,7 @@ export function Toast({
       className={[
         // toast-enter is defined in src/renderer/src/assets/index.css and is
         // disabled inside the global `prefers-reduced-motion: reduce` rule.
-        'toast-enter flex items-start gap-2 rounded-[7px] border px-3 py-2',
+        'toast-enter flex items-start gap-2 rounded-md border px-3 py-2',
         // Glass (owner ruling 2026-09-04):
         // `surface-glass` is bg.surface-raised at glass.opacity over a blur of
         // the page, with a hairline and shadow.toast to draw the card's
@@ -170,7 +170,7 @@ export function Toast({
           // a rebuild. The negative margin keeps the flow advance the 20px
           // target had, so widening the target moves nothing beside it.
           className={[
-            'interactive -m-1 inline-flex min-h-[var(--hit-target-min)] min-w-[var(--hit-target-min)] shrink-0 items-center justify-center rounded-[3px]',
+            'interactive -m-1 inline-flex min-h-[var(--hit-target-min)] min-w-[var(--hit-target-min)] shrink-0 items-center justify-center rounded-xs',
             'text-[color:var(--text-muted)] hover:bg-[color:var(--bg-hover)] hover:text-[color:var(--text-strong)]',
             'focus-visible:focus-ring',
           ].join(' ')}

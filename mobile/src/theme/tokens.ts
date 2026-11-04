@@ -247,7 +247,7 @@ const darkColors: ThemeColors = {
   chart6: "#e253ae",
   chart7: "#7e6cf7",
   chart8: "#0da4cf",
-  chartOther: "#9c9ca4",
+  chartOther: "#a8a8b0",
   bgWell: "rgba(252,252,252,0.06)",
 };
 
@@ -334,7 +334,7 @@ const lightColors: ThemeColors = {
   chart6: "#bf308f",
   chart7: "#7e6cf7",
   chart8: "#0581a3",
-  chartOther: "#707078",
+  chartOther: "#808088",
   bgWell: "rgba(32,36,40,0.05)",
 };
 

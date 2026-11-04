@@ -104,7 +104,7 @@ letting their labels slide left.
 
 | Property | Token | Value |
 |---|---|---|
-| Radius | `radius.overlay` | 7px |
+| Radius | `radius.overlay` | 8px |
 | Border | `border.strong` | 1px |
 | Ground | `bg.surface-raised` | |
 | Shadow | `shadow.popover` | |

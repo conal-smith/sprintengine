@@ -2046,6 +2046,11 @@ samp,
   /* And the floating pill's hover, one shade under the white rather than over
      it (see --composer-surface-hover in :root). */
   --composer-surface-hover: var(--bg-hover);
+  /* The user's bubble, halfway from the hover rung to the press rung (see
+     --agent-inset in :root). The hover rung alone is a shade off white, and
+     on a light theme's near-white paper a sent message read as a faint box
+     rather than as a turn standing off the page (2026-11-04). */
+  --agent-inset: color-mix(in oklab, var(--bg-hover) 50%, var(--bg-active));
   --git-lane-0: color-mix(in oklab, var(--text-strong) 35%, #5c7cff);
   --git-lane-1: color-mix(in oklab, var(--text-strong) 35%, #a78bfa);
   --git-lane-2: color-mix(in oklab, var(--text-strong) 35%, #30d158);
