@@ -370,6 +370,17 @@ test('nightly and the preview bridge are separate trains in the feed', async () 
   assert.deepEqual((await nightly.check()).problems, [])
 })
 
+test("the phone's mobile-android release on top of the feed takes nothing from either train", async () => {
+  // ci.yml's android-publish job keeps the phone build on that one tag.
+  const nightly = published('0.4.1-nightly.20260911.3', {
+    feed: ['mobile-android', 'v0.4.1-nightly.20260911.3', 'v0.4.0'],
+    latest: 'v0.4.0',
+  })
+  assert.deepEqual((await nightly.check()).problems, [])
+  const stable = published('0.4.0', { feed: ['mobile-android', 'v0.4.0'] })
+  assert.deepEqual((await stable.check()).problems, [])
+})
+
 test('a manifest the release page will not serve is named with the error it causes', async () => {
   const world = published('0.4.1-nightly.20260911.3')
   delete world.responses[world.urls.manifests.linux]

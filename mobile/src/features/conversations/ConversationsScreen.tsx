@@ -29,6 +29,7 @@ import { WorkingMark } from "../../components/WorkingMark";
 import { useTheme, useThemedStyles } from "../../theme/ThemeProvider";
 import { fontWeight, hitTargetMin, radius, space, typography, type Theme, withAlpha } from "../../theme/tokens";
 import { projectHueColor } from "../../theme/projectHue";
+import { AppUpdateButton } from "../updates/AppUpdateButton";
 import { useChats } from "./ChatsContext";
 import { markUnreadOffered } from "./chatLifecycleLogic";
 import { chatHostMark, pullRequestMark } from "./chatMarks";
@@ -319,6 +320,8 @@ export function ConversationsScreen({
             label={noticeCount > 0 ? `Notices, ${noticeCount} open` : "Notices"}
             onPress={onOpenNotices}
           />
+          {/* Only while a newer build is waiting (Android). */}
+          <AppUpdateButton />
           <CircleButton icon={<GearIcon size={iconSize.md} tone="textPrimary" />} label="Settings" onPress={onOpenSettings} />
         </Animated.View>
       }

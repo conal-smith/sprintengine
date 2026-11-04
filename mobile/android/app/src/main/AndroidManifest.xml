@@ -8,6 +8,12 @@
        hand because `expo prebuild` is forbidden in this repo. -->
   <uses-permission android:name="android.permission.CAMERA"/>
   <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+  <!-- The in-app updater (src/features/updates/) hands a downloaded,
+       hash-checked, release-signed APK to Android's package installer, which
+       always asks the person to confirm. Android also asks once, per app, to
+       "Allow from this source". The FileProvider the installer reads the APK
+       through is expo-file-system's own (its cache-path covers the download). -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" tools:replace="android:maxSdkVersion"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
   <uses-permission android:name="android.permission.VIBRATE"/>

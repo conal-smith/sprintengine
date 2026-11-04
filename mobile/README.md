@@ -91,12 +91,57 @@ gh run download <run-id> -n SprintEngine-mobile-android-<commit> -D /tmp/apk
 adb install -r /tmp/apk/app-release.apk
 ```
 
-**Release builds are signed with the debug keystore** (`android/app/debug.keystore`,
-the stock React Native one) unless you configure your own. To ship a build,
-create a release keystore and point `signingConfigs` in `android/app/build.gradle`
-at it, keeping the keystore and its passwords out of the repository (for
-example in `~/.gradle/gradle.properties`). See React Native's
-[signed APK guide](https://reactnative.dev/docs/signed-apk-android).
+**Local and pull request builds are signed with the debug keystore**
+(`android/app/debug.keystore`, the stock React Native one) and are versionCode
+1. **Builds of `main` are signed with the release key** and numbered with the
+CI run, so each one is newer than the last. A debug-signed APK will not install
+over a release-signed one (or the other way round): Android refuses an update
+signed with a different key. So a pull request's artifact is for a phone that
+runs debug builds, not for one that takes updates.
+
+To sign a local release build with the release key, point the build at it
+(never commit the keystore, its passwords, or this file):
+
+```bash
+SPRINTENGINE_RELEASE_SIGNING=/Users/dev/.sprintengine/mobile-signing/release.properties \
+  ./gradlew assembleRelease
+```
+
+`release.properties` holds `storePassword`, `keyAlias` and `keyPassword`, and
+the keystore sits beside it as `release.keystore` (or name it with `storeFile`).
+CI sets the same four values as `SPRINTENGINE_RELEASE_STORE_FILE`,
+`SPRINTENGINE_RELEASE_STORE_PASSWORD`, `SPRINTENGINE_RELEASE_KEY_ALIAS` and
+`SPRINTENGINE_RELEASE_KEY_PASSWORD`; half a set fails the build.
+`SPRINTENGINE_VERSION_CODE` and `SPRINTENGINE_VERSION_NAME` set the version.
+
+### Updates on Android
+
+Every push to `main` publishes the release-signed APK and a small manifest,
+`android-update.json` (versionCode, versionName, commit, sha256, size, download
+URL), as the assets of one prerelease on this repository, tagged
+`mobile-android`. The tag never moves and the assets are replaced each time;
+it is never marked latest, and nothing in the desktop's update path reads it
+(`.github/workflows/ci.yml`, the `android-publish` job, explains why).
+
+The app reads the manifest when it opens and when it comes back to the
+foreground (at most every fifteen minutes; nothing polls). When the published
+build is newer, a lit download glyph appears in the chat list's top bar. One
+tap downloads the APK, checks its size and SHA-256 against the manifest and its
+signature against the release certificate pinned in the app, and opens
+Android's package installer, which asks you to confirm. The first time, Android
+asks you to allow Sprint Engine to install apps ("Allow from this source"); the
+app takes you to that setting. A download that fails any check is deleted
+unopened. iOS has no updater.
+
+**Moving from a debug-signed build to the release-signed one takes one
+uninstall.** A phone running a local, `expo run:android` or pull request build
+is offered the published build, but Android will not install it over a build
+signed with another key. The app says so instead of opening the installer.
+Tap **Open download** there (or open the `mobile-android` release page) so the
+APK is in the phone's downloads, uninstall Sprint Engine, then open the
+downloaded APK to install it. Uninstalling clears the app's data, so **pair
+with your desktop again** afterwards. From then on updates install in place and
+keep the pairing.
 
 ## Pairing with Studio
 

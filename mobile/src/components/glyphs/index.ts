@@ -85,6 +85,8 @@ export {
   CanvasGlyph,
   AgentsGlyph,
   LibraryGlyph,
+  DownloadIcon,
+  InstallUpdateIcon,
 } from "./AppGlyphs";
 
 export {

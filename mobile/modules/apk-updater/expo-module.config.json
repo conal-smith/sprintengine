@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["ai.sprintengine.apkupdater.ApkUpdaterModule"]
+  }
+}
