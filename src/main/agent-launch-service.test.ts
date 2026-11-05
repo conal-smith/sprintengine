@@ -66,6 +66,7 @@ test('agent-launch-service', async () => {
       resolveKnowledgeRoot?: AgentLaunchServiceDeps['resolveKnowledgeRoot']
       isAgentSelectableCli?: AgentLaunchServiceDeps['isAgentSelectableCli']
       permissionPresetsForCli?: AgentLaunchServiceDeps['permissionPresetsForCli']
+      permissionModeLevelForCli?: AgentLaunchServiceDeps['permissionModeLevelForCli']
       cliResumesSessions?: AgentLaunchServiceDeps['cliResumesSessions']
     } = {},
   ) {
@@ -77,6 +78,7 @@ test('agent-launch-service', async () => {
       getLaunchSettings: () => options.settings ?? settings(),
       ...(options.isAgentSelectableCli ? { isAgentSelectableCli: options.isAgentSelectableCli } : {}),
       ...(options.permissionPresetsForCli ? { permissionPresetsForCli: options.permissionPresetsForCli } : {}),
+      ...(options.permissionModeLevelForCli ? { permissionModeLevelForCli: options.permissionModeLevelForCli } : {}),
       ...(options.cliResumesSessions ? { cliResumesSessions: options.cliResumesSessions } : {}),
       ...(options.resolveKnowledgeRoot ? { resolveKnowledgeRoot: options.resolveKnowledgeRoot } : {}),
       terminal: {
@@ -235,6 +237,28 @@ test('agent-launch-service', async () => {
     assert.equal(!refused.ok && refused.code, 'unsupported_permission_preset')
     assert.match(!refused.ok ? refused.message : '', /Pass one of: none, bypass/)
     assert.equal(refusing.spawns.length, 0)
+
+    // A mode of the CLI's own at a level it has no preset for is told in its
+    // own flag, so it launches; the level alone, or a mode at another level,
+    // is still refused.
+    const modes = harness({
+      permissionPresetsForCli: () => ['none', 'auto', 'bypass'],
+      permissionModeLevelForCli: (_cli, mode) => (mode === 'ask' ? 'manual' : null),
+    })
+    const ask = await modes.service.launch({
+      workspaceId: 'ws-1',
+      cli: 'cursor',
+      permissionPreset: 'manual',
+      permissionMode: 'ask',
+    })
+    assert.equal(ask.ok, true, !ask.ok ? ask.message : '')
+    const unheld = await modes.service.launch({
+      workspaceId: 'ws-1',
+      cli: 'cursor',
+      permissionPreset: 'manual',
+      permissionMode: 'edit',
+    })
+    assert.equal(!unheld.ok && unheld.code, 'unsupported_permission_preset')
 
     // A preset it names, and a CLI the registry does not hold, launch as asked.
     const ok = await refusing.service.launch({ workspaceId: 'ws-1', cli: 'kimi-code', permissionPreset: 'bypass' })

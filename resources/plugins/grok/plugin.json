@@ -38,6 +38,15 @@
       "level": "manual",
       "args": ["--permission-mode", "dontAsk"]
     },
+    "plan": {
+      "$comment": "Grok's own plan mode (`--permission-mode plan`, checked against its `--help`): it reads and plans and changes nothing. At the Manual level, since nothing it does needs asking about.",
+      "label": "Plan",
+      "summary": "Read-only: plans the work without doing it.",
+      "description": "Grok’s plan mode: it reads the workspace and writes a plan, and edits nothing and runs nothing that changes anything.",
+      "level": "manual",
+      "readOnly": true,
+      "args": ["--permission-mode", "plan"]
+    },
     "bypass": {
       "$comment": "--trust rides this preset, never the default launch argv: it does not just enable the studio's own .grok/hooks agent-state reporter — it trusts EVERY project-level .grok config, including hooks committed in the repo itself, so a freshly cloned untrusted repo must not get it when the person chose to pass no permission flag. Without trust Grok skips project hooks, so no frames arrive and the session converts to the stalled phase via the runtime watchdog (there is no output-timing fallback any more); the user can grant trust in the TUI via /hooks-trust. Kept as `--always-approve` rather than switched to `--permission-mode bypassPermissions`: both exist in `grok --help`, and this one is what shipped and is covered by tests.",
       "label": "Always approve",

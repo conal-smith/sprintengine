@@ -30,6 +30,8 @@ export type CliPermissionModeSpec = {
   /** The full explanation, for a tooltip. */
   description?: string
   level: CliPermissionPreset
+  /** The CLI can change nothing in this mode. */
+  readOnly?: true
 }
 
 // What a runtime may name one of its own modes: short, and nothing a path,

@@ -88,10 +88,15 @@ const GENERIC_OPTION = Object.fromEntries(
  * them (`PluginRegistryListEntry.permissionModes`), in the manifest's order,
  * or the four presets in the app's words when there is no list. Stored values
  * stay the preset, plus the CLI's own id for a mode that is not a preset's own.
+ *
+ * A read-only mode of a CLI's own (Cursor's Ask, Claude Code's Plan) is left
+ * out: it is for an agent launching another by name. A row here is remembered
+ * as the CLI's preset, and Cursor's chats refuse the Manual that Ask sits at.
  */
 export function agentPermissionOptions(modes?: readonly CliPermissionModeSpec[] | null): PermissionModeOption[] {
   if (!modes?.length) return AGENT_SPAWN_PERMISSION_OPTIONS
-  return modes.map((spec) => ({
+  const offered = modes.filter((spec) => !spec.readOnly || spec.id === spec.level)
+  return offered.map((spec) => ({
     id: spec.id,
     value: spec.level,
     ...(spec.id !== spec.level ? { mode: spec.id } : {}),

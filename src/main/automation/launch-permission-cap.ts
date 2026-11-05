@@ -6,6 +6,7 @@ import {
   parseCliPermissionPreset,
   type CliPermissionPreset,
 } from '../../shared/cli-permission-preset'
+import { parseCliPermissionModeId, type CliPermissionModeSpec } from '../../shared/cli-permission-mode'
 import type { McpConnectionContext } from '../../shared/modules/mcp-tools'
 
 // What an agent whose own preset cannot be found or read is held to.
@@ -76,6 +77,38 @@ export function capLaunchPermissionPreset(
   }
   if (isLooserCliPermissionPreset(requested, ceiling)) return { refused: escalation(requested, ceiling) }
   return { permissionPreset: requested }
+}
+
+/**
+ * A mode a launching tool was asked for by name: one of the ids `cli.runtime.list`
+ * gives for this CLI. It is launched at its level, which is what the cap reads,
+ * and the id travels beside the level unless it is the level's own mode.
+ */
+export function resolveNamedPermissionMode(
+  modes: readonly CliPermissionModeSpec[],
+  cli: string,
+  named: string,
+  preset: CliPermissionPreset | undefined,
+):
+  | { ok: true; permissionPreset: CliPermissionPreset; permissionMode?: string }
+  | { ok: false; code: 'unknown_permission_mode' | 'invalid_arguments'; message: string } {
+  const mode = modes.find((candidate) => candidate.id === named)
+  if (!mode) {
+    return {
+      ok: false,
+      code: 'unknown_permission_mode',
+      message: `Agent CLI "${cli}" has no "${named}" permission mode. Pass one of: ${modes.map((own) => own.id).join(', ')}.`,
+    }
+  }
+  if (preset !== undefined && preset !== mode.level) {
+    return {
+      ok: false,
+      code: 'invalid_arguments',
+      message: `The "${named}" mode runs at the "${mode.level}" preset, not "${preset}": name one or the other.`,
+    }
+  }
+  const permissionMode = parseCliPermissionModeId(mode.id)
+  return { ok: true, permissionPreset: mode.level, ...(permissionMode ? { permissionMode } : {}) }
 }
 
 /**

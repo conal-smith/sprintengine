@@ -193,7 +193,7 @@ import { installSharedCredentialStore } from './secret-store'
 import { createWorkspaceBackupService } from './workspace-backup'
 import { writeDiagnosticLog } from './diagnostics-service'
 import { getPluginById, getPluginRegistry } from './plugin-registry-instance'
-import { declaredPermissionPresets } from './plugin-render'
+import { declaredPermissionModes, declaredPermissionPresets } from './plugin-render'
 import { createStudioPluginService } from './studio-plugin-service'
 import { resolveInstalledSkillHarnesses } from './marketplace/skill-harness-targets'
 import { buildLauncherMcpServer, usableLocalLauncherRef } from './integrations/launcher'
@@ -1431,6 +1431,12 @@ export function createAppServices(
         .loaded()
         .find((candidate) => candidate.manifest.id === cli)
       return plugin ? declaredPermissionPresets(plugin.manifest) : null
+    },
+    permissionModeLevelForCli: (cli, mode) => {
+      const plugin = getPluginRegistry()
+        .loaded()
+        .find((candidate) => candidate.manifest.id === cli)
+      return (plugin && declaredPermissionModes(plugin.manifest).find((own) => own.id === mode)?.level) ?? null
     },
     cliResumesSessions: (cli) => cliResumeCapabilities(cli).resumeSession,
     // The same resolver the renderer reaches over `memory:resolve-root`, so a

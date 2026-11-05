@@ -22,6 +22,24 @@
       "description": "Cursor’s own auto-review: a classifier runs the tool calls it judges safe and asks for the rest.",
       "args": ["--auto-review"]
     },
+    "ask": {
+      "$comment": "`cursor-agent --help`: `--mode <mode>` with choices \"plan\" and \"ask\", both read-only (checked against CLI 2026.10.22). At the Manual level though Cursor has no Manual of its own: neither mode can change anything, so a launch under any cap may run them. Launched by naming the mode, never by the `manual` preset.",
+      "label": "Ask",
+      "summary": "Read-only: answers without changing anything.",
+      "description": "Cursor’s Ask mode: it reads and answers, and cannot edit files or run commands that change anything.",
+      "level": "manual",
+      "readOnly": true,
+      "args": ["--mode", "ask"]
+    },
+    "plan": {
+      "$comment": "See `ask`: the same flag, Cursor's planning mode.",
+      "label": "Plan",
+      "summary": "Read-only: plans the work without doing it.",
+      "description": "Cursor’s Plan mode: it reads and asks what it needs to, and writes a plan rather than changing anything.",
+      "level": "manual",
+      "readOnly": true,
+      "args": ["--mode", "plan"]
+    },
     "bypass": {
       "$comment": "`--yolo` is documented as an alias for `--force`; only one is sent.",
       "label": "Run Everything",

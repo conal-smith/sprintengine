@@ -281,6 +281,12 @@ function openProviderTurn(turnId: string, continuation: boolean): ProviderTurn {
 }
 
 export type ConversationRuntimeOptions = {
+  /**
+   * The mode a chat's launch holds it to (`AgentState.conversationModeHeld`), if
+   * any. Read at each send, because the chat's record is where it lives and a
+   * session is started again by whichever side reaches it first.
+   */
+  heldChatMode?: (chat: { workspaceId: string; agentId: string }) => 'plan' | 'ask' | undefined
   approvalRules?: ConversationApprovalRuleStore
   attachmentStore?: ConversationAttachmentStore
   /**
@@ -480,6 +486,7 @@ export class ConversationRuntime {
   private readonly platform: NodeJS.Platform
   private readonly resolveSkills: ConversationSkillsResolver
   private readonly prepareChatFolder: NonNullable<ConversationRuntimeOptions['prepareChatFolder']>
+  private readonly heldChatMode: ConversationRuntimeOptions['heldChatMode']
   private readonly worktreeLeases: WorktreeLeases
   // Starts waiting for their folder's hold, by session id, or by chat for a
   // session start or a revert (`chatWaitKey`): see `holdChatFolder`.
@@ -597,6 +604,7 @@ export class ConversationRuntime {
     })
     this.randomId = options.randomId ?? (() => Math.random().toString(36).slice(2, 10))
     this.resolveSkills = options.resolveSkills ?? createConversationSkillsResolver()
+    this.heldChatMode = options.heldChatMode
     this.prepareChatFolder = options.prepareChatFolder ?? (() => Promise.resolve({ ok: true }))
     this.worktreeLeases = options.worktreeLeases ?? worktreeLeases
     this.approvalRules = options.approvalRules ?? new ConversationApprovalRuleStore()
@@ -1153,8 +1161,14 @@ export class ConversationRuntime {
     const steerRefused = isSessionBusy(session) ? steerRefusal(session, adapter) : null
     if (steerRefused) return steerBusy(steerRefused)
 
-    if (input.mode === 'plan' && !session.capabilities?.planMode)
-      return { ok: false, message: 'This provider does not support plan mode.' }
+    // A chat held to a mode runs every turn in it, so no sender (a queued
+    // message, a paired device, a window that sends `default`) can take the
+    // turn out of it.
+    const mode = this.heldChatMode?.({ workspaceId: session.workspaceId, agentId: session.agentId }) ?? input.mode
+    // `ask` needs the same read-only channel `plan` runs on. A provider without
+    // it would ignore the mode and run the turn with its tools live.
+    if ((mode === 'plan' || mode === 'ask') && !session.capabilities?.planMode)
+      return { ok: false, message: `This provider does not support ${mode} mode.` }
 
     // A message that opens with a slash command is run by the CLI, which reads
     // everything after the name as its arguments: skill text would push the
@@ -1344,7 +1358,7 @@ export class ConversationRuntime {
             message: [providerMessage, imagesContext].filter(Boolean).join('\n\n'),
             skills: skills.ids,
             reasoningEffort: input.reasoningEffort,
-            mode: input.mode,
+            mode,
             ...(attachments.length > 0 ? { attachments } : {}),
             messages,
             signal: turnAbort.signal,

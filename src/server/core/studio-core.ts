@@ -299,6 +299,10 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     attachmentStore: new ConversationAttachmentStore(dataDir),
     uploadRoots: [join(dataDir, TAILNET_UPLOADS_DIRNAME), join(dataDir, WEB_UPLOADS_DIRNAME)],
     planStore: new ConversationPlanStore(dataDir),
+    heldChatMode: ({ workspaceId, agentId }) => {
+      const agent = workspaceRegistry.getRecord(workspaceId)?.agents[agentId]
+      return agent?.conversationModeHeld && agent.conversationMode !== 'default' ? agent.conversationMode : undefined
+    },
     ...(options.resolveStudioMcpServer ? { resolveStudioMcpServer: options.resolveStudioMcpServer } : {}),
     ...(options.prepareChatFolder ? { prepareChatFolder: options.prepareChatFolder } : {}),
   })
@@ -397,6 +401,8 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     recordProjectUse: (folderPath) => {
       agentLaunchSettings.update({ projectUse: { folderPath, at: Date.now() } }, 'system')
     },
+    // A turn mode needs a provider that can run one; the others ignore it.
+    runsTurnModes: (providerId) => conversationRuntime.getProviderCapabilities(providerId)?.planMode === true,
     // The levels the CLI's picker offers, from the same manifests it reads.
     reasoningLevels: (cli) =>
       listPluginRegistryEntries()

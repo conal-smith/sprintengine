@@ -12,6 +12,8 @@ import type {
   ConversationApprovalRulesResult,
 } from '../../shared/conversation-runtime'
 import { parseCliPermissionPreset } from '../../shared/cli-permission-preset'
+import type { CliPermissionModeSpec } from '../../shared/cli-permission-mode'
+import { conversationPermissionModes } from '../../shared/conversation-harness'
 import {
   CONVERSATION_HIGHLIGHT_COLORS as HIGHLIGHT_COLORS,
   isConversationHighlightColor,
@@ -33,6 +35,7 @@ import {
 import {
   capLaunchPermissionPreset,
   launchPermissionCeiling,
+  resolveNamedPermissionMode,
   type AgentPermissionResolver,
 } from './launch-permission-cap'
 
@@ -77,6 +80,8 @@ export type ConversationToolsDeps = {
   launch: ConversationLaunchService['launch']
   /** The calling agent's own preset, which a chat it starts may not exceed (launch-permission-cap.ts). */
   resolveAgentPermissionPreset: AgentPermissionResolver
+  /** A CLI's permission modes as `cli.runtime.list` gives them, for a caller that names one. */
+  permissionModesOf?: (cli: string) => readonly CliPermissionModeSpec[]
   /** A chat's rest and visit clock, written to the desktop's own record (conversation-lifecycle.ts). */
   lifecycle: Pick<ConversationLifecycle, 'settle' | 'visit' | 'markUnread' | 'snooze' | 'highlight' | 'setAutoSettle'> &
     // A paired desktop's chat management; absent where nothing can carry it out.
@@ -232,6 +237,23 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
               "Called by an agent of this app, the chat runs no looser than that agent's own preset: a looser " +
               'one is refused with "permission_escalation", and an omitted one takes the stricter of the two.',
           },
+          permissionMode: {
+            type: 'string',
+            description:
+              "One of the CLI's own modes by id, from `permissionModes` in cli.runtime.list, where a chat runs " +
+              'it: Claude Code\'s "acceptEdits" and "dontAsk", say. Needs "cli". Refused with ' +
+              '"unknown_permission_mode" otherwise. It runs at its own level, held to the same limit as ' +
+              '"permissionPreset". For a read-only chat use "mode".',
+          },
+          mode: {
+            type: 'string',
+            enum: ['default', 'plan', 'ask'],
+            description:
+              'The mode every turn of the chat runs in, the first included, whoever sends it. "ask" answers ' +
+              'and "plan" plans; neither changes anything. Kept on the chat. A chat that cannot run it (Codex, ' +
+              'Grok, Kimi Code) is refused with "unsupported_mode"; it never runs writable in its place. ' +
+              'Omitted, "default".',
+          },
           prompt: { type: 'string', description: "The chat's first message." },
           skills: {
             type: 'array',
@@ -262,6 +284,7 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
           'prompt',
           'name',
           'permissionPreset',
+          'permissionMode',
           'effort',
           'worktreeName',
           'inWorktree',
@@ -308,8 +331,29 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
         if (permissionPreset === null) {
           return toolError('invalid_arguments', '"permissionPreset" must be "bypass", "auto", "manual" or "none".')
         }
+        if (args.mode !== undefined && args.mode !== 'default' && args.mode !== 'plan' && args.mode !== 'ask') {
+          return toolError('invalid_arguments', '"mode" must be "default", "plan" or "ask".')
+        }
+        let namedMode: ReturnType<typeof resolveNamedPermissionMode> | null = null
+        if (typeof args.permissionMode === 'string') {
+          if (typeof args.cli !== 'string') {
+            return toolError('invalid_arguments', '"permissionMode" is one CLI\'s own mode: name the "cli" with it.')
+          }
+          // Only the modes a chat runs: the rest are its terminal's, and a chat
+          // would quietly fall back to the preset's own mode.
+          const inChat = conversationPermissionModes(args.cli)
+          namedMode = resolveNamedPermissionMode(
+            (deps.permissionModesOf?.(args.cli) ?? []).filter(
+              (mode) => parseCliPermissionPreset(mode.id) !== null || inChat.includes(mode.id),
+            ),
+            args.cli,
+            args.permissionMode,
+            permissionPreset,
+          )
+          if (!namedMode.ok) return toolError(namedMode.code, namedMode.message)
+        }
         const capped = capLaunchPermissionPreset(
-          permissionPreset,
+          namedMode?.ok ? namedMode.permissionPreset : permissionPreset,
           launchPermissionCeiling(context, deps.resolveAgentPermissionPreset),
         )
         if ('refused' in capped) return toolError(capped.refused.code, capped.refused.message)
@@ -330,6 +374,8 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
           ...(Array.isArray(args.skills) && args.skills.length > 0 ? { skills: args.skills as string[] } : {}),
           ...(typeof args.name === 'string' ? { name: args.name } : {}),
           ...(capped.permissionPreset ? { permissionPreset: capped.permissionPreset } : {}),
+          ...(namedMode?.ok && namedMode.permissionMode ? { permissionMode: namedMode.permissionMode } : {}),
+          ...(args.mode === 'plan' || args.mode === 'ask' ? { mode: args.mode } : {}),
         })
         if (!launched.ok) return toolError(launched.code, launched.message)
         const parent = launchingAgentOf(context)

@@ -114,6 +114,7 @@ test('automation', async () => {
     readWorkspaceCheckout?: AutomationBackends['readWorkspaceCheckout']
     readRepositoryIdentity?: AutomationBackends['readRepositoryIdentity']
     listPlugins?: AutomationBackends['listPlugins']
+    resolveAgentPermissionPreset?: AutomationBackends['resolveAgentPermissionPreset']
     ensureBuiltinSkillInstalled?: AutomationBackends['ensureBuiltinSkillInstalled']
     getModuleRegistrySnapshot?: AutomationBackends['getModuleRegistrySnapshot']
     listInstalledThirdPartyModules?: AutomationBackends['listInstalledThirdPartyModules']
@@ -148,7 +149,7 @@ test('automation', async () => {
         (async () => ({ ok: false, code: 'no_launch_service', message: 'no launch service in test' })),
       // Every agent on bypass, as the owner runs them: the suites here are about
       // what a launch does, and launch-permission-cap.test.ts about the cap.
-      resolveAgentPermissionPreset: () => 'bypass',
+      resolveAgentPermissionPreset: overrides.resolveAgentPermissionPreset ?? (() => 'bypass'),
       // Default: the mobile lane is unwired. A test that exercises the mobile
       // tools stubs this; anything else that reaches it fails loudly.
       mobileControl: overrides.mobileControl ?? {
@@ -779,6 +780,51 @@ test('automation', async () => {
   // An agent of this app that launches another is linked to it, so it hears
   // back; the result says whether it will. A caller that is not one of this
   // app's agents, or that asked not to be told, is not linked.
+  async function testAgentLaunchNamesACliMode(): Promise<void> {
+    const cursor = {
+      source: 'bundled',
+      manifest: {
+        id: 'cursor',
+        permissionPresets: {
+          auto: { label: 'Auto-review', args: ['--auto-review'] },
+          ask: { label: 'Ask', level: 'manual', readOnly: true, args: ['--mode', 'ask'] },
+        },
+      },
+    } as unknown as LoadedPlugin
+    const harnessed = launchHarness({ listPlugins: () => [cursor] })
+    const launch = tool(harnessed.tools, 'agent.launch')
+    const asked = await launch.handler({ workspaceId: 'ws-1', cli: 'cursor', permissionMode: 'ask' })
+    assert.equal(asked.isError, undefined, JSON.stringify(asked.structuredContent))
+    assert.equal(harnessed.requests[0]?.permissionPreset, 'manual')
+    assert.equal(harnessed.requests[0]?.permissionMode, 'ask')
+
+    const code = async (args: Record<string, unknown>, context?: McpConnectionContext) =>
+      (
+        (await launch.handler({ workspaceId: 'ws-1', ...args }, context)).structuredContent as {
+          error?: { code?: string }
+        }
+      ).error?.code
+    assert.equal(await code({ cli: 'cursor', permissionMode: 'yolo' }), 'unknown_permission_mode')
+    assert.equal(await code({ permissionMode: 'ask' }), 'invalid_arguments')
+    assert.equal(await code({ cli: 'missing', permissionMode: 'ask' }), 'unknown_cli')
+    assert.equal(await code({ cli: 'cursor', permissionMode: 'ask', permissionPreset: 'bypass' }), 'invalid_arguments')
+
+    // The cap reads the mode's level: a read-only mode launches under any
+    // caller, and one above the caller's level is refused like its preset.
+    const capped = launchHarness({ listPlugins: () => [cursor], resolveAgentPermissionPreset: () => 'none' })
+    const caller = { metadata: { kind: 'studio-agent' as const, workspaceId: 'ws-1', agentId: 'agent-lead' } }
+    const underCap = await tool(capped.tools, 'agent.launch').handler(
+      { workspaceId: 'ws-1', cli: 'cursor', permissionMode: 'ask' },
+      caller,
+    )
+    assert.equal(underCap.isError, undefined, JSON.stringify(underCap.structuredContent))
+    const above = await tool(capped.tools, 'agent.launch').handler(
+      { workspaceId: 'ws-1', cli: 'cursor', permissionMode: 'auto' },
+      caller,
+    )
+    assert.equal((above.structuredContent as { error?: { code?: string } }).error?.code, 'permission_escalation')
+  }
+
   async function testAgentLaunchLinksItsCallerForNotices(): Promise<void> {
     const links: LaunchedAgentLink[] = []
     const linking = launchHarness({ linkLaunchedAgent: (link) => (links.push(link), { linked: true as const }) })
@@ -3778,6 +3824,7 @@ test('automation', async () => {
     testScheduleToolsPassServiceFailuresThrough,
     testAgentLaunchWidensConfigAndIsolation,
     testAgentLaunchLinksItsCallerForNotices,
+    testAgentLaunchNamesACliMode,
     testAgentLaunchAnswersWhileItsWorktreeInstalls,
     testTerminalCreateSpawnsAndReturnsTheAttachableSession,
     testTerminalCreateTakesThisMachinesLaunchDefaults,

@@ -130,6 +130,10 @@ export type AgentState = {
   importedFrom?: { source: import('./ipc/conversation-import').ConversationImportSource; sessionId: string }
   // Next-turn conversation controls persist independently of terminal flags.
   conversationMode?: 'default' | 'plan' | 'ask'
+  // The launch named `conversationMode`, so every turn runs in it, whoever
+  // sends it (`ConversationRuntimeOptions.heldChatMode`). Without this a stored
+  // mode applies only to the sends that read it for themselves.
+  conversationModeHeld?: true
   conversationReasoningEffort?: string
   /** Selected context skills apply to every turn until explicitly removed. */
   conversationSkills?: string[]
