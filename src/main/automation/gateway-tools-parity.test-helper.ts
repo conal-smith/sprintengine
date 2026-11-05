@@ -10,6 +10,7 @@ import { createBrowserTools } from './browser-tools'
 import { createCanvasTools } from './canvas-tools'
 import { createConversationTools } from './conversation-tools'
 import { createConversationChatTools } from './conversation-chat-tools'
+import { createSubagentTools } from './subagent-tools'
 import { createConversationPullRequestTools } from './conversation-pull-request-tools'
 import { createPullRequestTools } from '../../server/pull-requests/pull-request-tools'
 import { createLocalServerTools } from '../../server/local-servers/local-server-tools'
@@ -61,6 +62,7 @@ export function desktopToolParts(): Parameters<typeof desktopGatewayTools>[0] & 
     core: [
       ...createConversationTools(stub),
       ...createConversationChatTools(stub),
+      ...createSubagentTools(stub),
       ...createConversationPullRequestTools(stub),
       ...createPullRequestTools(stub),
       ...createLocalServerTools(stub),

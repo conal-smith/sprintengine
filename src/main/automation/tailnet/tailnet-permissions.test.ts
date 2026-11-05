@@ -54,6 +54,9 @@ const LEGACY_CHAT_TO_CHAT_TOOLS = new Set([
   'conversation.read',
   'conversation.wait',
   'conversation.interrupt',
+  'subagent.start',
+  'subagent.status',
+  'subagent.cancel',
 ])
 function legacyLocalOnly(toolName: string): boolean {
   return (

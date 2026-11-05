@@ -29,9 +29,9 @@ import type { WslServerConnection } from './wsl-environment-manager'
 // Windows-side server's own tools of those families, each call run by the
 // tool's own handler there, as the shell runs its tools out of process. The
 // answer goes back the same way. An agent in WSL lists the tools an agent on
-// Windows does, but for two families: `conversation`, which the WSL server
-// serves itself, and `tailnet`, which is served on the Windows side's
-// owner-only socket and nowhere else (`tailnet-tools.ts`).
+// Windows does, but for three families: `conversation` and `subagent`, which
+// the WSL server serves itself, and `tailnet`, which is served on the Windows
+// side's owner-only socket and nowhere else (`tailnet-tools.ts`).
 //
 // In process the shell offers only the browser and the canvas, and the
 // editor, tours, terminals and agent launches are the Windows gateway's own

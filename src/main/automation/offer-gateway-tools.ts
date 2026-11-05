@@ -36,6 +36,9 @@ export const BUILT_IN_TOOL_TIMEOUTS_MS: Readonly<Record<string, number>> = {
   'agent.launch': 120_000,
   'backlog.work': 120_000,
   'terminal.create': 120_000,
+  // `wait` holds the call for up to ten minutes, and the start comes first.
+  'subagent.start': 660_000,
+  'subagent.status': 660_000,
   // A publish may clone the site, takes its picture (up to 20 s), and pushes
   // and uploads, retrying a push a racing publish refused.
   'artifacts.publish': 240_000,

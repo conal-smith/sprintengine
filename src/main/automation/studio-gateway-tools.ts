@@ -30,6 +30,9 @@ const APP_MUTATION_TOOLS = new Set([
   // `workspace:operate` from a paired device. `editor.state` only looks.
   ...EDITOR_MUTATION_TOOL_NAMES,
   'agent.launch',
+  // Stopping or starting one is a chat acting on its own, so both are audited.
+  'subagent.start',
+  'subagent.cancel',
   'schedule.create',
   // Changing one changes what this machine starts on its own later.
   'schedule.update',
