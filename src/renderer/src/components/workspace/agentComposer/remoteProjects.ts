@@ -1,4 +1,4 @@
-import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
+import { isProjectlessChatsRoot, PROJECTLESS_CHATS_LABEL } from '../../../../../shared/projectless-chats'
 import type { RepositoryIdentity } from '../../../../../shared/repository-identity'
 import type { MeshWorkspace } from '../../../../../shared/tailnet-mesh'
 import { workspaceProjectRootOf } from '../../../../../shared/worktree-paths'
@@ -47,6 +47,23 @@ export type RemoteProject = {
   workspaceId: string
   /** The machine's open chats in this project, its app-made worktrees' included. */
   conversationCount: number
+}
+
+/**
+ * The chip's answer for a chat under no project on that machine: not one of its
+ * projects, so no workspace to ask about and no folder until the chat is made.
+ */
+export const REMOTE_NO_PROJECT: RemoteProject = {
+  key: 'no-project',
+  name: PROJECTLESS_CHATS_LABEL,
+  folderPath: '',
+  repository: null,
+  workspaceId: '',
+  conversationCount: 0,
+}
+
+export function isRemoteNoProject(project: RemoteProject | null | undefined): boolean {
+  return project?.key === REMOTE_NO_PROJECT.key
 }
 
 function normalizeFolder(value: string): string {

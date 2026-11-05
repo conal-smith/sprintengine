@@ -1040,7 +1040,10 @@ export type ElectronApi = {
    */
   meshCreateConversation: (input: {
     connectionId: string
-    workspaceId: string
+    /** The project it starts in; absent with `noProject`. */
+    workspaceId?: string
+    /** Start it in a folder of its own over there, under no project. */
+    noProject?: boolean
     cli?: string
     prompt?: string
     cliModel?: string

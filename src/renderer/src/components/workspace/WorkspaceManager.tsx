@@ -4017,7 +4017,7 @@ export default function WorkspaceManager() {
       const created = await window.api
         .meshCreateConversation({
           connectionId: launch.connectionId,
-          workspaceId: launch.remoteWorkspaceId,
+          ...(launch.noProject ? { noProject: true } : { workspaceId: launch.remoteWorkspaceId }),
           cli: launch.cli,
           prompt: launch.prompt || undefined,
           cliModel: launch.cliModel ?? undefined,

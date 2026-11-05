@@ -304,6 +304,7 @@ export type TailnetMeshService = {
   createConversation(input: {
     connectionId: unknown
     workspaceId?: unknown
+    noProject?: unknown
     cli?: unknown
     prompt?: unknown
     cliModel?: unknown
@@ -1899,6 +1900,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
   async function createConversation(input: {
     connectionId: unknown
     workspaceId?: unknown
+    noProject?: unknown
     cli?: unknown
     prompt?: unknown
     cliModel?: unknown
@@ -1910,7 +1912,15 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
   }): Promise<MeshCreateConversationResult> {
     const connection = connectionFor(input.connectionId)
     if (!connection) return { ok: false, code: 'unknown_connection', message: 'That machine is not paired here.' }
-    if (typeof input.workspaceId !== 'string' || !input.workspaceId) {
+    const noProject = input.noProject === true
+    if (noProject && !tailnetPeerSupports(peerCapabilities.get(connection.id), 'new-chat-no-project')) {
+      return {
+        ok: false,
+        code: 'no_project_unsupported',
+        message: `${connection.machineName} cannot start a chat without a project yet. Update SprintEngine Studio there to use it.`,
+      }
+    }
+    if (!noProject && (typeof input.workspaceId !== 'string' || !input.workspaceId)) {
       return { ok: false, code: 'invalid_arguments', message: 'Name the remote workspace to start the chat in.' }
     }
     const presetRefusal = permissionModeRefusal(connection, input.permissionPreset)
@@ -1941,7 +1951,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
     // reaches the caller word for word. The workspace names the project the
     // picker chose, not a chat to join, so the chat is asked for as a new one.
     const args = {
-      workspaceId: input.workspaceId,
+      ...(noProject ? { noProject: true } : { workspaceId: input.workspaceId }),
       ...(typeof input.cli === 'string' && input.cli ? { cli: input.cli } : {}),
       // With images the prompt is the first message's words, sent once the
       // images are up: an upload is kept for the chat's session, which only
@@ -1973,7 +1983,8 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
         // Starting a chat starts its CLI over there; a healthy slow start is not a failure.
         timeoutMs: 60_000,
       })
-    let answer = await create(true)
+    // A chat under no project is new by what it is, and names no workspace.
+    let answer = await create(!noProject)
     // A machine that refuses the argument by name is asked the way it was
     // before there was one, and adds the chat to that workspace. One from
     // before the argument that ignores it does the same without asking. Not

@@ -76,7 +76,13 @@ import { CliInstallCta } from '../cliInstallRoute'
 import { SpawnPermissionFooter } from './spawnFooter'
 import { EnginePickerChip } from './enginePicker'
 import { ProjectScopePicker } from './ProjectScopePicker'
-import { remoteProjectMoved, remoteProjectOfFolder, remoteProjectOfWorkspace, remoteProjectsOf } from './remoteProjects'
+import {
+  isRemoteNoProject,
+  remoteProjectMoved,
+  remoteProjectOfFolder,
+  remoteProjectOfWorkspace,
+  remoteProjectsOf,
+} from './remoteProjects'
 import { type ProjectCloneRequest, type ProjectCloneResult } from './ProjectSourceMenu'
 import { mergeDraftConnectors, readNewChatDraft, writeNewChatDraft, type NewChatDraftImage } from './newChatDraft'
 import {
@@ -380,6 +386,8 @@ export type NewAgentPanelMode = 'chat' | 'scheduled' | 'extension'
 export type RemoteNewChatLaunch = {
   connectionId: string
   machineName: string
+  /** Start it in a folder of its own there: `remoteWorkspaceId` then names nothing. */
+  noProject?: true
   remoteWorkspaceId: string
   remoteWorkspaceName: string
   /** The project's folder on that machine, as the gateway disclosed it. */
@@ -1573,7 +1581,7 @@ export default function NewAgentPanel({
   // scheduler, which starts each run whether or not this computer is awake.
   const scheduleRemote = async (text: string, target: RemoteTargetState) => {
     const picked = target.picked
-    if (!picked) {
+    if (!picked || isRemoteNoProject(picked)) {
       showToast({
         tone: 'warn',
         title: 'Choose a project',
@@ -1949,9 +1957,10 @@ export default function NewAgentPanel({
       onLaunchRemote({
         connectionId: remoteTarget.connection.id,
         machineName: remoteTarget.connection.machineName,
+        ...(isRemoteNoProject(remoteTarget.picked) ? { noProject: true as const } : {}),
         remoteWorkspaceId: remoteTarget.picked.workspaceId,
         remoteWorkspaceName: remoteTarget.picked.name,
-        remoteWorkspaceRoot: remoteTarget.picked.folderPath,
+        remoteWorkspaceRoot: remoteTarget.picked.folderPath || null,
         prompt: text.trim(),
         cli: confirm.cli,
         cliModel: confirm.model ?? null,
@@ -2438,6 +2447,8 @@ export default function NewAgentPanel({
     <RemoteProjectPicker
       target={remoteTarget}
       color={scopeProjectColor}
+      // A scheduled agent's runs start in a project over there, by its scheduler.
+      noProjectOffered={!scheduled && (remoteTarget.capabilities?.includes('new-chat-no-project') ?? false)}
       onPick={(project) => {
         setRemoteTarget((current) => (current ? { ...current, picked: project, checkout: null } : current))
       }}
