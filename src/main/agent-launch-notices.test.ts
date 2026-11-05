@@ -949,3 +949,24 @@ test("a sub-agent's whole result is kept across a restart, marked as a sub-agent
   assert.ok(after.turns[0].message.includes(result))
   assert.match(after.turns[0].message, /Sub-agent/u)
 })
+
+test('a sub-agent that was stopped sends no notice: it would wake the parent someone just stopped', async () => {
+  const h = harness({
+    chats: [chat({ status: 'ready', phase: 'idle' })],
+    readSubagentResult: async () => ({ text: 'Half a review.', truncated: false }),
+  })
+  h.notices.link({ parent: CHAT_PARENT, child: REVIEWER })
+  const stopped = { sessionId: 'chat-reviewer', workspaceId: 'ws-1', agentId: 'agent-reviewer' }
+  h.notices.onConversationEvent(chatEvent('turn_failed', stopped, { reason: 'interrupted' }))
+  h.notices.onConversationEvent(chatEvent('turn_failed', stopped, { message: 'interrupted' }))
+  h.notices.onConversationEvent(chatEvent('turn_completed', stopped, { interrupted: true }))
+  await settle()
+  assert.equal(h.turns.length, 0)
+  assert.equal(h.notices.pendingCount(CHAT_PARENT), 0)
+
+  // A failure of its own is still news.
+  h.notices.onConversationEvent(chatEvent('turn_failed', stopped, { message: 'Usage limit reached.' }))
+  await settle()
+  assert.equal(h.turns.length, 1)
+  assert.match(h.turns[0].message, /ended its turn without finishing/u)
+})

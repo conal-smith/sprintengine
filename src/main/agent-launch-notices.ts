@@ -14,7 +14,7 @@ import {
 import { isRecord } from '../shared/records'
 import type { AgentControlPlane, ControlPlaneSendOptions, ControlPlaneSession } from './agent-control-plane'
 import { writeFileAtomically } from './config-file-write'
-import { SUBAGENT_RESULT_MAX_CHARS } from './subagent-lifecycle'
+import { SUBAGENT_RESULT_MAX_CHARS, turnWasInterrupted } from './subagent-lifecycle'
 
 /**
  * Launch notices — an agent that started another agent hears back from it.
@@ -399,6 +399,10 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
         case 'turn_failed':
           // A turn a steered message ended: the chat carries straight on.
           if (event.payload?.steered === true) break
+          // A sub-agent is stopped by its parent, or with it. A notice about
+          // that tells the parent nothing, and when the person pressed Stop on
+          // the parent it would start the turn they just stopped all over.
+          if (child.identity.subagent && turnWasInterrupted(event)) break
           reportTurnEnd(child, event.type === 'turn_failed' ? 'failed' : 'finished')
           break
         case 'session_closed':

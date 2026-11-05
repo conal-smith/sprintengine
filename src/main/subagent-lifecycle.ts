@@ -63,7 +63,7 @@ export type SubagentLifecycle = {
 }
 
 /** How each runtime says a turn was stopped, as `conversation-attention.ts` reads it. */
-function turnWasInterrupted(event: ConversationEvent): boolean {
+export function turnWasInterrupted(event: ConversationEvent): boolean {
   if (event.type === 'turn_completed') return event.payload?.interrupted === true
   return event.payload?.reason === 'interrupted' || event.payload?.message === 'interrupted'
 }
