@@ -5,7 +5,7 @@ import type { MeshBrowse, MeshConnection, MeshNewChatWorktree } from '../../../.
 import type { ConversationImageAttachment } from '../../../../../shared/conversation-runtime'
 import { sameRepository, type RepositoryIdentity } from '../../../../../shared/repository-identity'
 import { folderIdentityKey, useFolderRepositoryIdentities } from '../useFolderRepositoryIdentities'
-import { ExtensionsGlyph, GitBranchGlyph } from '../../AppIcons'
+import { ExtensionsGlyph, GitBranchGlyph, SparkGlyph } from '../../AppIcons'
 import {
   distroOfHostId,
   hostIdToRecord,
@@ -57,6 +57,7 @@ import {
   HiddenFileInput,
   Input,
   EmptyState,
+  CardScroller,
   GhostButton,
   InlineSkillPicker,
   LinkButton,
@@ -3030,7 +3031,7 @@ export default function NewAgentPanel({
             beside words or attachments of the person's one would throw the
             words away and send the attachments with a stranger's text. */}
         {terminalUnavailable || isTerminalLaunch || scheduled || extensionMode || boxHasContent ? null : (
-          <div className="mt-6 grid grid-cols-1 gap-2 @[520px]:grid-cols-2">
+          <CardScroller title="Things to try" glyph={<SparkGlyph className="icon-xs" />} className="mt-6">
             {suggestions.map((entry) => (
               <SuggestionCard
                 key={entry.id}
@@ -3039,7 +3040,7 @@ export default function NewAgentPanel({
                 onLaunch={() => launch(entry.prompt)}
               />
             ))}
-          </div>
+          </CardScroller>
         )}
       </div>
     </div>
