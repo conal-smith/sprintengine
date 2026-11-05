@@ -1,6 +1,7 @@
 // The sidebar's right-click menus for a workspace row, a paired machine's chat
 // row, and a folder header.
 
+import { isSubagentRecord } from '../../../../../shared/agent-state'
 import type { ReactNode } from 'react'
 import { type Workspace, type HighlightColor } from '../../../types/workspace'
 import { resolveEnabledWorkspaceType } from '../../AppIcons'
@@ -69,7 +70,7 @@ export function autoCompactSwitchOf(
 ): { on: boolean; claude: boolean } | null {
   if (workspace.remoteOrigin) return null
   const chats = Object.values(workspace.agents ?? {}).filter(
-    (agent) => agent.runtimeKind === 'conversation' && agent.conversation,
+    (agent) => agent.runtimeKind === 'conversation' && agent.conversation && !isSubagentRecord(agent),
   )
   if (chats.length === 0) return null
   return {
@@ -85,7 +86,7 @@ export function autoCompactSwitchOf(
 export function canRegenerateTitleOf(workspace: Workspace): boolean {
   if (workspace.remoteOrigin) return false
   return Object.values(workspace.agents ?? {}).some(
-    (agent) => agent.runtimeKind === 'conversation' && agent.conversation,
+    (agent) => agent.runtimeKind === 'conversation' && agent.conversation && !isSubagentRecord(agent),
   )
 }
 

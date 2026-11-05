@@ -4,7 +4,7 @@ import type { TranscriptToolEntry } from './conversationProjection'
 import {
   AgentCardContent,
   AgentLaneSummary,
-  LaneMark,
+  LaneGlyph,
   SubagentTypesProvider,
   laneAgentState,
   laneOutcomeWords,
@@ -45,16 +45,9 @@ test('an agent with no span of its own falls back to the time it reported', () =
   expect(laneOutcomeWords(reported)).toBe('Done in 7s')
 })
 
-test('an agent is a character, or with characters off the working mark and then its kind glyph', () => {
-  expect(renderToStaticMarkup(<LaneMark tool={lane({ status: 'running' })} characters />)).toContain(
-    'agent-glyph--working',
-  )
-  expect(renderToStaticMarkup(<LaneMark tool={lane({ status: 'running' })} characters={false} />)).toContain(
-    'working-mark',
-  )
-  const settled = renderToStaticMarkup(<LaneMark tool={lane({ outputStatus: 'error' })} characters={false} />)
-  expect(settled).not.toContain('agent-glyph')
-  expect(settled).toContain('--tone-error')
+test('with no chat on record to name its model, an agent has the kind glyph, and a failed one the error ink', () => {
+  expect(renderToStaticMarkup(<LaneGlyph tool={lane({ status: 'running' })} />)).not.toContain('agent-glyph')
+  expect(renderToStaticMarkup(<LaneGlyph tool={lane({ outputStatus: 'error' })} />)).toContain('--tone-error')
 })
 
 test('an agent’s card says who it is, how it is doing, and what kind of helper it is', () => {

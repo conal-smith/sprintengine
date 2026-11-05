@@ -268,13 +268,19 @@ test("with the runtime: a mock sub-agent's turn ends it, leaves it at rest, and 
     })
     assert.ok(started.ok)
     await runtime.sendTurn({ sessionId: started.session.sessionId, message: 'Say something' })
-    for (let wait = 0; wait < 1_000 && !idle; wait += 1) await new Promise((resolve) => setTimeout(resolve, 10))
-    await tick()
+    // Rests a moment after the turn lets go, and the suite may be busy.
+    const resting = () => {
+      const listed = runtime.listSessions(child)
+      return listed.ok && listed.sessions[0]?.resting === true
+    }
+    for (let wait = 0; wait < 1_000 && !resting(); wait += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.equal(idle, true)
+    assert.equal(resting(), true)
     assert.equal(agents[child.agentId]?.subagentEnd?.status, 'completed')
     const result = await lifecycle.result(child)
     assert.ok(result?.text.trim(), 'the reply is read back from the transcript')
-    const listed = runtime.listSessions(child)
-    assert.equal(listed.ok && listed.sessions[0]?.resting, true)
   } finally {
     await runtime.shutdown()
     await rm(workspaceRoot, { recursive: true, force: true })

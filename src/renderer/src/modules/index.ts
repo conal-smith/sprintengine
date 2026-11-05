@@ -1,3 +1,4 @@
+import { isSubagentRecord } from '../../../shared/agent-state'
 import type { CapabilityManifest, ModuleEnablementOverrides } from '../../../shared/modules/manifest'
 import type { MarketplacePluginRegistryInstallResult } from '../../../shared/electron-api'
 import { activeForChannel } from '../../../shared/modules/dev-only'
@@ -367,11 +368,13 @@ if (typeof window !== 'undefined') {
               if (!workspace) return null
               return {
                 workingRoot: workspaceWorktree.workspaceWorkingRoot(workspace),
-                agents: Object.entries(workspace.agents).map(([id, agent]) => ({
-                  id,
-                  name: agent.name,
-                  isChat: agent.runtimeKind === 'conversation',
-                })),
+                agents: Object.entries(workspace.agents)
+                  .filter(([, agent]) => !isSubagentRecord(agent))
+                  .map(([id, agent]) => ({
+                    id,
+                    name: agent.name,
+                    isChat: agent.runtimeKind === 'conversation',
+                  })),
               }
             },
             revealAgentTab: (workspaceId, agentId, name) => {
