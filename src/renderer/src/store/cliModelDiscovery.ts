@@ -13,6 +13,7 @@
 // Settings "Refresh models".
 import type { DiscoveredCliModelCatalog } from '../../../shared/cli-model-catalog'
 import type { CliModelDiscoveryResult } from '../../../shared/ipc/cli-model-discovery'
+import { windowActivity, type WindowActivity } from '../utils/windowActivity'
 import type { AppSettings } from '../types/workspace'
 
 type CliModelDiscoveryApi = Pick<Window['api'], 'cliModelsDiscover' | 'onCliModelsChanged'>
@@ -45,9 +46,35 @@ function defaultApi(): CliModelDiscoveryApi | null {
   return typeof window === 'undefined' ? null : (window.api ?? null)
 }
 
+// How often a window coming to the front asks. A catalog still fresh costs main
+// a cache read, so this only keeps a burst of focus changes from asking at all.
+const FOCUS_ASK_EVERY_MS = 5 * 60 * 1000
+
+/** Ask each installed CLI for its models now, whatever is cached: Re-check, after CLIs were detected again. */
+export async function forceCliModelRefresh(
+  store: CliModelDiscoveryStore,
+  api: CliModelDiscoveryApi | null = defaultApi(),
+): Promise<CliModelDiscoveryResult | null> {
+  if (!api || typeof api.cliModelsDiscover !== 'function') return null
+  const { cliModelCatalog, cliRuntimes } = store.getState().appSettings
+  try {
+    const result = await api.cliModelsDiscover({
+      cliRuntimes,
+      force: true,
+      ...(cliModelCatalog ? { previous: cliModelCatalog } : {}),
+    })
+    applyResult(store, result)
+    return result
+  } catch {
+    return null
+  }
+}
+
 export function startCliModelDiscovery(
   store: CliModelDiscoveryStore,
   api: CliModelDiscoveryApi | null = defaultApi(),
+  activity: Pick<WindowActivity, 'get' | 'subscribe'> = windowActivity(),
+  now: () => number = Date.now,
 ): CliModelDiscoveryHandle {
   const unsubscribe =
     api && typeof api.onCliModelsChanged === 'function'
@@ -71,5 +98,25 @@ export function startCliModelDiscovery(
     }
   }
 
-  return { refreshCliModels, stop: unsubscribe }
+  // What a CLI lists can change with no event here (a new sign-in, a model
+  // rolled out), so coming back to the window looks again; main answers from
+  // its cache while the catalog is fresh.
+  let askedAt = now()
+  let wasFocused = activity.get().focused
+  const stopWatching = activity.subscribe(() => {
+    const { focused } = activity.get()
+    const arrived = focused && !wasFocused
+    wasFocused = focused
+    if (!arrived || now() - askedAt < FOCUS_ASK_EVERY_MS) return
+    askedAt = now()
+    void refreshCliModels()
+  })
+
+  return {
+    refreshCliModels,
+    stop: () => {
+      unsubscribe()
+      stopWatching()
+    },
+  }
 }

@@ -35,7 +35,7 @@ import { CLI_MODEL_PROBES } from './probes'
 import { CliModelProbeError, type ArgvRunOutcome, type CliModelProbe } from './probe-types'
 
 export const MODEL_DISCOVERY_TIMEOUT_MS = 20_000
-export const MODEL_CATALOG_FRESH_FOR_MS = 24 * 60 * 60 * 1000
+export const MODEL_CATALOG_FRESH_FOR_MS = 60 * 60 * 1000
 const CACHE_FILE_NAME = 'model-discovery-cache.json'
 const CACHE_FILE_VERSION = 1
 // Room past the probe's own deadline for it to tear its child down and report,

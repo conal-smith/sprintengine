@@ -180,8 +180,8 @@ test('recordCliDetection replaces one CLI’s answer on one machine', async () =
   assert.equal(probes, 4, 'recording this machine’s codex leaves the distribution’s answer held')
 })
 
-// The cache holds "not installed" until Re-check, so a CLI installed from a
-// terminal since startup would be refused. A launch looks again first.
+// A CLI installed from a terminal a moment ago can still read as missing, and
+// would be refused. A launch looks again first.
 test('pre-flight probes again before refusing a CLI the cache calls missing', async () => {
   clearCliAvailabilityCache()
   let installed = false
@@ -589,4 +589,32 @@ test('pre-flight resolves against the command override', async () => {
   )
   assert.deepEqual(commands, ['claude-next'])
   assert.deepEqual(result, { status: 'resolved', binaryPath: '/opt/homebrew/bin/claude-next' })
+})
+
+test('"not installed" goes stale in minutes, so an update in a terminal cannot hide a CLI until Re-check', async () => {
+  clearCliAvailabilityCache()
+  let installed = false
+  let clock = 1000
+  let probes = 0
+  const deps = {
+    listEntries: () => [entry('codex')],
+    detect: async (cli: AgentCli) => {
+      probes += 1
+      return { ...detected(cli, installed), resolvedPath: installed ? `/usr/local/bin/${cli}` : null }
+    },
+    now: () => clock,
+  }
+  await detectAgentCliAvailability({ cliRuntimes: {} }, deps)
+  await detectAgentCliAvailability({ cliRuntimes: {} }, deps)
+  assert.equal(probes, 1, 'held between the reads a burst of focus changes makes')
+
+  installed = true
+  clock += 2 * 60 * 1000 + 1
+  const later = await detectAgentCliAvailability({ cliRuntimes: {} }, deps)
+  assert.equal(later.codex?.installed, true)
+
+  // Found, it stays found: no process runs for it on every read.
+  clock += 24 * 60 * 60 * 1000
+  await detectAgentCliAvailability({ cliRuntimes: {} }, deps)
+  assert.equal(probes, 2)
 })

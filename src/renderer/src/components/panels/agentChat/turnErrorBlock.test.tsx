@@ -2,7 +2,13 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, test } from 'vitest'
 import type { TranscriptEntry } from './conversationProjection'
-import { isAuthShapedFailure, permissionDeniedReason, TurnErrorBlock, type TimelineChrome } from './timelineRows'
+import {
+  isAuthShapedFailure,
+  isUpdateShapedFailure,
+  permissionDeniedReason,
+  TurnErrorBlock,
+  type TimelineChrome,
+} from './timelineRows'
 
 type AssistantEntry = Extract<TranscriptEntry, { kind: 'assistant' }>
 
@@ -141,4 +147,20 @@ test('a privacy refusal is not mistaken for a lapsed login', () => {
 test('any other failure offers no Privacy settings', () => {
   const html = render(failedTurn('network timeout'), chrome({ onOpenPrivacySettings: () => undefined }))
   expect(html).not.toContain('Open Privacy settings')
+})
+
+test('a CLI too old for the model says to update it, up front', () => {
+  const failure = "The 'gpt-6.1-sol' model requires a newer version of Codex. Please upgrade to the latest app or CLI."
+  expect(isUpdateShapedFailure(failure)).toBe(true)
+  const html = renderToStaticMarkup(
+    <TurnErrorBlock entry={failedTurn(failure)} chrome={chrome({ assistantName: 'Codex' })} />,
+  )
+  expect(html).toContain('Codex needs an update for this. Update it in Settings ▸ Agents, then retry.')
+  expect(html).not.toContain('Something went wrong')
+})
+
+test('an ordinary failure is not read as an update', () => {
+  expect(isUpdateShapedFailure('Stream disconnected before completion.')).toBe(false)
+  expect(isUpdateShapedFailure(undefined)).toBe(false)
+  expect(isUpdateShapedFailure(EXPIRED)).toBe(false)
 })

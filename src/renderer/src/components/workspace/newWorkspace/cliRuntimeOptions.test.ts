@@ -17,6 +17,7 @@ import {
   resolveCliReasoning,
   resolveTemplateAgentCli,
   selectAgentCliCatalog,
+  withoutUnkeyedRuntimes,
 } from './cliRuntimeOptions'
 import type { AgentCliAvailabilityMap, PluginCatalogEntry } from '../../../types/workspace'
 import type { DiscoveredCliModel } from '../../../../../shared/cli-model-catalog'
@@ -766,4 +767,17 @@ test("a chat in a WSL workspace runs that machine's CLI, whichever chat CLI it i
     models: ['opus'],
     hostId: 'wsl:Debian',
   })
+})
+
+test('a runtime that needs a key stays out of the pickers until one is saved', () => {
+  const options = [
+    { value: 'codex', label: 'Codex' },
+    { value: 'zai', label: 'Z.AI', needsCredential: true as const, hostedVia: 'claude-code' as const },
+    { value: 'kimi-claude', label: 'Kimi K3', needsCredential: true as const, hostedVia: 'claude-code' as const },
+  ]
+  const values = (withKey: ReadonlySet<string> | null) => withoutUnkeyedRuntimes(options, withKey).map((o) => o.value)
+  assert.deepEqual(values(new Set()), ['codex'])
+  assert.deepEqual(values(new Set(['zai'])), ['codex', 'zai'])
+  // Not read yet: nothing leaves, so a picker never flashes empty.
+  assert.deepEqual(values(null), ['codex', 'zai', 'kimi-claude'])
 })

@@ -7,6 +7,7 @@ import {
   resolveCliReasoning,
   resolveSurfaceModel,
   selectAgentCliCatalog,
+  withoutUnkeyedRuntimes,
   type AgentCliCatalogOption,
 } from '../newWorkspace/cliRuntimeOptions'
 import { normalizeSelectedCli } from '../../../store/slices/settingsSlice'
@@ -163,6 +164,36 @@ type UseAgentComposerOptions = {
 }
 
 /**
+ * The runtimes needing a key that have one saved, or null until that has been
+ * read. Read when a picker mounts, so a key saved in Settings counts the next
+ * time one opens.
+ */
+function useCliIdsWithKey(ids: string): ReadonlySet<string> | null {
+  const [withKey, setWithKey] = React.useState<ReadonlySet<string> | null>(null)
+  React.useEffect(() => {
+    const read = window.api?.credentialSecretStatus
+    if (typeof read !== 'function') return
+    let cancelled = false
+    const wanted = ids ? ids.split('\u0000') : []
+    void Promise.all(
+      wanted.map((id) =>
+        read({ id }).then(
+          (result) => (result.ok && result.status.configured ? id : null),
+          // Not known is not "no key": the launch still says so if there is none.
+          () => id,
+        ),
+      ),
+    ).then((answers) => {
+      if (!cancelled) setWithKey(new Set(answers.filter((id): id is string => id !== null)))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [ids])
+  return withKey
+}
+
+/**
  * The agent CLIs this machine can launch, as every model picker lists them:
  * the plugin catalog, filtered to what is installed, with each CLI's own model
  * list merged over its manifest seed. One hook so the New agent launcher and a
@@ -183,16 +214,32 @@ export function useAgentCliCatalogOptions(availability?: {
   // would offer only the manifest seed while every other picker offers the
   // CLI's own list.
   const cliModelCatalog = useWorkspaceStore((s) => s.appSettings.cliModelCatalog)
+  const keyedIds = React.useMemo(
+    () => (pluginCatalogEntries ?? []).flatMap((entry) => (entry.auth ? [entry.id] : [])).join('\u0000'),
+    [pluginCatalogEntries],
+  )
+  const withKey = useCliIdsWithKey(keyedIds)
   return React.useMemo(
     () =>
-      selectAgentCliCatalog(
-        pluginCatalogStatus,
-        pluginCatalogEntries,
-        cliRuntimes,
-        { map: cliAvailability, status: cliAvailabilityStatus },
-        cliModelCatalog,
+      withoutUnkeyedRuntimes(
+        selectAgentCliCatalog(
+          pluginCatalogStatus,
+          pluginCatalogEntries,
+          cliRuntimes,
+          { map: cliAvailability, status: cliAvailabilityStatus },
+          cliModelCatalog,
+        ),
+        withKey,
       ),
-    [pluginCatalogStatus, pluginCatalogEntries, cliRuntimes, cliAvailability, cliAvailabilityStatus, cliModelCatalog],
+    [
+      pluginCatalogStatus,
+      pluginCatalogEntries,
+      cliRuntimes,
+      cliAvailability,
+      cliAvailabilityStatus,
+      cliModelCatalog,
+      withKey,
+    ],
   )
 }
 
