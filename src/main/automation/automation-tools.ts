@@ -1219,7 +1219,8 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           type: 'string',
           description:
             "One of this CLI's own modes by id, from `permissionModes` in cli.runtime.list; `readOnly` there " +
-            'marks the ones that can change nothing (Cursor\'s "ask" and "plan", Claude Code\'s "plan"). Needs ' +
+            'marks the CLI\'s read-only ones (Cursor\'s "ask" and "plan", Claude Code\'s "plan"), which are the ' +
+            "CLI's own promise and not a lock. Needs " +
             '"cli". An id the CLI does not have is refused with "unknown_permission_mode". It runs at its own ' +
             'level, which the cap above reads as it reads "permissionPreset"; name a preset beside it only if ' +
             'it is that level.',
@@ -3131,7 +3132,7 @@ function cliRuntimeProjection(plugin: LoadedPlugin): Record<string, unknown> {
     // The CLI's modes under its own names, each with the preset it runs at. A
     // caller names a mode by its id (`permissionMode` on agent.launch and
     // conversation.create), or the preset for that preset's own mode. `readOnly`
-    // marks a mode that can change nothing.
+    // marks a mode the CLI declares read-only.
     permissionModes: declaredPermissionModes(manifest).map((mode) => ({
       id: mode.id,
       label: mode.label,

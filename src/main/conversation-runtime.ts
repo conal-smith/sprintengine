@@ -61,7 +61,11 @@ import type {
   ConversationImportTranscriptInput,
   ConversationImportTranscriptResult,
 } from '../shared/conversation-runtime'
-import { CONVERSATION_SESSION_NOT_FOUND, readConversationMessageOrigin } from '../shared/conversation-runtime'
+import {
+  CONVERSATION_SESSION_NOT_FOUND,
+  readConversationMessageOrigin,
+  runsTurnMode,
+} from '../shared/conversation-runtime'
 import { isStaleConversationSend } from '../../packages/conversation-protocol/src/public'
 import { cliRuntimesOnPlatform, distroOfHostId, isWslHostId, type ExecutionHostId } from '../shared/execution-host'
 import { isWindowsPath, toWslPath, wslInputInRootSpelling } from '../shared/host-paths'
@@ -1165,9 +1169,9 @@ export class ConversationRuntime {
     // message, a paired device, a window that sends `default`) can take the
     // turn out of it.
     const mode = this.heldChatMode?.({ workspaceId: session.workspaceId, agentId: session.agentId }) ?? input.mode
-    // `ask` needs the same read-only channel `plan` runs on. A provider without
-    // it would ignore the mode and run the turn with its tools live.
-    if ((mode === 'plan' || mode === 'ask') && !session.capabilities?.planMode)
+    // A provider without the mode would ignore it and run the turn with its
+    // tools live.
+    if (!runsTurnMode(session.capabilities, mode))
       return { ok: false, message: `This provider does not support ${mode} mode.` }
 
     // A message that opens with a slash command is run by the CLI, which reads

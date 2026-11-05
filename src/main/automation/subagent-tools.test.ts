@@ -8,7 +8,7 @@ import type { McpConnectionContext, McpToolResult } from '../../shared/modules/m
 import { STUDIO_MCP_SERVER_ID } from '../../shared/product-identity'
 import type { LaunchedAgentLink } from '../agent-launch-notices'
 import type { ConversationLaunchRequest, ConversationLaunchResult } from '../conversation-launch-service'
-import { createSubagentTools, type SubagentToolsDeps } from './subagent-tools'
+import { createSubagentTools, distinctSubagentTitle, type SubagentToolsDeps } from './subagent-tools'
 import { localOnlyGatewayToolReason } from './tailnet/tailnet-scopes'
 
 const WORKSPACE = 'ws-1'
@@ -170,7 +170,8 @@ test('read-only maps to what holds each CLI, and a CLI with none is refused', as
 
   const codex = harness()
   await codex.call('subagent.start', { task: 'Review', cli: 'codex', readOnly: true })
-  assert.equal(codex.requests[0]?.mode, undefined)
+  // Ask rather than its Manual: nobody is watching to answer an approval.
+  assert.equal(codex.requests[0]?.mode, 'ask')
   assert.equal(codex.requests[0]?.permissionPreset, 'manual')
 
   const grok = harness()
@@ -336,4 +337,13 @@ test("the tools are for this machine's chats alone, and a person who asks to be 
   }
   assert.equal(isAgentLaunchingGatewayTool(STUDIO_MCP_SERVER_ID, 'subagent.start'), true)
   assert.equal(isAgentLaunchingGatewayTool(STUDIO_MCP_SERVER_ID, 'subagent.status'), false)
+})
+
+test('a sub-agent named as one of its siblings takes a number, so a restart reads as another run', () => {
+  assert.equal(distinctSubagentTitle('Council: Sol', []), 'Council: Sol')
+  assert.equal(distinctSubagentTitle('Council: Sol', ['Other']), 'Council: Sol')
+  assert.equal(distinctSubagentTitle('Council: Sol', ['Council: Sol']), 'Council: Sol (2)')
+  assert.equal(distinctSubagentTitle('Council: Sol', ['Council: Sol', 'Council: Sol (2)']), 'Council: Sol (3)')
+  const long = 'x'.repeat(60)
+  assert.equal(distinctSubagentTitle(long, [long]), `${'x'.repeat(56)} (2)`)
 })

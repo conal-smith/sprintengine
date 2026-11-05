@@ -287,7 +287,7 @@ export type ConversationLaunchServiceDeps = {
    */
   ensureSkillInstalled?: (workingRoot: string, skillId: string) => Promise<EnsureSkillInstalledResult>
   /** Whether a provider can run a turn in `ask` or `plan`. Absent, a launch naming one is refused. */
-  runsTurnModes?: (providerId: string) => boolean
+  runsTurnMode?: (providerId: string, mode: 'plan' | 'ask') => boolean
   /**
    * The effort levels a CLI declares (its manifest's `reasoningSelection`),
    * which a requested effort must be one of. Absent, or empty for a CLI, and
@@ -555,7 +555,7 @@ export function createConversationLaunchService(deps: ConversationLaunchServiceD
     const permissionMode = ownMode && conversationPermissionModes(cli).includes(ownMode) ? ownMode : undefined
     const subagentOf = newChat ? undefined : request.subagentOf
     const turnMode = request.mode === 'plan' || request.mode === 'ask' ? request.mode : undefined
-    if (turnMode && !deps.runsTurnModes?.(providerId)) {
+    if (turnMode && !deps.runsTurnMode?.(providerId, turnMode)) {
       return { ok: false, code: 'unsupported_mode', message: `A ${cli} chat cannot run in ${turnMode} mode.` }
     }
     const allowedTools = [...new Set((request.allowedTools ?? []).map((tool) => tool.trim()).filter(Boolean))]

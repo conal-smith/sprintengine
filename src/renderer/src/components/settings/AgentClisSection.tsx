@@ -10,6 +10,7 @@ import {
   type ExecutionHostId,
   type ExecutionHostSettings,
 } from '../../../../shared/execution-host'
+import { noteCliKeyChanged } from '../workspace/agentComposer/cliKeyChanges'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import CliIcon from '../CliIcon'
 import {
@@ -742,6 +743,7 @@ function CliCredentialRow({ pluginId, displayName, label }: { pluginId: string; 
       setStatus(result)
       setDraft('')
       setMessage('API key saved.')
+      noteCliKeyChanged()
     } else {
       setMessage(result.message)
     }
@@ -756,6 +758,7 @@ function CliCredentialRow({ pluginId, displayName, label }: { pluginId: string; 
     if (result.ok) {
       setStatus(result)
       setMessage('API key removed.')
+      noteCliKeyChanged()
     } else {
       setMessage(result.message)
     }

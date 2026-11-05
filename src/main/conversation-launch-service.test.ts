@@ -707,7 +707,7 @@ test('several connectors start the chat with each of their servers, once each, a
 })
 
 test('a launch naming a turn mode keeps it on the chat and sends the first message in it', async () => {
-  const { service, record } = harness({ runsTurnModes: (providerId) => providerId === 'cursor-agent' })
+  const { service, record } = harness({ runsTurnMode: (providerId) => providerId === 'cursor-agent' })
   const result = await service.launch({ workspaceId: 'ws-1', cli: 'cursor', mode: 'ask', prompt: 'review this' })
   assert.equal(result.ok, true, !result.ok ? result.message : '')
   await new Promise((resolve) => setImmediate(resolve))
@@ -717,7 +717,7 @@ test('a launch naming a turn mode keeps it on the chat and sends the first messa
 })
 
 test('a launch naming no turn mode leaves the chat and its first message alone', async () => {
-  const { service, record } = harness({ runsTurnModes: () => true })
+  const { service, record } = harness({ runsTurnMode: () => true })
   await service.launch({ workspaceId: 'ws-1', cli: 'cursor', mode: 'default', prompt: 'go' })
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(record.writes[0]?.agent?.conversationMode, undefined)
@@ -726,7 +726,7 @@ test('a launch naming no turn mode leaves the chat and its first message alone',
 })
 
 test('a turn mode the provider cannot run refuses the launch before anything is written', async () => {
-  const { service, record } = harness({ runsTurnModes: (providerId) => providerId !== 'codex-agent' })
+  const { service, record } = harness({ runsTurnMode: (providerId) => providerId !== 'codex-agent' })
   const refused = await service.launch({ workspaceId: 'ws-1', cli: 'codex', mode: 'ask', prompt: 'review this' })
   assert.equal(!refused.ok && refused.code, 'unsupported_mode')
   assert.equal(record.writes.length, 0)

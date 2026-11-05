@@ -87,6 +87,17 @@ import { quotesToReadableMarkdown } from '../../../../../shared/chat-quotes'
 // number with 401 in it is not read as a lapsed login. A refusal of access is
 // not one either, though the Claude CLI files a 403 as an authentication
 // failure: signing in again cannot grant what the account is not allowed.
+/**
+ * Whether a failure says the CLI is too old for what was asked of it, as a CLI
+ * says of a model newer than it knows. That is the one failure retrying cannot
+ * fix and the person can, so it is said up front rather than under Details.
+ */
+export function isUpdateShapedFailure(reason: string | undefined): boolean {
+  return /\b(?:requires?|needs?)\b[^.]*\bnewer version\b|\bupgrade to the latest\b|\bupdate (?:your |the )?(?:cli|codex)\b/iu.test(
+    reason ?? '',
+  )
+}
+
 export function isAuthShapedFailure(reason: string | undefined): boolean {
   return Boolean(
     reason &&
@@ -1072,8 +1083,11 @@ export function TurnErrorBlock({
     refusal === undefined
       ? undefined
       : `${chrome.assistantName} was refused access${refusal ? `: ${refusal}${/[.!?]$/.test(refusal) ? '' : '.'}` : '.'}`
+  const updateShaped = isUpdateShapedFailure(`${entry.failureReason ?? ''} ${entry.failureDetail ?? ''}`)
   const message: React.ReactNode = privacyBlocked ? (
     `${MACOS_PRIVACY_FOLDER_HINT} ${kept}`
+  ) : updateShaped ? (
+    `${chrome.assistantName} needs an update for this. Update it in Settings ▸ Agents, then retry. ${kept}`
   ) : !authShaped ? (
     `${refused ?? 'Something went wrong while responding.'} ${kept}`
   ) : onSignIn ? (
