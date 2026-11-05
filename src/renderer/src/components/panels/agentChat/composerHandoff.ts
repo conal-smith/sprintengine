@@ -1,3 +1,4 @@
+import { isSubagentRecord } from '../../../../../shared/agent-state'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { composerDraftStore } from './draftStore'
 import { mountedChatViewFor } from './mountedChatViews'
@@ -23,7 +24,7 @@ import { insertQuoteIntoDraft } from './quoteSelection'
 function chatAgentOf(workspaceId: string): string | null {
   const workspace = useWorkspaceStore.getState().workspaces.find((candidate) => candidate.id === workspaceId)
   const chats = Object.entries(workspace?.agents ?? {})
-    .filter(([, agent]) => agent.conversation)
+    .filter(([, agent]) => agent.conversation && !isSubagentRecord(agent))
     .map(([agentId]) => agentId)
   if (chats.length <= 1) return chats[0] ?? null
   const drawn = chats.map((agentId) => mountedChatViewFor(workspaceId, agentId)).filter((view) => view !== null)

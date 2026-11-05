@@ -1,3 +1,4 @@
+import { isSubagentRecord } from '../../../../shared/agent-state'
 import React, { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { useWorkspaceStore } from '../../store/workspaceStore'
 import type { Workspace, WorkspaceId, WorkspaceWindowId } from '../../types/workspace'
@@ -1359,7 +1360,7 @@ export default function CommandPalette({
     if (fromSession?.alive) return { cli: fromSession.cli, chat: false }
     const workspace = workspaceById.get(workspaceId as WorkspaceId)
     const conversation = Object.values(workspace?.agents ?? {}).find(
-      (agent) => agent.runtimeKind === 'conversation' && agent.conversation,
+      (agent) => agent.runtimeKind === 'conversation' && agent.conversation && !isSubagentRecord(agent),
     )
     if (conversation) return { cli: cliForConversationProvider(conversation.conversation?.providerId), chat: true }
     return { cli: fromSession?.cli ?? null, chat: false }

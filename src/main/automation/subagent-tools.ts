@@ -2,8 +2,7 @@ import { LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE, launchPromptReadsAsOption } from
 import type { AgentState } from '../../shared/agent-state'
 import { parseCliPermissionPreset, type CliPermissionPreset } from '../../shared/cli-permission-preset'
 import { cliForConversationProvider, conversationProviderForCli } from '../../shared/conversation-harness'
-import type { ConversationSessionSummary } from '../../shared/conversation-runtime'
-import { conversationSummaryPhase } from '../../shared/conversation/phase'
+import { subagentEnded, subagentStatusOf, type SubagentStatus } from '../../shared/conversation/subagentStatus'
 import {
   toolError,
   toolSuccess,
@@ -48,6 +47,7 @@ const SUBAGENT_WAIT_DEFAULT_MS = 300_000
 const SUBAGENT_WAIT_POLL_MS = 500
 const SUBAGENT_NAME_MAX_CHARS = 60
 const SUBAGENT_REASON_MAX_CHARS = 200
+const SUBAGENT_TASK_LINE_MAX_CHARS = 200
 const SUBAGENT_ID = /^[A-Za-z0-9._-]{1,120}$/
 // A safety limit, not a workflow: the owner's default is one at a time.
 export const SUBAGENT_MAX_RUNNING = 4
@@ -74,8 +74,6 @@ const READ_ONLY_BY_CLI: Readonly<Record<string, { preset: CliPermissionPreset; m
   codex: { preset: 'manual', mode: 'ask' },
 }
 
-export type SubagentStatus = 'starting' | 'working' | 'needs_input' | 'completed' | 'failed' | 'stopped'
-
 export type SubagentChatControl = Pick<ConversationChatControl, 'session' | 'now' | 'sleep'> & {
   /** The chat agents of a workspace, by id, as its record holds them. */
   agentsOf(workspaceId: string): Readonly<Record<string, AgentState>> | null
@@ -99,26 +97,10 @@ export type SubagentToolsDeps = {
   chats?: SubagentChatControl
 }
 
-/** Whether a sub-agent's status is one it stays in until someone sends it a message. */
-export function subagentEnded(status: SubagentStatus): boolean {
-  return status === 'completed' || status === 'failed' || status === 'stopped'
-}
-
-/** Where a sub-agent stands: how it ended if it has, else what its session is doing. */
-export function subagentStatusOf(
-  agent: Pick<AgentState, 'subagentEnd'> | undefined,
-  summary: ConversationSessionSummary | undefined,
-): SubagentStatus {
-  if (agent?.subagentEnd) return agent.subagentEnd.status
-  if (!summary) return 'stopped'
-  const phase = conversationSummaryPhase(summary)
-  if (phase === 'waiting_for_approval' || phase === 'waiting_for_input') return 'needs_input'
-  if (phase === 'running') return 'working'
-  if (phase === 'failed') return 'failed'
-  if (summary.status === 'stopped') return 'stopped'
-  // Between the session starting and its first message going out.
-  if (phase === 'starting' || summary.lastTurnEndedAt === undefined) return 'starting'
-  return 'completed'
+/** What the Agents tab calls its task: its first line that says anything. */
+function taskLine(task: string): string {
+  const line = task.split('\n').find((candidate) => candidate.trim()) ?? ''
+  return line.trim().slice(0, SUBAGENT_TASK_LINE_MAX_CHARS)
 }
 
 /**
@@ -446,7 +428,7 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
             ...(parentWorktree ? { worktreePath: parentWorktree } : {}),
             ...(permissionPreset ? { permissionPreset } : {}),
             ...(readOnlyRun?.mode ? { mode: readOnlyRun.mode } : {}),
-            subagentOf: { agentId: parent.agentId, startedAt },
+            subagentOf: { agentId: parent.agentId, startedAt, task: taskLine(args.task) },
             ...(readOnly ? { subagentReadOnly: true } : {}),
             onFirstSendFailed: (message) => {
               if (childId) deps.subagents?.fail({ workspaceId: parent.workspaceId, agentId: childId }, message)

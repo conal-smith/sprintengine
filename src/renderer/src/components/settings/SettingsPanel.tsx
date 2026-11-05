@@ -1335,7 +1335,7 @@ export default function SettingsPanel({
               </SettingsRow>
               <SettingToggle
                 label="Agent characters"
-                description="Draw each agent Claude sends off as a little character that moves while it works, and changes with the seasons."
+                description="Draw an agent at work in the Files tree as a little character that moves while it works, and changes with the seasons."
                 enabled={agentCharacters}
                 onChange={setAppearanceAgentCharacters}
               />

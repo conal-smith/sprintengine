@@ -130,7 +130,7 @@ test('a start writes who the sub-agent belongs to and hands it only its task', a
   const request = h.requests[0]!
   assert.equal(request.workspaceId, WORKSPACE)
   assert.equal(request.newChat, undefined)
-  assert.deepEqual(request.subagentOf, { agentId: PARENT, startedAt: 1_000 })
+  assert.deepEqual(request.subagentOf, { agentId: PARENT, startedAt: 1_000, task: 'Check the build' })
   assert.equal(request.prompt, 'Act as the review sub-agent for this task.\n\nCheck the build')
   assert.equal(request.name, 'Cursor · Model muse')
   assert.equal(body(started).subagentId, 'agent-child-1')

@@ -1,4 +1,5 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { subagentEnded } from '../../../../../../shared/conversation/subagentStatus'
 import { useWorkspaceStore } from '../../../../store/workspaceStore'
 import { EmptyState, GhostButton, InlineNotice, PanelHeader, RowButton, Spinner } from '../../../ui'
 import { useLocalChatBinding, type ChatBinding } from '../../../panels/agentChat/chatBinding'
@@ -26,6 +27,7 @@ import { useConversationSession } from '../../../panels/agentChat/useConversatio
 import { ConversationTransportProvider } from '../../../panels/agentChat/conversationTransport'
 import { useRemoteChat } from '../../../panels/agentChat/remoteChatRegistry'
 import { useAgentFocusRequest } from './agentsPaneFocus'
+import { StudioSubagentRow, StudioSubagentThread, useStudioSubagents, type StudioSubagent } from './studioSubagents'
 
 // The Agents tab: every agent the focused chat sent off to work, the ones still
 // working first, and each one's own thread — what it was asked, the steps it
@@ -203,6 +205,16 @@ function ChatAgents({
   // (every frame, while the tab is hidden) re-renders no section or thread.
   const working = useMemo(() => lanes.filter((candidate) => candidate.status === 'running'), [lanes])
   const finished = useMemo(() => lanes.filter((candidate) => candidate.status !== 'running').reverse(), [lanes])
+  const subagents = useStudioSubagents(workspaceId, agentId)
+  const subagent = selected ? subagents.find((candidate) => candidate.id === selected) : undefined
+  const workingSubagents = useMemo(() => subagents.filter((entry) => !subagentEnded(entry.status)), [subagents])
+  const finishedSubagents = useMemo(
+    () => subagents.filter((entry) => subagentEnded(entry.status)).reverse(),
+    [subagents],
+  )
+  const agentCount = lanes.length + subagents.length
+  const workingCount = working.length + workingSubagents.length
+  const finishedCount = finished.length + finishedSubagents.length
   const tokens = lanes.reduce((sum, candidate) => sum + (candidate.agent?.usage?.totalTokens ?? 0), 0)
   const showList = useCallback(() => setSelected(null), [])
 
@@ -217,8 +229,16 @@ function ChatAgents({
     >
       <SubagentTypesProvider value={projection.agentTypes}>
         <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-[color:var(--bg-app)]">
-          <PanelHeader title="Agents" subtitle={binding.agent.name} count={lanes.length || undefined} />
-          {lane ? (
+          <PanelHeader title="Agents" subtitle={binding.agent.name} count={agentCount || undefined} />
+          {subagent ? (
+            <StudioSubagentThread
+              subagent={subagent}
+              workspaceId={workspaceId}
+              root={root}
+              active={seen}
+              onBack={showList}
+            />
+          ) : lane ? (
             <AgentThread lane={lane} onBack={showList} />
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-2">
@@ -231,14 +251,18 @@ function ChatAgents({
               {session.error ? (
                 <InlineNotice tone="error" title="Couldn't read this chat." detail={session.error} />
               ) : null}
-              {session.hydrated && lanes.length === 0 ? (
+              {session.hydrated && agentCount === 0 ? (
                 <EmptyState
                   title="No agents yet"
                   body="When this chat sends agents off to work — to search the code, plan, or take on part of a task — they show up here."
                 />
               ) : null}
-              {working.length > 0 ? <AgentSection title="Working" lanes={working} onOpen={setSelected} /> : null}
-              {finished.length > 0 ? <AgentSection title="Finished" lanes={finished} onOpen={setSelected} /> : null}
+              {workingCount > 0 ? (
+                <AgentSection title="Working" lanes={working} subagents={workingSubagents} onOpen={setSelected} />
+              ) : null}
+              {finishedCount > 0 ? (
+                <AgentSection title="Finished" lanes={finished} subagents={finishedSubagents} onOpen={setSelected} />
+              ) : null}
               {session.hasMore ? (
                 <GhostButton
                   size="inline"
@@ -253,11 +277,11 @@ function ChatAgents({
               ) : null}
             </div>
           )}
-          {lanes.length > 0 && !lane ? (
+          {agentCount > 0 && !lane && !subagent ? (
             <footer className="border-t border-[color:var(--border-subtle)] px-4 py-2 text-micro tabular-nums text-[color:var(--text-subtle)]">
               {[
-                working.length ? `${working.length} working` : null,
-                finished.length ? `${finished.length} finished` : null,
+                workingCount ? `${workingCount} working` : null,
+                finishedCount ? `${finishedCount} finished` : null,
                 tokens ? formatTokens(tokens) : null,
               ]
                 .filter(Boolean)
@@ -273,18 +297,25 @@ function ChatAgents({
 const AgentSection = React.memo(function AgentSection({
   title,
   lanes,
+  subagents,
   onOpen,
 }: {
   title: string
   lanes: TranscriptToolEntry[]
+  subagents: StudioSubagent[]
   onOpen: (laneId: string) => void
 }) {
   return (
     <section aria-label={title} className="mb-3">
       <h3 className="px-2 pb-1 pt-2 text-micro font-medium text-[color:var(--text-subtle)]">
-        {title} · {lanes.length}
+        {title} · {lanes.length + subagents.length}
       </h3>
       <ul className="flex flex-col gap-0.5">
+        {subagents.map((subagent) => (
+          <li key={subagent.id}>
+            <StudioSubagentRow subagent={subagent} onOpen={onOpen} />
+          </li>
+        ))}
         {lanes.map((lane) => (
           <li key={lane.id}>
             <AgentRow lane={lane} onOpen={() => onOpen(lane.id)} />
@@ -298,8 +329,8 @@ const AgentSection = React.memo(function AgentSection({
 // One agent in the list: who it is and what it was sent to do, how it is doing,
 // and underneath, what it is doing now or the first line of what it found.
 function AgentRow({ lane, onOpen }: { lane: TranscriptToolEntry; onOpen: () => void }) {
-  // A working agent's character loops; scrolled out of the list (or with the
-  // window idle) it holds still, as a transcript's lanes do.
+  // A working agent's timer ticks only while its row can be seen, as a
+  // transcript's lanes do.
   const rowRef = useRef<HTMLButtonElement>(null)
   useLiveRowMotion(rowRef, lane.status === 'running')
   return (

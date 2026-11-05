@@ -163,7 +163,7 @@ export type ConversationLaunchRequest = {
    * person's, so it moves nothing that follows what the person last wrote.
    * Read only without `newChat`.
    */
-  subagentOf?: { agentId: string; startedAt: number }
+  subagentOf?: { agentId: string; startedAt: number; task?: string }
   /** A sub-agent started read-only, kept on its record. */
   subagentReadOnly?: boolean
   /**

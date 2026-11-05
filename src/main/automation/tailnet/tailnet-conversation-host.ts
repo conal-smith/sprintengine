@@ -1,3 +1,4 @@
+import { isSubagentRecord } from '../../../shared/agent-state'
 import {
   CONVERSATION_DEFAULT_MODEL_ID,
   CONVERSATION_MAX_FILE_SEARCH_RESULTS,
@@ -571,6 +572,8 @@ export type ConversationListWorkspace = {
   highlight?: { starred: boolean; color: string | null } | null
   /** Auto-settle, switched on from the row menu; absent or null is off. */
   autoSettleEnabled?: boolean | null
+  /** The record's agents, to tell a sub-agent, which no list draws, from a chat. */
+  agents?: Readonly<Record<string, { subagentOf?: unknown } | undefined>>
 }
 
 /**
@@ -1517,6 +1520,8 @@ export function createConversationGatewayHost(
       // so a device that interleaves these rows with its own puts each where
       // it sits here, not by a fallback of its own.
       const listed = [...byId.values()]
+        // A sub-agent belongs to its parent, and no list of chats draws it.
+        .filter((thread) => !isSubagentRecord(recordOf(thread.workspaceId)?.agents?.[thread.agentId]))
         .map(wholeNumbers)
         .map((thread) => {
           const record = registry.lifecycleList ? recordOf(thread.workspaceId) : null
