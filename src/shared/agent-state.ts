@@ -142,7 +142,7 @@ export type AgentState = {
    * workspace's chats does.
    */
   subagentOf?: { agentId: string; startedAt: number; task?: string }
-  /** A sub-agent started read-only: `conversationMode` (or Codex's sandbox) holds it there. */
+  /** A sub-agent started read-only: `conversationMode` asks its CLI for its read-only mode. */
   subagentReadOnly?: true
   /**
    * How a sub-agent's task ended, written once when it does (subagent-lifecycle.ts).

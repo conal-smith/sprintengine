@@ -114,6 +114,19 @@ test('interrupting the parent stops its running sub-agents, and leaves finished 
   assert.deepEqual(h.calls, ['interrupt conv-agent-child', 'rest conv-agent-child'])
 })
 
+test('stopping a sub-agent says so before the interrupt, and an ended one says nothing', async () => {
+  const h = harness()
+  const stopped: string[] = []
+  h.lifecycle.onStopped(({ agentId }) => {
+    stopped.push(agentId)
+    h.calls.push('heard')
+  })
+  await h.lifecycle.stop(child)
+  await h.lifecycle.stop(child)
+  assert.deepEqual(stopped, [child.agentId])
+  assert.deepEqual(h.calls, ['heard', 'interrupt conv-agent-child', 'rest conv-agent-child'])
+})
+
 test('a parent that merely finished its turn leaves its sub-agents working', async () => {
   const h = harness()
   h.lifecycle.onConversationEvent(event('turn_completed', parent))

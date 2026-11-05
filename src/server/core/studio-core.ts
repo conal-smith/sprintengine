@@ -75,7 +75,11 @@ import {
 } from '../../main/automation/conversation-lifecycle'
 import { conversationSessionWorking, terminalAgentWorking } from '../../shared/conversation/phase'
 import { forkedAgentPatch, forkName } from '../../shared/conversation/fork'
-import type { ConversationMessageOrigin, ConversationSessionSummary } from '../../shared/conversation-runtime'
+import {
+  runsTurnMode,
+  type ConversationMessageOrigin,
+  type ConversationSessionSummary,
+} from '../../shared/conversation-runtime'
 import { installedStudioPlatform, installStudioPlatform, type StudioPlatform } from '../platform/platform'
 import type { StudioPaths } from '../platform/studio-paths'
 import { createPullRequestDomain } from '../pull-requests/pull-request-domain'
@@ -446,7 +450,7 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
       agentLaunchSettings.update({ projectUse: { folderPath, at: Date.now() } }, 'system')
     },
     // A turn mode needs a provider that can run one; the others ignore it.
-    runsTurnModes: (providerId) => conversationRuntime.getProviderCapabilities(providerId)?.planMode === true,
+    runsTurnMode: (providerId, mode) => runsTurnMode(conversationRuntime.getProviderCapabilities(providerId), mode),
     // The levels the CLI's picker offers, from the same manifests it reads.
     reasoningLevels: (cli) =>
       listPluginRegistryEntries()

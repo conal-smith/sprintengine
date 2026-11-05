@@ -27,6 +27,10 @@ const fixtures = [
   ['html', '<div>\n  <strong>Hello</strong>\n</div>'],
   ['bash', '# A shell command\nprintf "%s" "hello"'],
   ['yaml', 'greeting: |\n  hello\n  world\nready: true'],
+  ['java', 'public class Hello {\n  /* a\n     note */\n  int answer = 42;\n}'],
+  ['kotlin', 'fun main() {\n  val answer = 42\n}'],
+  ['cpp', '#include <vector>\nint main() { return 0; }'],
+  ['toml', '[tool]\nready = true'],
 ] as const
 
 for (const [language, code] of fixtures) {
@@ -59,6 +63,22 @@ test('normalizes aliases and rejects prototype keys or unsupported languages', (
   expect(normalizeCodeLanguage('zsh')).toBe('bash')
   expect(normalizeCodeLanguage('constructor')).toBeNull()
   expect(normalizeCodeLanguage('')).toBeNull()
+})
+
+// The header names these from the label table, and a block whose header says
+// Java while its code stays plain is the failure this list exists to prevent.
+for (const language of ['java', 'kotlin', 'kt', 'swift', 'c', 'c++', 'cs', 'php', 'rb', 'toml', 'xml', 'scss', 'gql']) {
+  test(`${language} is coloured, not only named`, () => {
+    expect(normalizeCodeLanguage(language)).not.toBeNull()
+  })
+}
+
+test('a java keyword, type and string take their syntax tokens', async () => {
+  const engine = await loadCodeLanguage('java')
+  const code = 'public class Hello {\n  String name = "world";\n}'
+  const [line] = new IncrementalCodeTokenizer(engine, 'java').update(code, true)
+  expect(line?.tokens.find((token) => token.content.trim() === 'public')?.color).toBe('var(--sem-syntax-keyword)')
+  expect(line?.tokens.find((token) => token.content.trim() === 'Hello')?.color).toBe('var(--sem-syntax-type)')
 })
 
 test('the production tokenizer retains its 50 ms deadline and preserves text when time expires', async () => {

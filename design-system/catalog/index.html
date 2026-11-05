@@ -680,6 +680,8 @@ code {
 #ds-view-component-button:checked ~ .ds-catalog #component-button { display: block; }
 #ds-view-component-card-button:checked ~ .ds-catalog #components { display: block; }
 #ds-view-component-card-button:checked ~ .ds-catalog #component-card-button { display: block; }
+#ds-view-component-card-scroller:checked ~ .ds-catalog #components { display: block; }
+#ds-view-component-card-scroller:checked ~ .ds-catalog #component-card-scroller { display: block; }
 #ds-view-component-check-row:checked ~ .ds-catalog #components { display: block; }
 #ds-view-component-check-row:checked ~ .ds-catalog #component-check-row { display: block; }
 #ds-view-component-checkbox:checked ~ .ds-catalog #components { display: block; }
@@ -814,6 +816,8 @@ code {
 #ds-view-component-button:focus-visible ~ .ds-catalog .catalog-nav label[for="ds-view-component-button"] { outline: 2px solid var(--sem-color-accent-hover, #275842); outline-offset: 2px; }
 #ds-view-component-card-button:checked ~ .ds-catalog .catalog-nav label[for="ds-view-component-card-button"] { color: var(--sem-color-accent-primary, #2f6a4a); font-weight: var(--sem-font-weight-emphasis, 600); box-shadow: inset 2px 0 0 currentColor; }
 #ds-view-component-card-button:focus-visible ~ .ds-catalog .catalog-nav label[for="ds-view-component-card-button"] { outline: 2px solid var(--sem-color-accent-hover, #275842); outline-offset: 2px; }
+#ds-view-component-card-scroller:checked ~ .ds-catalog .catalog-nav label[for="ds-view-component-card-scroller"] { color: var(--sem-color-accent-primary, #2f6a4a); font-weight: var(--sem-font-weight-emphasis, 600); box-shadow: inset 2px 0 0 currentColor; }
+#ds-view-component-card-scroller:focus-visible ~ .ds-catalog .catalog-nav label[for="ds-view-component-card-scroller"] { outline: 2px solid var(--sem-color-accent-hover, #275842); outline-offset: 2px; }
 #ds-view-component-check-row:checked ~ .ds-catalog .catalog-nav label[for="ds-view-component-check-row"] { color: var(--sem-color-accent-primary, #2f6a4a); font-weight: var(--sem-font-weight-emphasis, 600); box-shadow: inset 2px 0 0 currentColor; }
 #ds-view-component-check-row:focus-visible ~ .ds-catalog .catalog-nav label[for="ds-view-component-check-row"] { outline: 2px solid var(--sem-color-accent-hover, #275842); outline-offset: 2px; }
 #ds-view-component-checkbox:checked ~ .ds-catalog .catalog-nav label[for="ds-view-component-checkbox"] { color: var(--sem-color-accent-primary, #2f6a4a); font-weight: var(--sem-font-weight-emphasis, 600); box-shadow: inset 2px 0 0 currentColor; }
@@ -2290,6 +2294,47 @@ code {
   font-size: var(--sem-font-size-meta);
   color: var(--sem-color-text-subtle);
   line-height: var(--sem-font-line-default);
+}
+
+/* components/card-scroller/component.css */
+/* Card scroller — a heading over a row of tiles that scrolls sideways. Extracted
+ * from the shipped `CardScroller` primitive
+ * (src/renderer/src/components/ui/CardScroller.tsx). */
+
+.ds-card-scroller {
+  container-type: inline-size;
+}
+
+.ds-card-scroller-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sem-space-sm);
+  height: var(--sem-size-control-sm);
+  padding-inline: var(--sem-space-2xs);
+  color: var(--sem-color-text-muted);
+  font-family: var(--sem-font-family-ui);
+  font-size: var(--sem-font-size-meta);
+  font-weight: var(--sem-font-weight-medium);
+}
+
+.ds-card-scroller-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 85%;
+  gap: var(--sem-space-sm);
+  margin-block-start: var(--sem-space-2xs);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ds-card-scroller-row::-webkit-scrollbar {
+  display: none;
+}
+
+@container (min-width: 520px) {
+  .ds-card-scroller-row {
+    grid-auto-columns: calc((100% - 2 * var(--sem-space-sm) - var(--sem-space-3xl)) / 3);
+  }
 }
 
 /* components/check-row/component.css */
@@ -13694,6 +13739,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-board-lane" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-button" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-card-button" />
+<input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-card-scroller" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-check-row" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-checkbox" />
 <input type="radio" name="ds-view" class="ds-view-switch" id="ds-view-component-chip-button" />
@@ -13781,6 +13827,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <label class="catalog-nav-item" for="ds-view-component-board-lane">Board lane</label>
 <label class="catalog-nav-item" for="ds-view-component-button">Button</label>
 <label class="catalog-nav-item" for="ds-view-component-card-button">Card button</label>
+<label class="catalog-nav-item" for="ds-view-component-card-scroller">Card scroller</label>
 <label class="catalog-nav-item" for="ds-view-component-check-row">Check row</label>
 <label class="catalog-nav-item" for="ds-view-component-checkbox">Checkbox</label>
 <label class="catalog-nav-item" for="ds-view-component-chip-button">Chip button</label>
@@ -17910,6 +17957,98 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
   &lt;/div&gt;
 &lt;/div&gt;
 &lt;/body&gt;
+&lt;/html&gt;
+</code></pre></details>
+</div>
+<div id="component-card-scroller" class="catalog-view catalog-component">
+<h3>Card scroller</h3>
+<div class="catalog-component-grid">
+<div class="catalog-stage ds-embed-component-card-scroller">
+<section class="ds-card-scroller" aria-label="Things to try">
+      <div class="ds-card-scroller-head"><span>Things to try</span></div>
+      <div class="ds-card-scroller-row">
+        <button class="ds-card-button" type="button">Check the docs against the code</button>
+        <button class="ds-card-button" type="button">Find the untested paths</button>
+        <button class="ds-card-button" type="button">Audit dependencies</button>
+        <button class="ds-card-button" type="button">Triage the backlog</button>
+      </div>
+    </section>
+</div>
+<div class="catalog-doc">
+<p>A heading over a row of tiles that scrolls sideways: more choices than a column holds, each at its full size, rather than shrunk to fit or stacked until the page scrolls. Extracted from the shipped <code>CardScroller</code> primitive (<code>src/renderer/src/components/ui/CardScroller.tsx</code>). New chat's starting points are the first use.</p>
+<h4>Anatomy</h4>
+<p>| Part | Class | Required | |---|---|---| | Heading | <code>.ds-card-scroller-head</code> | yes — what the tiles are, with an optional leading glyph | | Scroll buttons | <code>.ds-card-scroller-head .ds-icon-button</code> | only while the row overflows | | Row | <code>.ds-card-scroller-row</code> | yes — one line of [card buttons](../card-button/component.md) |</p>
+<h4>Variants</h4>
+<p>None. A row is three tiles wide in a column of 520px or more, and most of one tile wide below that. Either way the next tile's edge shows in the fade, so the last whole tile is never faded and the row says it goes on.</p>
+<h4>States</h4>
+<ul><li><strong>Fits</strong>: no buttons, no fade. Nothing says it scrolls, because it does not.</li><li><strong>Overflowing</strong>: each edge with tiles past it fades to transparent, and the two buttons appear. A button with nothing past it in its direction is disabled.</li><li><strong>Reduced motion</strong>: a press jumps a page rather than gliding one.</li></ul>
+<h4>Usage</h4>
+<p>The scrollbar stays out of it, as a [tab strip's](../tabs/component.md) does: the fade and the buttons are what say there is more. Unlike a tab strip it leaves a vertical wheel alone: the row sits in a page that scrolls, and a person scrolling that page should not be caught by the tiles passing under the pointer.</p>
+<p>Use it for a handful of optional things to try, where seeing them all at once does not matter. A choice someone has to compare side by side belongs in a grid. Tiles in a row keep <code>card-button</code>'s rule: hover changes the ground and nothing else.</p>
+<h4>Accessibility</h4>
+<p>The row is a <code>section</code> named by its heading. The tiles stay in reading order and take focus normally, so tabbing through them brings each one into view; a person on a keyboard never needs the buttons. The buttons are named &quot;Scroll back&quot; and &quot;Scroll on&quot;, and a disabled one says there is nothing more that way.</p>
+</div>
+</div>
+<details class="catalog-source"><summary>components/card-scroller/component.css</summary><pre><code>/* Card scroller — a heading over a row of tiles that scrolls sideways. Extracted
+ * from the shipped `CardScroller` primitive
+ * (src/renderer/src/components/ui/CardScroller.tsx). */
+
+.ds-card-scroller {
+  container-type: inline-size;
+}
+
+.ds-card-scroller-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sem-space-sm);
+  height: var(--sem-size-control-sm);
+  padding-inline: var(--sem-space-2xs);
+  color: var(--sem-color-text-muted);
+  font-family: var(--sem-font-family-ui);
+  font-size: var(--sem-font-size-meta);
+  font-weight: var(--sem-font-weight-medium);
+}
+
+.ds-card-scroller-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 85%;
+  gap: var(--sem-space-sm);
+  margin-block-start: var(--sem-space-2xs);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ds-card-scroller-row::-webkit-scrollbar {
+  display: none;
+}
+
+@container (min-width: 520px) {
+  .ds-card-scroller-row {
+    grid-auto-columns: calc((100% - 2 * var(--sem-space-sm) - var(--sem-space-3xl)) / 3);
+  }
+}
+</code></pre></details>
+<details class="catalog-source"><summary>components/card-scroller/component.html (demo)</summary><pre><code>&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+  &lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot; /&gt;
+    &lt;title&gt;Card scroller&lt;/title&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../../foundations/tokens.css&quot; /&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;../card-button/component.css&quot; /&gt;
+    &lt;link rel=&quot;stylesheet&quot; href=&quot;component.css&quot; /&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;section class=&quot;ds-card-scroller&quot; aria-label=&quot;Things to try&quot;&gt;
+      &lt;div class=&quot;ds-card-scroller-head&quot;&gt;&lt;span&gt;Things to try&lt;/span&gt;&lt;/div&gt;
+      &lt;div class=&quot;ds-card-scroller-row&quot;&gt;
+        &lt;button class=&quot;ds-card-button&quot; type=&quot;button&quot;&gt;Check the docs against the code&lt;/button&gt;
+        &lt;button class=&quot;ds-card-button&quot; type=&quot;button&quot;&gt;Find the untested paths&lt;/button&gt;
+        &lt;button class=&quot;ds-card-button&quot; type=&quot;button&quot;&gt;Audit dependencies&lt;/button&gt;
+        &lt;button class=&quot;ds-card-button&quot; type=&quot;button&quot;&gt;Triage the backlog&lt;/button&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+  &lt;/body&gt;
 &lt;/html&gt;
 </code></pre></details>
 </div>

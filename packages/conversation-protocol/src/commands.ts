@@ -151,7 +151,7 @@ export type ConversationQuestionAnswers = Record<string, string>
  *   Needs `conversation-restart-session`; a desktop without it refuses the
  *   kind as `unsupported_command`.
  * - `send` may say the `mode` the turn runs in, as the desktop's own chat
- *   sends one: `ask` answers without changing anything, `plan` has the agent
+ *   sends one: `ask` asks the CLI to answer without changing anything, `plan` has the agent
  *   plan and wait for the plan to be approved, where the chat's provider
  *   plans (the listed chat's `capabilities.planMode`). Absent, or `default`,
  *   the turn runs as every send did. Never beside `queue`: a held message

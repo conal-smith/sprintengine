@@ -23,10 +23,10 @@
       "args": ["--auto-review"]
     },
     "ask": {
-      "$comment": "`cursor-agent --help`: `--mode <mode>` with choices \"plan\" and \"ask\", both read-only (checked against CLI 2026.10.22). At the Manual level though Cursor has no Manual of its own: neither mode can change anything, so a launch under any cap may run them. Launched by naming the mode, never by the `manual` preset.",
+      "$comment": "`cursor-agent --help`: `--mode <mode>` with choices \"plan\" and \"ask\", both read-only (checked against CLI 2026.10.22). At the Manual level though Cursor has no Manual of its own: the CLI holds both modes to reads, so a launch under any cap may run them. That is Cursor's promise and not a lock: a model running under it has written a file when told to. Launched by naming the mode, never by the `manual` preset.",
       "label": "Ask",
       "summary": "Read-only: answers without changing anything.",
-      "description": "Cursor’s Ask mode: it reads and answers, and cannot edit files or run commands that change anything.",
+      "description": "Cursor’s Ask mode: it reads and answers rather than editing files or running commands that change anything.",
       "level": "manual",
       "readOnly": true,
       "args": ["--mode", "ask"]

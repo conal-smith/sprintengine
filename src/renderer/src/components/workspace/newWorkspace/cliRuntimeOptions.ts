@@ -36,6 +36,8 @@ export type AgentCliCatalogOption = {
   // Set when this runtime is a hosted model (another CLI's binary redirected at
   // a provider endpoint); pickers group these under "Models via Claude Code".
   hostedVia?: PluginCatalogEntry['hostedVia']
+  // The runtime needs a credential of its own before it can start at all.
+  needsCredential?: true
   // Detected install state, attached once availability is known. `undefined`
   // means "not probed yet"; deployment surfaces hide only options that are
   // explicitly `installed === false` (see filterCatalogByAvailability).
@@ -347,9 +349,25 @@ export function buildAgentCliCatalog(
       ...(modelSelection ? { modelSelection } : {}),
       ...(plugin.reasoningSelection ? { reasoningSelection: plugin.reasoningSelection } : {}),
       ...(plugin.hostedVia ? { hostedVia: plugin.hostedVia } : {}),
+      ...(plugin.auth ? { needsCredential: true as const } : {}),
     })
   }
   return options
+}
+
+/**
+ * The options a launch can actually start. A runtime that needs a key rides
+ * another CLI's binary, so it reads as installed the moment that CLI is, and
+ * offering it would put a provider nobody set up in every picker, to fail at
+ * launch. It joins the picker once its key is saved in Settings. `withKey` is
+ * null until that is known, and a picker then leaves every option in.
+ */
+export function withoutUnkeyedRuntimes(
+  options: AgentCliCatalogOption[],
+  withKey: ReadonlySet<string> | null,
+): AgentCliCatalogOption[] {
+  if (!withKey) return options
+  return options.filter((option) => !option.needsCredential || withKey.has(option.value))
 }
 
 // Effective model for a launch surface: the surface's own override only when

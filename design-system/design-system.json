@@ -21,6 +21,7 @@
       "board-lane",
       "button",
       "card-button",
+      "card-scroller",
       "check-row",
       "checkbox",
       "chip-button",

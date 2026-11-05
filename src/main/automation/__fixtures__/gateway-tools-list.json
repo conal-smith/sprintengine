@@ -194,7 +194,7 @@
     },
     {
       "name": "subagent.start",
-      "sha256": "5ec3a35194825e8eb063550d120732448bb9eee6d8ec76e65d4576de8101604a"
+      "sha256": "f7594929278f95ad98484da5553f4a017d58a84866e484361576e03899bb7164"
     },
     {
       "name": "subagent.status",
@@ -270,7 +270,7 @@
     },
     {
       "name": "agent.launch",
-      "sha256": "ac3c7881083621f4f85d3b3ef6e0cf41fc8de954a1606edb6bfa49bf0d196087"
+      "sha256": "c0938b85a46733e589649d4514352050b28180f006fd8463c8c6d151789e6043"
     },
     {
       "name": "agent.status",
@@ -636,7 +636,7 @@
     },
     {
       "name": "subagent.start",
-      "sha256": "5ec3a35194825e8eb063550d120732448bb9eee6d8ec76e65d4576de8101604a"
+      "sha256": "f7594929278f95ad98484da5553f4a017d58a84866e484361576e03899bb7164"
     },
     {
       "name": "subagent.status",
@@ -712,7 +712,7 @@
     },
     {
       "name": "agent.launch",
-      "sha256": "ac3c7881083621f4f85d3b3ef6e0cf41fc8de954a1606edb6bfa49bf0d196087"
+      "sha256": "c0938b85a46733e589649d4514352050b28180f006fd8463c8c6d151789e6043"
     },
     {
       "name": "agent.status",

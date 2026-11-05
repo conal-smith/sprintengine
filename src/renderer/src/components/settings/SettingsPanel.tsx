@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { VersionControlProviderId, VersionControlProviderProbe } from '../../../../shared/version-control'
 import { useWorkspaceStore } from '../../store/workspaceStore'
+import { forceCliModelRefresh } from '../../store/cliModelDiscovery'
 import type { ChatListView } from '../../store/slices/settingsSlice'
 import { getRendererHost, selectModuleEnabled } from '../../modules'
 import type { RegisteredSettingsSection } from '../../modules/renderer-host'
@@ -414,7 +415,7 @@ function AgentCliBand({
       meta={meta}
       actions={
         <>
-          <Tooltip content="Re-check every CLI now">
+          <Tooltip content="Re-check every CLI and its models now">
             <IconButton
               aria-label={rechecking ? 'Re-checking every CLI' : 'Re-check every CLI now'}
               disabled={rechecking}
@@ -862,6 +863,9 @@ export default function SettingsPanel({
     try {
       await refreshCliVersionAdvisories({ detect: true, ...(checkCliVersions ? { force: true } : {}) })
       await refreshCliAvailability({ cliRuntimes })
+      // After detection, so a CLI updated or signed in since is asked as it is
+      // now, and what it lists replaces what the pickers hold.
+      await forceCliModelRefresh(useWorkspaceStore)
       reloadAgentsMachine()
     } finally {
       setAgentsRechecking(false)
