@@ -17,6 +17,26 @@ const languages = {
   rust: () => import('shiki/langs/rust.mjs'),
   go: () => import('shiki/langs/go.mjs'),
   sql: () => import('shiki/langs/sql.mjs'),
+  java: () => import('shiki/langs/java.mjs'),
+  kotlin: () => import('shiki/langs/kotlin.mjs'),
+  swift: () => import('shiki/langs/swift.mjs'),
+  c: () => import('shiki/langs/c.mjs'),
+  cpp: () => import('shiki/langs/cpp.mjs'),
+  csharp: () => import('shiki/langs/csharp.mjs'),
+  php: () => import('shiki/langs/php.mjs'),
+  ruby: () => import('shiki/langs/ruby.mjs'),
+  fish: () => import('shiki/langs/fish.mjs'),
+  powershell: () => import('shiki/langs/powershell.mjs'),
+  toml: () => import('shiki/langs/toml.mjs'),
+  ini: () => import('shiki/langs/ini.mjs'),
+  xml: () => import('shiki/langs/xml.mjs'),
+  scss: () => import('shiki/langs/scss.mjs'),
+  mdx: () => import('shiki/langs/mdx.mjs'),
+  graphql: () => import('shiki/langs/graphql.mjs'),
+  dockerfile: () => import('shiki/langs/dockerfile.mjs'),
+  makefile: () => import('shiki/langs/makefile.mjs'),
+  latex: () => import('shiki/langs/latex.mjs'),
+  tex: () => import('shiki/langs/tex.mjs'),
 } as const
 type Language = keyof typeof languages
 const aliases: Record<string, string> = {
@@ -29,6 +49,14 @@ const aliases: Record<string, string> = {
   py: 'python',
   md: 'markdown',
   rs: 'rust',
+  kt: 'kotlin',
+  'c++': 'cpp',
+  cs: 'csharp',
+  rb: 'ruby',
+  ps1: 'powershell',
+  gql: 'graphql',
+  docker: 'dockerfile',
+  make: 'makefile',
 }
 export function normalizeCodeLanguage(language = ''): Language | null {
   const name = language.toLowerCase().trim()

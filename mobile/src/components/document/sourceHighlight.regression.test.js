@@ -9,6 +9,7 @@ test("native highlighting preserves exact source across supported grammars", () 
     ["python", "def example():\n  # note\n  return 'yes'\n"],
     ["json", '{"count":42,"ready":true}'],
     ["bash", "# note\necho 'hello'\n"],
+    ["java", 'public class Hello {\n  // note\n  int answer = 42;\n}\n'],
     ["diff", "--- a/file\n+++ b/file\n-old\n+new\n"],
     ["js", "/* unclosed\ncomment"],
     ["ts", "'unclosed\\"],
