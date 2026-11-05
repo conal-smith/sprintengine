@@ -9,12 +9,16 @@ import type { AgentCli } from '../../../types/workspace'
  * in the app. Null for an agent with no CLI of its own to stand on.
  */
 export function chatEngine(
-  agent: Pick<AgentState, 'cli' | 'conversation'> | undefined,
-): { cli: AgentCli; model: string | null; reasoning: null } | null {
+  agent: Pick<AgentState, 'cli' | 'conversation' | 'conversationReasoningEffort'> | undefined,
+): { cli: AgentCli; model: string | null; reasoning: string | null } | null {
   const cli = cliForConversationProvider(agent?.conversation?.providerId) ?? agent?.cli
   if (!cli) return null
   const modelId = agent?.conversation?.modelId
-  return { cli, model: modelId && modelId !== CONVERSATION_DEFAULT_MODEL_ID ? modelId : null, reasoning: null }
+  return {
+    cli,
+    model: modelId && modelId !== CONVERSATION_DEFAULT_MODEL_ID ? modelId : null,
+    reasoning: agent?.conversationReasoningEffort ?? null,
+  }
 }
 
 /** The engine of the chat in focus in a workspace, read when a new tab mounts. */

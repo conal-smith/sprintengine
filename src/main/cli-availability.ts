@@ -34,12 +34,13 @@ import { listPluginRegistryEntries } from './plugin-registry-instance'
 // "Not installed" is the one answer that goes stale in a way nobody can see: a
 // CLI updated in a terminal is absent for a moment, and one installed from a
 // terminal arrives with no event. Held for good, the CLI would stay out of
-// every picker until Re-check, so that answer is good for two minutes; a
-// CLI that is there stays cached, and an absent one costs no process to look
-// for again. A launch of a CLI believed missing looks again before refusing
-// too (see `preflightAgentCliLaunch`).
+// every picker until Re-check, so that answer goes stale, while a CLI that is
+// there stays cached. On macOS and Linux looking for an absent CLI starts no
+// process, so two minutes costs nothing; on Windows it starts a PowerShell or a
+// `wsl.exe` for each machine, so it waits longer. A launch of a CLI believed
+// missing looks again before refusing too (see `preflightAgentCliLaunch`).
 const DEFAULT_CACHE_TTL_MS = Number.POSITIVE_INFINITY
-const NOT_INSTALLED_TTL_MS = 2 * 60 * 1000
+const NOT_INSTALLED_TTL_MS = (process.platform === 'win32' ? 15 : 2) * 60 * 1000
 
 const KEY_SEP = '\0'
 

@@ -592,6 +592,8 @@ test('pre-flight resolves against the command override', async () => {
 })
 
 test('"not installed" goes stale in minutes, so an update in a terminal cannot hide a CLI until Re-check', async () => {
+  // Past the longer wait a Windows machine takes, so this reads the same on each.
+  const staleAfter = 15 * 60 * 1000 + 1
   clearCliAvailabilityCache()
   let installed = false
   let clock = 1000
@@ -609,7 +611,7 @@ test('"not installed" goes stale in minutes, so an update in a terminal cannot h
   assert.equal(probes, 1, 'held between the reads a burst of focus changes makes')
 
   installed = true
-  clock += 2 * 60 * 1000 + 1
+  clock += staleAfter
   const later = await detectAgentCliAvailability({ cliRuntimes: {} }, deps)
   assert.equal(later.codex?.installed, true)
 

@@ -267,7 +267,7 @@ export type NewAgentPanelProps = {
    * opened beside a chat stands on that chat's, without moving the remembered
    * one; the first pick here retires it.
    */
-  initialEngine?: { cli: AgentCli; model: string | null; reasoning: null } | null
+  initialEngine?: { cli: AgentCli; model: string | null; reasoning: string | null } | null
   /** The app-wide default a model row nobody has set still resolves to; the
    *  picker's footer writes per-row, so this is a fallback, never what it edits. */
   permissionPreset: CliPermissionPreset
