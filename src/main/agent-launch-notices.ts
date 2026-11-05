@@ -142,8 +142,11 @@ export type AgentLaunchNoticesDeps = {
    * Where a sub-agent stands as a notice about it goes out, for what a queue
    * has gone stale on. Absent, or unknown, the notice goes as it was queued.
    */
-  readChild?: (child: { workspaceId: string; agentId: string; sessionId: string }) =>
-    { waiting: boolean; end?: { status: 'completed' | 'failed' | 'stopped'; error?: string } } | undefined
+  readChild?: (child: {
+    workspaceId: string
+    agentId: string
+    sessionId: string
+  }) => { waiting: boolean; end?: { status: 'completed' | 'failed' | 'stopped'; error?: string } } | undefined
   /**
    * Whether a provider is out of its plan's usage now, and when that lifts
    * (usage-limits/store.ts). Absent, nothing is held for a limit.
@@ -183,8 +186,12 @@ export type AgentLaunchNotices = {
    * so the notice saying the same is not sent.
    */
   dismiss(sessionId: string): void
-  /** Someone stopped this sub-agent, so what is queued about it goes and nothing more is said. */
-  subagentStopped(sessionId: string): void
+  /**
+   * Someone stopped this sub-agent, so what is queued about it goes and nothing
+   * more is said. Named by the chat, as the session may be a newer one than it
+   * was linked under: a follow-up to a rested sub-agent starts a new session.
+   */
+  subagentStopped(chat: { workspaceId: string; agentId: string }): void
   /** The computer woke or was unlocked: a timer stood still while it slept, so the holds read the clock again. */
   wake(): void
   /** Bring back what was kept before the app last quit. A link made since start wins over one read back. */
@@ -413,7 +420,7 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
           // that tells the parent nothing, and when the person pressed Stop on
           // the parent it would start the turn they just stopped all over.
           if (child.identity.subagent && turnWasInterrupted(event)) {
-            subagentStopped(child.identity.sessionId)
+            markStopped(child)
             break
           }
           reportTurnEnd(child, event.type === 'turn_failed' ? 'failed' : 'finished')
@@ -449,11 +456,13 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
   }
 
   function conversationChildOf(event: ConversationEvent): ChildLink | undefined {
-    const bySession = children.get(event.sessionId)
-    if (bySession) return bySession
+    return children.get(event.sessionId) ?? chatChildOf(event)
+  }
+
+  function chatChildOf(chat: { workspaceId: string; agentId: string }): ChildLink | undefined {
     for (const child of children.values()) {
       const { transport, workspaceId, agentId } = child.identity
-      if (transport === 'conversation' && workspaceId === event.workspaceId && agentId === event.agentId) return child
+      if (transport === 'conversation' && workspaceId === chat.workspaceId && agentId === chat.agentId) return child
     }
     return undefined
   }
@@ -524,13 +533,16 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
    * does not resolve an approval (the interrupt drops it unanswered), so this
    * is what takes the `waiting` back. It stays linked: a follow-up resumes it.
    */
-  function subagentStopped(sessionId: string): void {
-    const child = children.get(sessionId)
-    if (!child) return
+  function markStopped(child: ChildLink): void {
     child.reported = 'stopped'
     child.dismissed = false
-    parents.get(child.parentKey)?.pending.delete(sessionId)
+    parents.get(child.parentKey)?.pending.delete(child.identity.sessionId)
     save()
+  }
+
+  function subagentStopped(chat: { workspaceId: string; agentId: string }): void {
+    const child = chatChildOf(chat)
+    if (child) markStopped(child)
   }
 
   // ── Parents ──────────────────────────────────────────────────────────────

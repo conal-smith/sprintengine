@@ -1325,9 +1325,13 @@ export function createAppServices(
     readChild: (child) => {
       const agent = workspaceRegistry.getRecord(child.workspaceId)?.agents[child.agentId]
       if (!agent?.subagentOf) return undefined
-      const listed = conversations.listSessions()
-      const summary = listed.ok ? listed.sessions.find((session) => session.sessionId === child.sessionId) : undefined
-      const phase = summary ? conversationSummaryPhase(summary) : null
+      // By the chat, not the session it was linked under: a follow-up to a
+      // rested sub-agent starts a new session. None on record says nothing
+      // about where it stands, so the notice goes as queued.
+      const listed = conversations.listSessions({ workspaceId: child.workspaceId, agentId: child.agentId })
+      const summary = listed.ok ? listed.sessions.sort((a, b) => b.updatedAt - a.updatedAt)[0] : undefined
+      if (!summary) return undefined
+      const phase = conversationSummaryPhase(summary)
       return {
         waiting: phase === 'waiting_for_approval' || phase === 'waiting_for_input',
         ...(agent.subagentEnd ? { end: agent.subagentEnd } : {}),
@@ -1347,7 +1351,7 @@ export function createAppServices(
       void writeDiagnosticLog({ level: 'info', source: 'workspace', title: 'Launch notices', message })
     },
   })
-  subagents.onStopped((sessionId) => agentLaunchNotices.subagentStopped(sessionId))
+  subagents.onStopped((chat) => agentLaunchNotices.subagentStopped(chat))
   void agentLaunchNotices.restore()
   // A hold's timer stood still while the computer slept; waking reads the clock again.
   powerActivity.onResume(() => agentLaunchNotices.wake())
