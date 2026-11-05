@@ -1322,6 +1322,17 @@ export function createAppServices(
         : undefined
     },
     readSubagentResult: (child) => subagents.result(child),
+    readChild: (child) => {
+      const agent = workspaceRegistry.getRecord(child.workspaceId)?.agents[child.agentId]
+      if (!agent?.subagentOf) return undefined
+      const listed = conversations.listSessions()
+      const summary = listed.ok ? listed.sessions.find((session) => session.sessionId === child.sessionId) : undefined
+      const phase = summary ? conversationSummaryPhase(summary) : null
+      return {
+        waiting: phase === 'waiting_for_approval' || phase === 'waiting_for_input',
+        ...(agent.subagentEnd ? { end: agent.subagentEnd } : {}),
+      }
+    },
     usageLimit: (provider) => usageRateLimit(provider),
     onUsageLimitsChanged: (listener) => {
       usageLimitsStore().onChanged(listener)
@@ -1336,6 +1347,7 @@ export function createAppServices(
       void writeDiagnosticLog({ level: 'info', source: 'workspace', title: 'Launch notices', message })
     },
   })
+  subagents.onStopped((sessionId) => agentLaunchNotices.subagentStopped(sessionId))
   void agentLaunchNotices.restore()
   // A hold's timer stood still while the computer slept; waking reads the clock again.
   powerActivity.onResume(() => agentLaunchNotices.wake())

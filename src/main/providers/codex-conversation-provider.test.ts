@@ -628,6 +628,20 @@ test('bypass is YOLO, auto is the workspace sandbox with auto-review past it, ma
   expect(codexPermissionPolicy('manual', 'workspace')).toMatchObject({ approvalPolicy: 'untrusted' })
 })
 
+test('a read-only chat on Manual runs ask with approvals off, so a refused action fails instead of stalling', async () => {
+  const f = fixture()
+  expect(f.adapter.capabilities?.askMode).toBe(true)
+  await f.adapter.startSession({ ...f.input, permissionPreset: 'manual' })
+  const done = f.send(undefined, 'ask')
+  await f.started
+  expect(f.calls.find((call) => call.method === 'turn/start')?.params).toMatchObject({
+    approvalPolicy: 'never',
+    sandboxPolicy: { type: 'readOnly', networkAccess: false },
+  })
+  await f.message({ method: 'turn/completed', params: { threadId: 'native-thread', turn: { status: 'completed' } } })
+  await done
+})
+
 test('each preset rides thread start and every turn', async () => {
   for (const [permissionPreset, approvalPolicy, approvalsReviewer, sandbox, type] of [
     ['auto', 'on-request', 'auto_review', 'workspace-write', 'workspaceWrite'],

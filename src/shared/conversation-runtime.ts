@@ -575,6 +575,9 @@ export type ConversationCapabilities = {
   approvals: boolean
   questions: boolean
   planMode: boolean
+  // Runs `ask` turns read-only without planning: a provider with `planMode`
+  // has that already, on the same read-only channel.
+  askMode?: boolean
   images: boolean
   // `native`: the provider loads attached skills itself. `context`: the
   // runtime delivers them, as the CLI's own invocation by name when a CLI
@@ -718,3 +721,13 @@ export type ConversationSubscribeInput = {
 }
 export type ConversationLoadEarlierInput = { key: ConversationKey; beforeCursor: number; turnLimit?: number }
 export type ConversationPageResult = { ok: true; page: ConversationPage } | { ok: false; message: string }
+
+/** Whether a provider can run a turn in `mode`. Any mode but these two is a plain turn. */
+export function runsTurnMode(
+  capabilities: Pick<ConversationCapabilities, 'planMode' | 'askMode'> | undefined,
+  mode: string | undefined,
+): boolean {
+  if (mode === 'plan') return capabilities?.planMode === true
+  if (mode === 'ask') return capabilities?.planMode === true || capabilities?.askMode === true
+  return true
+}

@@ -56,6 +56,8 @@ export type SubagentLifecycle = {
   reconcile(): void
   /** Stop one, as `subagent.cancel` or its parent's stop does. Ended already, nothing changes. */
   stop(chat: ChatRef): Promise<void>
+  /** Hear each sub-agent stopped on purpose: nothing about one is news to its parent (agent-launch-notices.ts). */
+  onStopped(listener: (sessionId: string) => void): void
   /** Its first message never went: it failed before it began. */
   fail(chat: ChatRef, message: string): void
   /** Its final reply, read from its transcript. Null while it has none. */
@@ -77,6 +79,7 @@ export function createSubagentLifecycle(deps: SubagentLifecycleDeps): SubagentLi
     })
 
   const agentOf = (chat: ChatRef) => deps.agentsOf(chat.workspaceId)?.[chat.agentId]
+  const stoppedListeners = new Set<(sessionId: string) => void>()
 
   function childrenOf(chat: ChatRef): ChatRef[] {
     return Object.entries(deps.agentsOf(chat.workspaceId) ?? {})
@@ -96,6 +99,7 @@ export function createSubagentLifecycle(deps: SubagentLifecycleDeps): SubagentLi
     // Before the interrupt, so the turn it ends reads as stopped, not failed.
     end(chat, 'stopped', now())
     const session = deps.session(chat)
+    if (session) for (const listener of stoppedListeners) listener(session.sessionId)
     if (!session || session.status === 'stopped') return
     if (session.status !== 'ready' || session.turnStartedAt !== undefined) {
       await deps.interrupt(session.sessionId).catch(() => undefined)
@@ -183,6 +187,7 @@ export function createSubagentLifecycle(deps: SubagentLifecycleDeps): SubagentLi
     onAgentsChanged,
     reconcile,
     stop,
+    onStopped: (listener) => void stoppedListeners.add(listener),
     fail: (chat, message) => end(chat, 'failed', now(), message),
     result,
   }

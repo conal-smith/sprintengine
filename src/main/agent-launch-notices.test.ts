@@ -5,7 +5,12 @@ import type { AgentPhase, TerminalSessionSnapshot } from '../shared/electron-api
 import type { AgentPhaseEvent } from '../shared/agent-runtime'
 import type { ConversationEvent, ConversationSessionSummary } from '../shared/conversation-runtime'
 import { createAgentControlPlane } from './agent-control-plane'
-import { composeLaunchNotice, createAgentLaunchNotices, launchingAgentOf } from './agent-launch-notices'
+import {
+  composeLaunchNotice,
+  createAgentLaunchNotices,
+  launchingAgentOf,
+  type AgentLaunchNoticesDeps,
+} from './agent-launch-notices'
 
 const PASTE_START = '\x1b[200~'
 
@@ -108,6 +113,7 @@ function harness(
       workspaceId: string
       agentId: string
     }) => Promise<{ text: string; truncated: boolean } | null>
+    readChild?: AgentLaunchNoticesDeps['readChild']
   } = {},
 ) {
   let clock = 10_000
@@ -162,6 +168,7 @@ function harness(
     isSettled: (workspaceId) => options.settled?.has(workspaceId) ?? false,
     ...(options.storage ? { storage: options.storage } : {}),
     ...(options.readSubagentResult ? { readSubagentResult: options.readSubagentResult } : {}),
+    ...(options.readChild ? { readChild: options.readChild } : {}),
     now: () => clock,
   })
   const setPhase = (sessionId: string, phase: AgentPhase) => {
@@ -969,4 +976,94 @@ test('a sub-agent that was stopped sends no notice: it would wake the parent som
   await settle()
   assert.equal(h.turns.length, 1)
   assert.match(h.turns[0].message, /ended its turn without finishing/u)
+})
+
+const WAITING_ON_REVIEWER = { requestId: 'ask-1' }
+const STOPPED_REVIEWER = { sessionId: 'chat-reviewer', workspaceId: 'ws-1', agentId: 'agent-reviewer' }
+const PILOT = { ...REVIEWER, agentId: 'agent-pilot', sessionId: 'chat-pilot', name: 'Pilot' }
+const PILOT_CHAT = { sessionId: 'chat-pilot', workspaceId: 'ws-1', agentId: 'agent-pilot' }
+
+test('stopping a sub-agent that waits on the person takes its notice back, and nothing is said after', async () => {
+  const h = harness({ chats: [chat({ status: 'ready', phase: 'idle' })] })
+  h.notices.link({ parent: CHAT_PARENT, child: REVIEWER })
+  h.notices.link({ parent: CHAT_PARENT, child: PILOT })
+  h.notices.onConversationEvent(chatEvent('approval_requested', STOPPED_REVIEWER, WAITING_ON_REVIEWER))
+  await settle()
+  assert.equal(h.notices.pendingCount(CHAT_PARENT), 1)
+
+  // The interrupt never resolves the approval: the provider drops it.
+  h.notices.subagentStopped('chat-reviewer')
+  assert.equal(h.notices.pendingCount(CHAT_PARENT), 0)
+  h.notices.onConversationEvent(chatEvent('turn_failed', STOPPED_REVIEWER, { reason: 'interrupted' }))
+  h.notices.onConversationEvent(chatEvent('session_closed', STOPPED_REVIEWER))
+
+  // A sibling's news goes out alone.
+  h.notices.onConversationEvent(chatEvent('turn_completed', PILOT_CHAT))
+  await settle()
+  assert.equal(h.turns.length, 1)
+  assert.doesNotMatch(h.turns[0].message, /waiting for the person/u)
+  assert.doesNotMatch(h.turns[0].message, /Review/u)
+})
+
+test('a sub-agent stopped in its own chat takes back its waiting notice too', async () => {
+  const h = harness({ chats: [chat({ status: 'ready', phase: 'idle' })] })
+  h.notices.link({ parent: CHAT_PARENT, child: REVIEWER })
+  h.notices.onConversationEvent(chatEvent('approval_requested', STOPPED_REVIEWER, WAITING_ON_REVIEWER))
+  h.notices.onConversationEvent(chatEvent('turn_failed', STOPPED_REVIEWER, { reason: 'interrupted' }))
+  await settle()
+  assert.equal(h.notices.pendingCount(CHAT_PARENT), 0)
+})
+
+test('a stopped sub-agent is not reported stopped again after a restart', async () => {
+  const storage = memoryStorage()
+  const before = harness({ storage, chats: [chat({ status: 'ready', phase: 'idle' })] })
+  before.notices.link({ parent: CHAT_PARENT, child: REVIEWER })
+  before.notices.subagentStopped('chat-reviewer')
+  await before.notices.freeze()
+  const after = harness({ storage, chats: [chat({ status: 'ready', phase: 'idle' })] })
+  await after.notices.restore()
+  assert.equal(after.notices.pendingCount(CHAT_PARENT), 0)
+})
+
+test('a follow-up to a stopped sub-agent is news again', async () => {
+  const h = harness({ chats: [chat({ status: 'ready', phase: 'idle' })] })
+  h.notices.link({ parent: CHAT_PARENT, child: REVIEWER })
+  h.notices.subagentStopped('chat-reviewer')
+  h.notices.onConversationEvent(chatEvent('turn_started', STOPPED_REVIEWER))
+  h.notices.onConversationEvent(chatEvent('turn_completed', STOPPED_REVIEWER))
+  await settle()
+  assert.equal(h.turns.length, 1)
+  assert.match(h.turns[0].message, /finished its turn/u)
+})
+
+test('a queued waiting notice is read against the sub-agent as it goes out', async () => {
+  let waiting = true
+  const h = harness({
+    chats: [chat({ status: 'ready', phase: 'idle' })],
+    readChild: () => ({ waiting }),
+  })
+  h.notices.link({ parent: CHAT_PARENT, child: REVIEWER })
+  h.notices.link({ parent: CHAT_PARENT, child: PILOT })
+  h.notices.onConversationEvent(chatEvent('approval_requested', STOPPED_REVIEWER, WAITING_ON_REVIEWER))
+  await settle()
+  assert.equal(h.notices.pendingCount(CHAT_PARENT), 1)
+
+  waiting = false
+  h.notices.onConversationEvent(chatEvent('turn_completed', PILOT_CHAT))
+  await settle()
+  assert.equal(h.turns.length, 1)
+  assert.doesNotMatch(h.turns[0].message, /waiting for the person/u)
+})
+
+test('a sub-agent whose start failed is told as a failure, with why, not as a session that ended', async () => {
+  const h = harness({
+    chats: [chat({ status: 'ready', phase: 'idle' })],
+    readChild: () => ({ waiting: false, end: { status: 'failed', error: 'Model requires a newer Codex.' } }),
+  })
+  h.notices.link({ parent: CHAT_PARENT, child: REVIEWER })
+  h.notices.onConversationEvent(chatEvent('session_closed', STOPPED_REVIEWER))
+  await settle()
+  assert.equal(h.turns.length, 1)
+  assert.match(h.turns[0].message, /failed: Model requires a newer Codex\./u)
+  assert.doesNotMatch(h.turns[0].message, /its session ended/u)
 })
