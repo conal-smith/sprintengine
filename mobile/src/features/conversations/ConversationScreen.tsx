@@ -142,7 +142,7 @@ import { jumpMark, jumpToLatest, newRepliesSince, transcriptScrollable, type Jum
 import { usePhoneConversation } from "./usePhoneConversation";
 import { pendingLine, queuedBubbles, queuedLine, type QueuedBubble } from "./queuedSends";
 import { toolDetailChat } from "./toolOutput";
-import type { CliRuntime } from "./launchLogic";
+import { chatThreadCli, type CliRuntime } from "./launchLogic";
 import { ModelPickerSheet } from "./ModelPickerSheet";
 import { chatProvider, MODEL_SET_ONCE_NOTE, readOnlyProvider } from "./modelPickerLogic";
 
@@ -1196,6 +1196,7 @@ export function ConversationScreen({
           replyText={item.kind === "meta" ? replyText : undefined}
           source={source}
           now={item.kind === "agent" ? now : undefined}
+          cli={item.kind === "agent" ? chatThreadCli(activeThread) : null}
           onOpenAgent={onOpenAgent}
           onOpenPlan={onOpenPlan}
           onOpenChanges={onOpenChanges}
@@ -1819,6 +1820,7 @@ const ConversationItem = memo(function ConversationItem({
   replyText,
   source,
   now,
+  cli,
   onOpenAgent,
   onOpenPlan,
   onOpenChanges,
@@ -1833,6 +1835,8 @@ const ConversationItem = memo(function ConversationItem({
   source: StepDetailSource;
   /** Only an agent's card reads it. */
   now?: number;
+  /** The harness the chat runs on; only an agent's card reads it. */
+  cli: string | null;
   onOpenAgent?: (laneId: string) => void;
   onOpenPlan?: (requestId: string) => void;
   onOpenChanges?: (turnSeq: number) => void;
@@ -1901,6 +1905,7 @@ const ConversationItem = memo(function ConversationItem({
       <AgentLaneCard
         lane={row.lane}
         now={now ?? Date.now()}
+        cli={cli}
         onOpen={onOpenAgent ? () => onOpenAgent(row.lane.id) : undefined}
       />
     );
