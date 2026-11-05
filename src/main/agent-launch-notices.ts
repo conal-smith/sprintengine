@@ -139,6 +139,15 @@ export type AgentLaunchNoticesDeps = {
     agentId: string
   }) => Promise<{ text: string; truncated: boolean } | null>
   /**
+   * Where a sub-agent stands as a notice about it goes out, for what a queue
+   * has gone stale on. Absent, or unknown, the notice goes as it was queued.
+   */
+  readChild?: (child: {
+    workspaceId: string
+    agentId: string
+    sessionId: string
+  }) => { waiting: boolean; end?: { status: 'completed' | 'failed' | 'stopped'; error?: string } } | undefined
+  /**
    * Whether a provider is out of its plan's usage now, and when that lifts
    * (usage-limits/store.ts). Absent, nothing is held for a limit.
    */
@@ -177,6 +186,12 @@ export type AgentLaunchNotices = {
    * so the notice saying the same is not sent.
    */
   dismiss(sessionId: string): void
+  /**
+   * Someone stopped this sub-agent, so what is queued about it goes and nothing
+   * more is said. Named by the chat, as the session may be a newer one than it
+   * was linked under: a follow-up to a rested sub-agent starts a new session.
+   */
+  subagentStopped(chat: { workspaceId: string; agentId: string }): void
   /** The computer woke or was unlocked: a timer stood still while it slept, so the holds read the clock again. */
   wake(): void
   /** Bring back what was kept before the app last quit. A link made since start wins over one read back. */
@@ -201,6 +216,8 @@ export type LaunchNotice = {
   reply?: string
   /** A sub-agent's result was cut from the start to fit. */
   replyTruncated?: true
+  /** Why a sub-agent failed, when its record says. */
+  reason?: string
 }
 
 type ChildLink = {
@@ -402,7 +419,10 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
           // A sub-agent is stopped by its parent, or with it. A notice about
           // that tells the parent nothing, and when the person pressed Stop on
           // the parent it would start the turn they just stopped all over.
-          if (child.identity.subagent && turnWasInterrupted(event)) break
+          if (child.identity.subagent && turnWasInterrupted(event)) {
+            markStopped(child)
+            break
+          }
           reportTurnEnd(child, event.type === 'turn_failed' ? 'failed' : 'finished')
           break
         case 'session_closed':
@@ -436,11 +456,13 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
   }
 
   function conversationChildOf(event: ConversationEvent): ChildLink | undefined {
-    const bySession = children.get(event.sessionId)
-    if (bySession) return bySession
+    return children.get(event.sessionId) ?? chatChildOf(event)
+  }
+
+  function chatChildOf(chat: { workspaceId: string; agentId: string }): ChildLink | undefined {
     for (const child of children.values()) {
       const { transport, workspaceId, agentId } = child.identity
-      if (transport === 'conversation' && workspaceId === event.workspaceId && agentId === event.agentId) return child
+      if (transport === 'conversation' && workspaceId === chat.workspaceId && agentId === chat.agentId) return child
     }
     return undefined
   }
@@ -463,10 +485,12 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
   function reportTurnEnd(child: ChildLink, kind: LaunchNoticeKind): void {
     const tail = deps.readChatReply?.(child.identity.sessionId)
     if (!child.identity.subagent || !deps.readSubagentResult) return report(child, kind, tail)
+    const stoppedBefore = child.reported === 'stopped'
     void deps.readSubagentResult(child.identity).then(
       (result) => {
         // Gone or told by now, the read has nothing to add.
         if (children.get(child.identity.sessionId) !== child) return
+        if (child.reported === 'stopped' && !stoppedBefore) return
         report(child, kind, result?.text ?? tail, result?.truncated)
       },
       () => report(child, kind, tail),
@@ -501,6 +525,24 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     if (pending?.delete(sessionId)) save()
     // Told nothing yet: the report still reading its result stops at this.
     else if (child.reported === null) child.dismissed = true
+  }
+
+  /**
+   * A sub-agent someone stopped: whoever did knows, so nothing about it is
+   * news, and a question it left queued can no longer be answered. Stopping
+   * does not resolve an approval (the interrupt drops it unanswered), so this
+   * is what takes the `waiting` back. It stays linked: a follow-up resumes it.
+   */
+  function markStopped(child: ChildLink): void {
+    child.reported = 'stopped'
+    child.dismissed = false
+    parents.get(child.parentKey)?.pending.delete(child.identity.sessionId)
+    save()
+  }
+
+  function subagentStopped(chat: { workspaceId: string; agentId: string }): void {
+    const child = chatChildOf(chat)
+    if (child) markStopped(child)
   }
 
   // ── Parents ──────────────────────────────────────────────────────────────
@@ -608,6 +650,8 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
       holdUntilReset(parent, limit.resetsAt)
       return
     }
+    refreshPending(parent)
+    if (parent.pending.size === 0) return
     // Only the person can answer a waiting child: that alone wakes nobody.
     if (![...parent.pending.values()].some((notice) => notice.kind !== 'waiting')) return
 
@@ -652,6 +696,34 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     for (const notice of batch)
       if (!parent.pending.has(notice.child.sessionId)) parent.pending.set(notice.child.sessionId, notice)
     save()
+  }
+
+  /**
+   * A queue can sit for a long time behind a busy parent, so what it holds is
+   * read against where each sub-agent stands now, and a notice says that
+   * rather than what was true when it was queued.
+   */
+  function refreshPending(parent: ParentState): void {
+    let changed = false
+    for (const [sessionId, notice] of parent.pending) {
+      if (!notice.child.subagent) continue
+      const state = deps.readChild?.(notice.child)
+      if (!state) continue
+      if (notice.kind === 'waiting' && !state.waiting) {
+        parent.pending.delete(sessionId)
+        changed = true
+      } else if (notice.kind === 'stopped' && state.end?.status === 'failed') {
+        // A start that failed takes its session down with it: the failure is
+        // the news, not the session ending.
+        parent.pending.set(sessionId, {
+          ...notice,
+          kind: 'failed',
+          ...(state.end.error ? { reason: state.end.error } : {}),
+        })
+        changed = true
+      }
+    }
+    if (changed) save()
   }
 
   function forgetIfDone(parent: ParentState): void {
@@ -807,6 +879,7 @@ export function createAgentLaunchNotices(deps: AgentLaunchNoticesDeps): AgentLau
     onConversationEvent,
     onChatIdle,
     dismiss,
+    subagentStopped,
     wake,
     restore,
     freeze,
@@ -946,8 +1019,10 @@ function noticeSentence(notice: LaunchNotice): string {
   switch (notice.kind) {
     case 'finished':
       return 'finished its turn.'
-    case 'failed':
-      return 'ended its turn without finishing: it failed or was stopped.'
+    case 'failed': {
+      const reason = notice.reason ? cleanLine(notice.reason, MAX_REPLY_CHARS) : ''
+      return reason ? `failed: ${reason}` : 'ended its turn without finishing: it failed or was stopped.'
+    }
     case 'waiting':
       return 'is waiting for the person: a question or an approval only they can answer.'
     case 'stopped':

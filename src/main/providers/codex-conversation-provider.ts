@@ -1480,6 +1480,7 @@ export function createCodexConversationProvider(
       approvals: true,
       questions: true,
       planMode: false,
+      askMode: true,
       images: true,
       skills: 'context',
       reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
