@@ -135,6 +135,15 @@ export type AgentState = {
   // mode applies only to the sends that read it for themselves.
   conversationModeHeld?: true
   conversationReasoningEffort?: string
+  /**
+   * This chat is a sub-agent of another chat agent in the same workspace,
+   * started for one task (subagent-tools.ts). Written once, when it is created.
+   * It belongs to its parent: the Agents tab lists it there, and no list of a
+   * workspace's chats does.
+   */
+  subagentOf?: { agentId: string; startedAt: number }
+  /** A sub-agent started read-only: `conversationMode` (or Codex's sandbox) holds it there. */
+  subagentReadOnly?: true
   /** Selected context skills apply to every turn until explicitly removed. */
   conversationSkills?: string[]
   cliSessionId?: string
@@ -325,4 +334,9 @@ export function defaultAgent(id: AgentId, name = id): AgentState {
     cliStartupPrompt: undefined,
     backlogItemRef: undefined,
   }
+}
+
+/** Whether an agent record is a sub-agent, which belongs to its parent rather than to the workspace's lists. */
+export function isSubagentRecord(agent: Pick<AgentState, 'subagentOf'> | null | undefined): boolean {
+  return Boolean(agent?.subagentOf)
 }

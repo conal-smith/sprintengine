@@ -52,6 +52,7 @@ export const STUDIO_RESERVED_TOOLSET_NAMES: readonly string[] = [
   'marketplace',
   'module',
   'schedule',
+  'subagent',
   'tailnet',
   'workspace',
   'worktree',

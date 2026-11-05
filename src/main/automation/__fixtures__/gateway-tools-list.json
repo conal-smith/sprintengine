@@ -193,6 +193,18 @@
       "sha256": "617e12674520f14b708021c9e71e45ba1674d7e10aa017030e31424ea86996ca"
     },
     {
+      "name": "subagent.start",
+      "sha256": "5ec3a35194825e8eb063550d120732448bb9eee6d8ec76e65d4576de8101604a"
+    },
+    {
+      "name": "subagent.status",
+      "sha256": "5fae4d0ac3820d466ece3e32dc6e65e632330810a1417f66a480ff95d09111cf"
+    },
+    {
+      "name": "subagent.cancel",
+      "sha256": "0cfc367ca576b79b84b536a7f4b944bef4cd31020bd9088de6864a89b0bca76a"
+    },
+    {
       "name": "conversation.pull_request_state",
       "sha256": "20562a3eed934ba0ab6e00318653579bad222cb6d0f556abfb22da4754145959"
     },
@@ -621,6 +633,18 @@
     {
       "name": "conversation.interrupt",
       "sha256": "617e12674520f14b708021c9e71e45ba1674d7e10aa017030e31424ea86996ca"
+    },
+    {
+      "name": "subagent.start",
+      "sha256": "5ec3a35194825e8eb063550d120732448bb9eee6d8ec76e65d4576de8101604a"
+    },
+    {
+      "name": "subagent.status",
+      "sha256": "5fae4d0ac3820d466ece3e32dc6e65e632330810a1417f66a480ff95d09111cf"
+    },
+    {
+      "name": "subagent.cancel",
+      "sha256": "0cfc367ca576b79b84b536a7f4b944bef4cd31020bd9088de6864a89b0bca76a"
     },
     {
       "name": "conversation.pull_request_state",

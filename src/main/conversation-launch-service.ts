@@ -82,6 +82,9 @@ export type ConversationLaunchWorkspace = {
   agents?: Record<string, { name?: string }>
 }
 
+/** Who a sub-agent's first message is from: Studio, giving it the task, not the person. */
+const SUBAGENT_TASK_ORIGIN = { kind: 'studio', reason: 'subagent-task' } as const
+
 export type ConversationLaunchRequest = {
   /** The workspace the chat joins (or, with `newChat`, whose folder a new one starts in). */
   workspaceId?: string
@@ -153,6 +156,15 @@ export type ConversationLaunchRequest = {
    * refuses the launch (`unsupported_mode`), never running the chat without it.
    */
   mode?: 'default' | 'plan' | 'ask'
+  /**
+   * The chat is a sub-agent of this agent in the same workspace, written on its
+   * record (`AgentState.subagentOf`). Its task is Studio's message, not the
+   * person's, so it moves nothing that follows what the person last wrote.
+   * Read only without `newChat`.
+   */
+  subagentOf?: { agentId: string; startedAt: number }
+  /** A sub-agent started read-only, kept on its record. */
+  subagentReadOnly?: boolean
   /**
    * Tools the chat's session may use without asking, by its CLI's names for
    * them. They hold for the session this launch starts, as `connectorId`'s
@@ -265,7 +277,7 @@ export type ConversationLaunchServiceDeps = {
   send: (
     input: Pick<
       ConversationSendTurnInput,
-      'sessionId' | 'commandId' | 'message' | 'skills' | 'attachments' | 'reasoningEffort' | 'mode'
+      'sessionId' | 'commandId' | 'message' | 'skills' | 'attachments' | 'reasoningEffort' | 'mode' | 'origin'
     >,
   ) => Promise<ConversationSessionActionResult>
   /**
@@ -541,6 +553,7 @@ export function createConversationLaunchService(deps: ConversationLaunchServiceD
     // preset's own mode.
     const ownMode = request.permissionPreset ? parseCliPermissionModeId(request.permissionMode) : permission.mode
     const permissionMode = ownMode && conversationPermissionModes(cli).includes(ownMode) ? ownMode : undefined
+    const subagentOf = newChat ? undefined : request.subagentOf
     const turnMode = request.mode === 'plan' || request.mode === 'ask' ? request.mode : undefined
     if (turnMode && !deps.runsTurnModes?.(providerId)) {
       return { ok: false, code: 'unsupported_mode', message: `A ${cli} chat cannot run in ${turnMode} mode.` }
@@ -635,6 +648,8 @@ export function createConversationLaunchService(deps: ConversationLaunchServiceD
       // by the worktree, not the workspace folder (`conversationWorkingRoot`).
       ...(worktreePath ? { execution: { mode: 'worktree' as const, worktreeId: null, cwd: worktreePath } } : {}),
       ...(skills.length > 0 ? { conversationSkills: skills } : {}),
+      ...(subagentOf ? { subagentOf } : {}),
+      ...(subagentOf && request.subagentReadOnly ? { subagentReadOnly: true as const } : {}),
       ...(request.ownerModuleId?.trim() ? { ownerModuleId: request.ownerModuleId.trim() } : {}),
       ...(request.launchCommandId ? { launchCommandId: request.launchCommandId } : {}),
       ...(newChat && request.scheduledAgentId?.trim() && request.scheduledAgentTag?.trim()
@@ -759,6 +774,7 @@ export function createConversationLaunchService(deps: ConversationLaunchServiceD
             message: prompt,
             ...(turnEffort ? { reasoningEffort: turnEffort } : {}),
             ...(turnMode ? { mode: turnMode } : {}),
+            ...(subagentOf ? { origin: SUBAGENT_TASK_ORIGIN } : {}),
             ...(skills.length > 0 ? { skills: skills.map((id) => ({ id })) } : {}),
             ...(request.attachments?.length ? { attachments: request.attachments } : {}),
           })

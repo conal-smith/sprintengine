@@ -114,7 +114,8 @@ export type ConversationEvent = {
  * with its prompt cache about to expire and was compacted while it was still
  * warm (`auto-compact`, the message being `/compact` itself).
  */
-export type ConversationStudioMessageReason = 'agent-notice' | 'usage-resume' | 'pull-request-watch' | 'auto-compact'
+export type ConversationStudioMessageReason =
+  'agent-notice' | 'usage-resume' | 'pull-request-watch' | 'auto-compact' | 'subagent-task'
 
 /**
  * Who a `user_message` came from when it was not the person: the payload's
@@ -131,6 +132,7 @@ const STUDIO_MESSAGE_REASONS: readonly string[] = [
   'usage-resume',
   'pull-request-watch',
   'auto-compact',
+  'subagent-task',
 ] satisfies ConversationStudioMessageReason[]
 
 /**

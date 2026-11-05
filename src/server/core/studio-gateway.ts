@@ -6,6 +6,7 @@ import {
   createConversationChatTools,
   type ConversationChatControl,
 } from '../../main/automation/conversation-chat-tools'
+import { createSubagentTools } from '../../main/automation/subagent-tools'
 import { LAUNCH_NOTICE_ORIGIN } from '../../main/agent-launch-notices'
 import { searchChatsHere } from '../../main/automation/conversation-search'
 import { isSettledWorkspace, workspaceLastUserMessageAt } from '../../shared/workspace-lifecycle'
@@ -118,6 +119,7 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
   // The GitHub CLI's own sign-in for a host, which is what lets a pull request
   // there be read (`pull_request.link`).
   const gitHubHostToken = createGhHostTokenResolver(sharedGhRunner())
+  const chats = studioChatControl(core)
   const coreTools = [
     ...createConversationTools({
       launch: (request) => core.conversationLaunchService.launch(request),
@@ -169,7 +171,27 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
     // chat here, through the same host a paired device's commands go through.
     ...createConversationChatTools({
       resolveAgentPermissionPreset: core.resolveAgentPermissionPreset,
-      chats: studioChatControl(core),
+      chats,
+    }),
+    // A chat starting a sub-agent of its own, on the same chats and launch.
+    ...createSubagentTools({
+      launch: (request) => core.conversationLaunchService.launch(request),
+      resolveAgentPermissionPreset: core.resolveAgentPermissionPreset,
+      isKnownCli: (cli) => listPluginRegistryEntries().some((entry) => entry.id === cli),
+      displayNames: (cli, modelId) => {
+        const entry = listPluginRegistryEntries().find((candidate) => candidate.id === cli)
+        const option = entry?.modelSelection?.options.find((candidate) => candidate.id === modelId)
+        // An ACP model id carries its settings in brackets, which are no name.
+        return { cli: entry?.displayName ?? cli, model: option?.label ?? modelId?.replace(/\[.*$/u, '') ?? null }
+      },
+      ...(options.linkLaunchedAgent ? { linkLaunchedAgent: options.linkLaunchedAgent } : {}),
+      chats: {
+        ...chats,
+        agentsOf: (workspaceId) => {
+          const record = core.workspaceRegistry.getRecord(workspaceId)
+          return record && !record.remoteOrigin ? record.agents : null
+        },
+      },
     }),
     // A paired desktop's Create PR on one of this machine's chats: the
     // checkout, git, the forge's CLI and the drafting CLI are here, and so is

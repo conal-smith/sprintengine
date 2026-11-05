@@ -13,6 +13,9 @@
 
 ### Added
 
+- **`subagent-task` among a Studio message's reasons.** The task a sub-agent
+  was started with, which is Studio's message and not the person's. A reader
+  that does not know the reason still reads it as Studio's.
 - **A message held for a turn's end carries what a message sent now does.**
   `CONVERSATION_QUEUED_ATTACHMENTS_CAPABILITY`
   (`conversation-queued-attachments`) names a desktop that holds a `send`

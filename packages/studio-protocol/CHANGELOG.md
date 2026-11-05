@@ -15,6 +15,9 @@
   a refusal is still `owner_required` or `scope_required` naming the scope
   (or, for a permission a method adds, that permission:
   `studioRefusedGrantName`).
+- `subagent` among `STUDIO_RESERVED_TOOLSET_NAMES`: `subagent.start`,
+  `subagent.status` and `subagent.cancel`, with which a chat runs a sub-agent
+  of its own, which a Studio serves.
 - `visual` among `STUDIO_RESERVED_TOOLSET_NAMES`: `visual.preview`, which
   draws an agent's ```visual block as the chat will and answers with a
   picture, its height and its console, which a Studio's shell offers.

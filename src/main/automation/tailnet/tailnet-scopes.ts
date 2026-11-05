@@ -110,6 +110,10 @@ const CHAT_TO_CHAT_TOOLS: ReadonlySet<string> = new Set([
   'conversation.read',
   'conversation.wait',
   'conversation.interrupt',
+  // A sub-agent belongs to a chat here, and only a chat here starts one.
+  'subagent.start',
+  'subagent.status',
+  'subagent.cancel',
 ])
 
 /**

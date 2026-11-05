@@ -732,3 +732,19 @@ test('a turn mode the provider cannot run refuses the launch before anything is 
   assert.equal(record.writes.length, 0)
   assert.equal(record.starts.length, 0)
 })
+
+test("a sub-agent is written with its parent, and its task goes as Studio's message", async () => {
+  const { service, record } = harness()
+  const result = await service.launch({
+    workspaceId: 'ws-1',
+    cli: 'cursor',
+    prompt: 'review this',
+    subagentOf: { agentId: 'agent-1', startedAt: 5 },
+    subagentReadOnly: true,
+  })
+  assert.equal(result.ok, true, !result.ok ? result.message : '')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(record.writes[0]?.agent?.subagentOf, { agentId: 'agent-1', startedAt: 5 })
+  assert.equal(record.writes[0]?.agent?.subagentReadOnly, true)
+  assert.deepEqual(record.sends[0]?.origin, { kind: 'studio', reason: 'subagent-task' })
+})
