@@ -343,6 +343,12 @@ export const TAILNET_CAPABILITIES = [
   // one: an older handler skips both arguments and starts the chat elsewhere.
   'new-chat-worktree-name',
   'new-chat-in-worktree',
+  // A paired desktop's New chat offers "No project" on this machine
+  // (2026-11-05): `conversation.create` takes `noProject` in place of a
+  // workspace, and the chat runs in a folder of its own here. An older handler
+  // refuses the missing workspace, so a client leaves the row off rather than
+  // offer one that fails.
+  'new-chat-no-project',
   // A paired desktop's composer offers this machine's skills and MCP servers
   // (2026-10-09): `workspace.extensions` lists a project's skills and, for a
   // CLI, its MCP servers with the connection each last reported; and

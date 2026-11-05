@@ -2265,6 +2265,57 @@ test('NewAgentPanel', async () => {
       resetNewChatDraftsForTests()
     })
 
+    await check('a paired machine offers No project where it takes one, even with no project open', async () => {
+      for (const takes of [true, false]) {
+        seedStore()
+        resetRememberedMachineForTests()
+        meshConnections = [machine('m1', 'Air')]
+        meshBrowseAnswer = (id) => ({
+          connectionId: id,
+          reachable: true,
+          unreachableReason: null,
+          unauthorized: false,
+          scopes: [],
+          workspaces: [],
+          gaps: [],
+          capabilities: takes ? ['conversations', 'new-chat-no-project'] : ['conversations'],
+        })
+        const remoteLaunches: Array<Record<string, unknown>> = []
+        const view = await remoteRender({
+          initialSelection: { kind: 'conversation' },
+          onLaunchRemote: async (launch: Record<string, unknown>) => {
+            remoteLaunches.push(launch)
+          },
+        })
+        await settle()
+        await pickMachine(view, 'Air')
+        await settle()
+        await click(view.container.querySelector<HTMLButtonElement>('[data-project-trigger="true"]'))
+        await settle()
+        const row = [...dom.window.document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find((option) =>
+          (option.textContent ?? '').startsWith('No project'),
+        )
+        assert.equal(Boolean(row), takes, takes ? 'it is offered' : 'a machine that cannot is not offered it')
+        if (takes) {
+          await click(row!)
+          await settle()
+          const field = composerField(view.container)
+          await act(async () => {
+            typeIntoComposer(field, 'draft a note')
+          })
+          await act(async () => {
+            field.dispatchEvent(
+              new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+            )
+          })
+          assert.equal(remoteLaunches.length, 1)
+          assert.equal(remoteLaunches[0]?.noProject, true)
+          assert.equal(remoteLaunches[0]?.remoteWorkspaceRoot, null)
+        }
+        view.unmount()
+      }
+    })
+
     await check('a chat agent can run on a paired machine, and launches there as a chat', async () => {
       seedStore()
       resetRememberedMachineForTests()

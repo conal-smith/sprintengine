@@ -90,7 +90,8 @@ export type ConversationLaunchRequest = {
   workspaceId?: string
   /**
    * Start the chat in a new workspace of its own in this folder, on this
-   * machine, with no workspace to borrow them from: a scheduled agent's run.
+   * machine, with no workspace to borrow them from: a scheduled agent's run,
+   * or a chat started under no project.
    * Takes the place of `workspaceId` and implies `newChat`.
    */
   newChatIn?: {

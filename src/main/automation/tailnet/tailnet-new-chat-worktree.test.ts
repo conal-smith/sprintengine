@@ -186,3 +186,28 @@ test('a chat with no worktree asked for runs in the checkout, and a machine that
     await machine.close()
   }
 })
+
+test('a machine that takes it starts a chat under no project, naming no workspace', async () => {
+  const machine = await pairedMachine(['conversations', 'new-chat-no-project'])
+  try {
+    const created = await machine.mesh.createConversation({ connectionId: machine.connectionId, noProject: true })
+    assert.ok(created.ok, created.ok ? '' : created.message)
+    assert.equal(machine.creates[0]?.noProject, true)
+    assert.equal(machine.creates[0]?.workspaceId, undefined)
+    assert.equal(machine.creates[0]?.newChat, undefined)
+  } finally {
+    await machine.close()
+  }
+})
+
+test('a machine that does not take it is refused here, in words, with nothing asked of it', async () => {
+  const machine = await pairedMachine(['conversations'])
+  try {
+    const created = await machine.mesh.createConversation({ connectionId: machine.connectionId, noProject: true })
+    assert.equal(created.ok, false)
+    assert.equal(!created.ok && created.code, 'no_project_unsupported')
+    assert.equal(machine.creates.length, 0)
+  } finally {
+    await machine.close()
+  }
+})

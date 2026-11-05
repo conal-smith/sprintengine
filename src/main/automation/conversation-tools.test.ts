@@ -21,9 +21,11 @@ const noLifecycle = {
 function tool(
   launch: (request: ConversationLaunchRequest) => Promise<ConversationLaunchResult>,
   ceiling: CliPermissionPreset = 'bypass',
+  makeProjectlessFolder?: (prompt: string | null) => Promise<string>,
 ) {
   const [registration] = createConversationTools({
     launch,
+    ...(makeProjectlessFolder ? { makeProjectlessFolder } : {}),
     resolveAgentPermissionPreset: () => ceiling,
     permissionModesOf: (cli) =>
       cli === 'claude-code'
@@ -132,6 +134,48 @@ test('conversation.create asks for a chat of its own when newChat is set, and de
     (result.structuredContent as { conversation: { workspaceId: string } }).conversation.workspaceId,
     'ws-new',
   )
+})
+
+test('conversation.create under no project starts in a folder of its own, made for the chat', async () => {
+  const requests: ConversationLaunchRequest[] = []
+  const folders: Array<string | null> = []
+  const handler = tool(
+    async (request) => {
+      requests.push(request)
+      return { ok: false, code: 'launch_failed', message: 'stopped here' }
+    },
+    'bypass',
+    async (prompt) => {
+      folders.push(prompt)
+      return '/Users/dev/.sprintengine/chats/hello'
+    },
+  ).handler
+  await handler({ noProject: true, prompt: 'Say hello' })
+  assert.deepEqual(folders, ['Say hello'])
+  assert.deepEqual(requests[0]?.newChatIn, { folderPath: '/Users/dev/.sprintengine/chats/hello' })
+  assert.equal(requests[0]?.workspaceId, undefined)
+  assert.equal(requests[0]?.newChat, undefined)
+})
+
+test('conversation.create refuses no project beside a workspace or a worktree, leaving no folder behind', async () => {
+  let made = 0
+  const handler = tool(
+    async () => assert.fail('nothing launches'),
+    'bypass',
+    async () => {
+      made += 1
+      return '/Users/dev/.sprintengine/chats/x'
+    },
+  ).handler
+  for (const args of [
+    { noProject: true, workspaceId: 'ws-1' },
+    { noProject: true, worktree: true },
+    { noProject: true, inWorktree: '/Users/dev/wt' },
+  ]) {
+    const refused = await handler(args)
+    assert.equal((refused.structuredContent as { error: { code: string } }).error.code, 'invalid_arguments')
+  }
+  assert.equal(made, 0)
 })
 
 test('conversation.create links the calling agent to the chat it started, unless asked not to', async () => {

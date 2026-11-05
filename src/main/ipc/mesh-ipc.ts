@@ -119,6 +119,7 @@ export function registerMeshIpc(ipcMain: IpcMain, service: AutomationService): v
     return service.mesh().createConversation({
       connectionId: record.connectionId,
       workspaceId: record.workspaceId,
+      noProject: record.noProject,
       cli: record.cli,
       prompt: record.prompt,
       cliModel: record.cliModel,

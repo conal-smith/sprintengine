@@ -163,6 +163,12 @@ vocabulary: every `conversation-` capability this machine advertises must be
 one `@sprintengine/conversation-protocol` names
 (`conversation-protocol.test.ts`).
 
+A desktop's New chat offers "No project" on a machine advertising
+`new-chat-no-project`: `conversation.create` then takes `noProject` in place of
+`workspaceId`, and the chat runs in a folder of its own there. It takes no worktree,
+as there is no checkout to cut one from. An older machine refuses a call with no
+workspace, so a desktop leaves the row off and refuses the launch in words.
+
 `usage-report` (2026-10-21) names a gateway tool of its own: `usage.report`
 answers a window of this machine's token usage for a paired desktop's Usage
 dashboard, on `workspace:read`, and is listed only to paired devices. Its

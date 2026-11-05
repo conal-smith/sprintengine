@@ -3,11 +3,11 @@ import React from 'react'
 import type { MeshConnection, MeshWorkspace, MeshWorkspaceCheckout } from '../../../../../shared/tailnet-mesh'
 import { useProjectColors } from '../../../hooks/useProjectColors'
 import { projectColorKey, resolveProjectColor, type ProjectColor } from '../../../utils/projectColor'
-import { FolderTypeIcon } from '../../AppIcons'
-import { ChipButton, Input, MENU_LIST_CLASS, MenuOption, Popover } from '../../ui'
+import { FolderTypeIcon, NoProjectGlyph } from '../../AppIcons'
+import { ChipButton, Input, MENU_DIVIDER_CLASS, MENU_LIST_CLASS, MenuOption, Popover } from '../../ui'
 import { ChipCaretGlyph } from './agentSpawnShared'
 import { focusProjectSearch } from './ProjectSourceMenu'
-import type { RemoteProject } from './remoteProjects'
+import { isRemoteNoProject, REMOTE_NO_PROJECT, type RemoteProject } from './remoteProjects'
 
 /** A paired machine New chat is aimed at, and what it has said so far. */
 export type RemoteTargetState = {
@@ -33,6 +33,7 @@ export function RemoteProjectPicker({
   target,
   color,
   onPick,
+  noProjectOffered,
 }: {
   target: RemoteTargetState
   /**
@@ -45,6 +46,8 @@ export function RemoteProjectPicker({
    */
   color: ProjectColor | null
   onPick: (project: RemoteProject) => void
+  /** Whether a chat can start there under no project, as it can on this machine. */
+  noProjectOffered: boolean
 }) {
   const [open, setOpen] = React.useState(false)
   const [query, setQuery] = React.useState('')
@@ -78,7 +81,7 @@ export function RemoteProjectPicker({
   // "Unavailable", which are open questions rather than an answer of "none". A
   // dash on those would report an unfiled chat where there is a machine that
   // has not spoken yet, so they keep the plain solid glyph.
-  const unfiled = !target.picked && target.projects !== null && !target.error
+  const unfiled = (!target.picked || isRemoteNoProject(target.picked)) && target.projects !== null && !target.error
   return (
     <Popover
       open={open}
@@ -119,6 +122,26 @@ export function RemoteProjectPicker({
               aria-label={`Search projects on ${target.connection.machineName}`}
             />
           </div>
+        ) : null}
+        {/* With the search rather than among the projects, as on this machine:
+            it is not one, and a machine with none open still offers it. */}
+        {noProjectOffered && !target.error && target.projects !== null ? (
+          <>
+            <MenuOption
+              role="menuitemradio"
+              selected={isRemoteNoProject(target.picked)}
+              stacked
+              onClick={() => {
+                onPick(REMOTE_NO_PROJECT)
+                setOpen(false)
+              }}
+              icon={<NoProjectGlyph className="mt-0.5 icon-xs shrink-0" />}
+            >
+              <span className="block text-body font-medium">{REMOTE_NO_PROJECT.name}</span>
+              <span className="block text-meta text-[color:var(--text-subtle)]">Chat in a folder of its own</span>
+            </MenuOption>
+            <div className={MENU_DIVIDER_CLASS} role="separator" />
+          </>
         ) : null}
         {target.error ? (
           <div className="px-2.5 py-1.5 text-meta text-[color:var(--tone-error)]">{target.error}</div>

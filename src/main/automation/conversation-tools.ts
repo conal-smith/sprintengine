@@ -1,3 +1,4 @@
+import { createProjectlessChatFolder } from '../projectless-chat-folders'
 import {
   toolError,
   toolSuccess,
@@ -77,6 +78,8 @@ const SKILL_ID = /^[\w.-]{1,200}(?::[\w.-]{1,200})?$/
 const MAX_CREATE_SKILLS = 32
 
 export type ConversationToolsDeps = {
+  /** Makes the folder a chat with no project runs in. Absent, the one on this machine's disk. */
+  makeProjectlessFolder?: (prompt: string | null) => Promise<string>
   launch: ConversationLaunchService['launch']
   /** The calling agent's own preset, which a chat it starts may not exceed (launch-permission-cap.ts). */
   resolveAgentPermissionPreset: AgentPermissionResolver
@@ -178,6 +181,12 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
         type: 'object',
         properties: {
           workspaceId: { type: 'string', description: 'Workspace id from workspace.list.' },
+          noProject: {
+            type: 'boolean',
+            description:
+              'Start a new chat in a folder of its own, under no project, as New chat\'s "No project" does. Takes ' +
+              'the place of workspaceId, and takes no worktree: there is no checkout to cut one from.',
+          },
           newChat: {
             type: 'boolean',
             description:
@@ -271,13 +280,18 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
               'arrives as a new message once the caller is idle. Defaults to true.',
           },
         },
-        required: ['workspaceId'],
         additionalProperties: false,
       },
       handler: async (args, context) => {
-        if (typeof args.workspaceId !== 'string' || !args.workspaceId.trim()) {
-          return toolError('invalid_arguments', '"workspaceId" is required.')
+        const noProject = args.noProject === true
+        const workspaceId = typeof args.workspaceId === 'string' ? args.workspaceId.trim() : ''
+        if (noProject && workspaceId) {
+          return toolError('invalid_arguments', '"noProject" takes the place of "workspaceId": name one of them.')
         }
+        if (noProject && (args.worktree === true || args.worktreeName !== undefined || args.inWorktree !== undefined)) {
+          return toolError('invalid_arguments', 'A chat with no project has no checkout to take a worktree from.')
+        }
+        if (!noProject && !workspaceId) return toolError('invalid_arguments', '"workspaceId" is required.')
         for (const key of [
           'cli',
           'cliModel',
@@ -357,9 +371,21 @@ export function createConversationTools(deps: ConversationToolsDeps): McpToolReg
           launchPermissionCeiling(context, deps.resolveAgentPermissionPreset),
         )
         if ('refused' in capped) return toolError(capped.refused.code, capped.refused.message)
+        // Made last, so a call refused above leaves no empty folder behind.
+        let projectlessFolder: string | null = null
+        if (noProject) {
+          try {
+            const prompt = typeof args.prompt === 'string' ? args.prompt : null
+            projectlessFolder = await (deps.makeProjectlessFolder ?? createProjectlessChatFolder)(prompt)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            return toolError('launch_failed', `The chat's folder could not be made: ${message}`)
+          }
+        }
         const launched = await deps.launch({
-          workspaceId: args.workspaceId.trim(),
-          ...(args.newChat === true ? { newChat: true } : {}),
+          ...(projectlessFolder
+            ? { newChatIn: { folderPath: projectlessFolder } }
+            : { workspaceId, ...(args.newChat === true ? { newChat: true } : {}) }),
           ...(args.worktree === true ? { newWorktree: true } : {}),
           ...(typeof args.worktreeName === 'string' && args.worktreeName.trim()
             ? { worktreeName: args.worktreeName.trim() }
