@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, test } from 'vitest'
 
 import type { TranscriptToolEntry } from './conversationProjection'
-import { subagentIconCli } from './subagentIcon'
+import { SubagentIcon } from './subagentIcon'
 import { isSubagentStart, SubagentStartRow, subagentStartWords } from './subagentStartRow'
 
 const start = (overrides: Partial<TranscriptToolEntry> = {}) =>
@@ -15,19 +15,11 @@ const start = (overrides: Partial<TranscriptToolEntry> = {}) =>
     ...overrides,
   }) as TranscriptToolEntry
 
-test('a sub-agent reads as its model’s maker where the id says, else as its CLI', () => {
-  expect(subagentIconCli('claude-code', 'sonnet')).toBe('claude-code')
-  expect(subagentIconCli('cursor', 'claude-opus-5-5[context=300k,effort=medium,fast=false]')).toBe('claude-code')
-  expect(subagentIconCli('cursor', 'gpt-5.6-sol-medium')).toBe('codex')
-  expect(subagentIconCli('cursor', 'gpt-5.3-codex')).toBe('codex')
-  expect(subagentIconCli('cursor', 'grok-4.7[context=256k,reasoning_effort=high,fast=true]')).toBe('grok')
-  expect(subagentIconCli('cursor', 'cursor-grok-4.6-high')).toBe('grok')
-  expect(subagentIconCli('cursor', 'muse-wonder-1.0[context=300k,reasoning_effort=high]')).toBe('muse')
-  expect(subagentIconCli('opencode', 'kimi-k3')).toBe('kimi-code')
-  expect(subagentIconCli('cursor', 'composer-2.5')).toBe('cursor')
-  expect(subagentIconCli('cursor', 'default')).toBe('cursor')
-  expect(subagentIconCli('codex', null)).toBe('codex')
-  expect(subagentIconCli(null, 'something-new')).toBeNull()
+test('a sub-agent wears its harness, whichever model that harness drives', () => {
+  const claudeMark = 'viewBox="0 0 248 248"'
+  expect(renderToStaticMarkup(<SubagentIcon cli="claude-code" />)).toContain(claudeMark)
+  expect(renderToStaticMarkup(<SubagentIcon cli="cursor" />)).not.toContain(claudeMark)
+  expect(renderToStaticMarkup(<SubagentIcon cli={null} />)).toBe('')
 })
 
 test('the start of a sub-agent reads as who was started, however the CLI spells the tool', () => {

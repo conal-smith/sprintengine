@@ -10,8 +10,8 @@ import type { TranscriptToolEntry } from './conversationProjection'
 import { flattenToolEntries, subagentLaneLabel, toolObject } from './conversationTimeline'
 import { LiveElapsed } from './liveElapsed'
 import { formatStepDuration } from './stepDuration'
-import { SubagentIcon, useLaneParentRuntime } from './subagentIcon'
-import { subagentModel, subagentResultPreview, subagentRunsOn } from './subagentResult'
+import { SubagentIcon, useLaneParentCli } from './subagentIcon'
+import { subagentResultPreview, subagentRunsOn } from './subagentResult'
 import { ToolKindGlyph } from './toolRows/ToolKindGlyph'
 import { formatTokenCount } from '../../../utils/tokenFormat'
 
@@ -66,21 +66,14 @@ export function laneOutcomeWords(tool: TranscriptToolEntry): string | undefined 
 }
 
 /**
- * The mark beside an agent: the model or provider doing the work, the model the
- * call asked for when it named one, else its chat's own. A chat with no record
+ * The mark beside an agent: the harness doing the work, here the chat's own,
+ * since a lane in its transcript was spawned by that CLI. A chat with no record
  * here (one on a paired machine) has the agent kind glyph.
  */
 export function LaneGlyph({ tool, className }: { tool: TranscriptToolEntry; className?: string }): JSX.Element {
-  const parent = useLaneParentRuntime()
+  const cli = useLaneParentCli()
   const failed = laneAgentState(tool) === 'failed'
-  if (parent.cli)
-    return (
-      <SubagentIcon
-        cli={parent.cli}
-        modelId={subagentModel(tool) ?? parent.modelId}
-        className={`icon-sm shrink-0 ${className ?? ''}`}
-      />
-    )
+  if (cli) return <SubagentIcon cli={cli} className={`icon-sm shrink-0 ${className ?? ''}`} />
   return (
     <span
       className={`flex shrink-0 ${failed ? 'text-[color:var(--tone-error)]' : 'text-[color:var(--text-subtle)]'} ${className ?? ''}`}

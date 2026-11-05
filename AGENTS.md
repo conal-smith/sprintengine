@@ -57,8 +57,9 @@ looking correct and is silently reverted by the next build.
 The app draws no status dots (owner ruling 2026-09-28). A small disc has no
 shape, so "working", "waiting" and "failed" read alike. Say a state with a
 word, a lifecycle glyph, a timer, or the working mark (`ui/WorkingMark.tsx`).
-An agent a conversation spawned is drawn as its model's or provider's icon
-(`agentChat/subagentIcon.tsx`), beside words that say how it is doing.
+An agent a conversation spawned wears the logo of the harness it runs on
+(`agentChat/subagentIcon.tsx`, owner ruling 2026-11-05), beside words that say
+how it is doing.
 The one exception is an MCP server's connection state in the composer's Skills
 & MCPs picker (owner ruling 2026-10-09): a dot beside the server's name, with the
 state's word as its accessible name and tooltip
