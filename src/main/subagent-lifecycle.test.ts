@@ -286,8 +286,13 @@ test("with the runtime: a mock sub-agent's turn ends it, leaves it at rest, and 
     assert.equal(agents[child.agentId]?.subagentEnd?.status, 'completed')
     const result = await lifecycle.result(child)
     assert.ok(result?.text.trim(), 'the reply is read back from the transcript')
-    const listed = runtime.listSessions(child)
-    assert.equal(listed.ok && listed.sessions[0]?.resting, true)
+    // Resting is work of its own after the idle: on a busy machine it lands later.
+    const resting = () => {
+      const listed = runtime.listSessions(child)
+      return listed.ok && listed.sessions[0]?.resting === true
+    }
+    for (let wait = 0; wait < 500 && !resting(); wait += 1) await new Promise((resolve) => setTimeout(resolve, 10))
+    assert.equal(resting(), true)
   } finally {
     await runtime.shutdown()
     await rm(workspaceRoot, { recursive: true, force: true })
