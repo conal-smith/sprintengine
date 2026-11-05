@@ -9,8 +9,9 @@
 // Pure and React-free: the draw is a function of a seed, so a test can pin it
 // and a re-render cannot reshuffle what someone is reading.
 
-/** Grouping used to keep one draw from being four flavours of the same idea. */
-type SuggestionCategory = 'review' | 'design' | 'performance' | 'security' | 'tests' | 'backlog' | 'docs' | 'deps'
+/** Grouping used to keep one draw from being eight flavours of the same idea. */
+export type SuggestionCategory =
+  'review' | 'design' | 'performance' | 'security' | 'tests' | 'backlog' | 'docs' | 'deps'
 
 export type SuggestionEntry = {
   id: string
@@ -218,7 +219,7 @@ export const SUGGESTION_BANK: readonly SuggestionEntry[] = [
 ]
 
 /** How many cards the surface shows. */
-export const SUGGESTION_DRAW_SIZE = 4
+export const SUGGESTION_DRAW_SIZE = 8
 
 // A tiny deterministic PRNG (mulberry32). The draw must be stable for the life
 // of a tab — a re-render that reshuffled the cards would move what someone is
@@ -235,11 +236,11 @@ function seededRandom(seed: number): () => number {
 
 /**
  * Pick the cards for one tab: category-spread first (one per category, in a
- * shuffled category order) so a draw never reads as four flavours of "review
+ * shuffled category order) so a draw never reads as eight flavours of "review
  * the code", then topped up from what is left if the bank ever has fewer
  * categories than the draw size.
  *
- * Deterministic in `seed` — same seed, same four, in the same order.
+ * Deterministic in `seed` — same seed, same cards, in the same order.
  */
 export function drawSuggestions(
   seed: number,

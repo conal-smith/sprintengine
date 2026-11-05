@@ -1,0 +1,39 @@
+/* Card scroller — a heading over a row of tiles that scrolls sideways. Extracted
+ * from the shipped `CardScroller` primitive
+ * (src/renderer/src/components/ui/CardScroller.tsx). */
+
+.ds-card-scroller {
+  container-type: inline-size;
+}
+
+.ds-card-scroller-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sem-space-sm);
+  height: var(--sem-size-control-sm);
+  padding-inline: var(--sem-space-2xs);
+  color: var(--sem-color-text-muted);
+  font-family: var(--sem-font-family-ui);
+  font-size: var(--sem-font-size-meta);
+  font-weight: var(--sem-font-weight-medium);
+}
+
+.ds-card-scroller-row {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 85%;
+  gap: var(--sem-space-sm);
+  margin-block-start: var(--sem-space-2xs);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ds-card-scroller-row::-webkit-scrollbar {
+  display: none;
+}
+
+@container (min-width: 520px) {
+  .ds-card-scroller-row {
+    grid-auto-columns: calc((100% - 2 * var(--sem-space-sm) - var(--sem-space-3xl)) / 3);
+  }
+}
