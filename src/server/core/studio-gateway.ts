@@ -100,6 +100,8 @@ export type StudioGatewayOptions = Pick<
    * and leaves it out.
    */
   linkLaunchedAgent?: ConversationToolsDeps['linkLaunchedAgent']
+  /** Drop the notice a sub-agent's end would send, its parent having heard from a `wait`. */
+  dismissLaunchNotice?: (childSessionId: string) => void
   /** Deleting a settled chat for a paired desktop; absent where this process has no worktree pool. */
   settledChatDeletion?: ConversationToolsDeps['settledChatDeletion']
 }
@@ -185,6 +187,8 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
         return { cli: entry?.displayName ?? cli, model: option?.label ?? modelId?.replace(/\[.*$/u, '') ?? null }
       },
       ...(options.linkLaunchedAgent ? { linkLaunchedAgent: options.linkLaunchedAgent } : {}),
+      ...(options.dismissLaunchNotice ? { dismissNotice: options.dismissLaunchNotice } : {}),
+      subagents: core.subagents,
       chats: {
         ...chats,
         agentsOf: (workspaceId) => {

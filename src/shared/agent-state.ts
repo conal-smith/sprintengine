@@ -144,6 +144,11 @@ export type AgentState = {
   subagentOf?: { agentId: string; startedAt: number }
   /** A sub-agent started read-only: `conversationMode` (or Codex's sandbox) holds it there. */
   subagentReadOnly?: true
+  /**
+   * How a sub-agent's task ended, written once when it does (subagent-lifecycle.ts).
+   * Absent while it runs. A follow-up sent to it later changes nothing here.
+   */
+  subagentEnd?: { at: number; status: 'completed' | 'failed' | 'stopped'; error?: string }
   /** Selected context skills apply to every turn until explicitly removed. */
   conversationSkills?: string[]
   cliSessionId?: string

@@ -900,6 +900,7 @@ export function createAppServices(
     workspaceRegistry,
     workspaceSyncService,
     conversationOwner,
+    subagents,
     conversations,
     conversationModelCatalog,
     conversationLaunchService,
@@ -1320,6 +1321,7 @@ export function createAppServices(
         ? listed.sessions.find((session) => session.sessionId === sessionId)?.lastAssistantTail
         : undefined
     },
+    readSubagentResult: (child) => subagents.result(child),
     usageLimit: (provider) => usageRateLimit(provider),
     onUsageLimitsChanged: (listener) => {
       usageLimitsStore().onChanged(listener)
@@ -1896,6 +1898,7 @@ export function createAppServices(
         // An agent that starts a chat hears back from it, as one that launches
         // a terminal agent does.
         linkLaunchedAgent: (link) => agentLaunchNotices.link(link),
+        dismissLaunchNotice: (sessionId) => agentLaunchNotices.dismiss(sessionId),
         // A paired desktop's Delete on a settled chat here, made as a window's
         // Delete makes it (settled-chat-deletion-app.ts), its record removed
         // as the paired device's. Built on first ask.
