@@ -39,6 +39,7 @@ function harness(
   options: {
     ceiling?: NonNullable<ReturnType<SubagentToolsDeps['resolveAgentPermissionPreset']>>
     launched?: (request: ConversationLaunchRequest, childId: string) => ConversationLaunchResult
+    result?: { text: string; truncated: boolean }
     /** Where a sub-agent's session stands, each time it is read. */
     sessions?: (agentId: string, reads: number) => ConversationSessionSummary | undefined
   } = {},
@@ -46,7 +47,8 @@ function harness(
   const agents: Record<string, AgentState> = { [PARENT]: chatRecord() }
   const requests: ConversationLaunchRequest[] = []
   const links: LaunchedAgentLink[] = []
-  const commands: Array<{ agentId: string; kind: string }> = []
+  const stops: string[] = []
+  const dismissed: string[] = []
   const reads = new Map<string, number>()
   let clock = 1_000
   const deps: SubagentToolsDeps = {
@@ -80,6 +82,16 @@ function harness(
     isKnownCli: (cli) => cli !== 'missing',
     displayNames: (cli, model) => ({ cli: cli === 'cursor' ? 'Cursor' : cli, model: model ? `Model ${model}` : null }),
     linkLaunchedAgent: (link) => (links.push(link), { linked: true }),
+    dismissNotice: (sessionId) => dismissed.push(sessionId),
+    subagents: {
+      stop: async ({ agentId }) => {
+        stops.push(agentId)
+      },
+      fail: ({ agentId }, error) => {
+        agents[agentId] = { ...agents[agentId]!, subagentEnd: { at: clock, status: 'failed', error } }
+      },
+      result: async () => options.result ?? null,
+    },
     chats: {
       agentsOf: (workspaceId) => (workspaceId === WORKSPACE ? agents : null),
       session: (_workspaceId, agentId) => {
@@ -90,11 +102,6 @@ function harness(
           summary({ agentId, status: 'active', phase: 'running', turnStartedAt: 1 })
         )
       },
-      resolveKey: (workspaceId, agentId) => ({ workspaceRoot: '/repo', workspaceId, agentId }),
-      command: async (key, _client, _id, command) => {
-        commands.push({ agentId: key.agentId, kind: command.kind })
-        return { ok: true }
-      },
       now: () => clock,
       sleep: async (ms) => {
         clock += ms
@@ -104,7 +111,7 @@ function harness(
   const tools = createSubagentTools(deps)
   const call = (name: string, args: Record<string, unknown>, context: McpConnectionContext | undefined = caller) =>
     tools.find((tool) => tool.name === name)!.handler(args, context)
-  return { agents, requests, links, commands, call }
+  return { agents, requests, links, stops, dismissed, call }
 }
 
 const code = (result: McpToolResult) => (result.structuredContent as { error?: { code?: string } }).error?.code
@@ -226,14 +233,40 @@ test('a start refuses what it cannot run, and takes a launch failure in its own 
   assert.match(JSON.stringify(refused.structuredContent), /The model is unknown/)
 })
 
-test('wait answers when the sub-agent finishes', async () => {
+test('wait answers with the result when the sub-agent finishes, and the notice saying the same is dropped', async () => {
   const h = harness({
+    result: { text: 'All good.', truncated: true },
     sessions: (agentId, reads) => (agentId !== PARENT && reads > 3 ? finished(agentId) : undefined),
   })
   const done = await h.call('subagent.start', { task: 'Review', wait: true })
   assert.equal(body(done).status, 'completed')
+  assert.equal(body(done).result, 'All good.')
+  assert.equal(body(done).resultTruncated, true)
   assert.equal(body(done).waitTimedOut, false)
   assert.equal(body(done).next, undefined)
+  assert.deepEqual(h.dismissed, ['conv'])
+})
+
+test('a recorded end outranks what the session says, and a repeated read answers the same', async () => {
+  const h = harness({ result: { text: 'Done.', truncated: false } })
+  const started = await h.call('subagent.start', { task: 'Review' })
+  const subagentId = String(body(started).subagentId)
+  h.agents[subagentId] = {
+    ...h.agents[subagentId]!,
+    subagentEnd: { at: 3_000, status: 'failed', error: 'The model is gone.' },
+  }
+  const first = await h.call('subagent.status', { subagentId })
+  assert.equal(body(first).status, 'failed')
+  assert.equal(body(first).error, 'The model is gone.')
+  assert.equal(body(first).endedAt, 3_000)
+  assert.deepEqual(body(await h.call('subagent.status', { subagentId })), body(first))
+})
+
+test('a parent working in a worktree of its own gives its sub-agent the same folder', async () => {
+  const h = harness()
+  h.agents[PARENT] = chatRecord({ execution: { mode: 'worktree', worktreeId: null, cwd: '/repo/.wt/a' } })
+  await h.call('subagent.start', { task: 'Review' })
+  assert.equal(h.requests[0]?.worktreePath, '/repo/.wt/a')
 })
 
 test('wait answers when the sub-agent needs the person', async () => {
@@ -251,7 +284,7 @@ test('a wait that times out says so, cancels nothing, and can be waited on again
   const first = await h.call('subagent.start', { task: 'Slow', wait: true, timeoutMs: 1_000 })
   assert.equal(body(first).waitTimedOut, true)
   assert.equal(body(first).status, 'working')
-  assert.deepEqual(h.commands, [])
+  assert.deepEqual(h.stops, [])
   done = true
   const again = await h.call('subagent.status', { subagentId: body(first).subagentId, wait: true })
   assert.equal(body(again).status, 'completed')
@@ -290,11 +323,11 @@ test('cancel stops a working sub-agent and leaves a finished one as it is', asyn
   const started = await h.call('subagent.start', { task: 'Go' })
   const subagentId = body(started).subagentId
   await h.call('subagent.cancel', { subagentId })
-  assert.deepEqual(h.commands, [{ agentId: subagentId, kind: 'interrupt' }])
+  assert.deepEqual(h.stops, [subagentId])
   done = true
   const after = await h.call('subagent.cancel', { subagentId, reason: 'Not needed' })
   assert.equal(body(after).status, 'completed')
-  assert.equal(h.commands.length, 1)
+  assert.equal(h.stops.length, 1)
 })
 
 test("the tools are for this machine's chats alone, and a person who asks to be asked sees every start", () => {

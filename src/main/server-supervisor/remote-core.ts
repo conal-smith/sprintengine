@@ -54,6 +54,7 @@ const SHELL_CORE_MEMBERS = new Set([
   // process; present so destructuring the core does not throw.
   'conversationModelCatalog',
   'conversationLaunchService',
+  'subagents',
   'resolveAgentPermissionPreset',
 ])
 
@@ -150,6 +151,7 @@ export function createRemoteCore(link: ShellServerLink): StudioCore {
     dataDirLock: null,
     conversationModelCatalog: { forCli: serverOnly('conversationModelCatalog') },
     conversationLaunchService: { launch: serverOnly('conversationLaunchService') },
+    subagents: { result: serverOnly('subagents') },
     resolveAgentPermissionPreset: serverOnly('resolveAgentPermissionPreset'),
   }
   return new Proxy(members, {

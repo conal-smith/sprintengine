@@ -43,6 +43,7 @@ import { TAILNET_UPLOADS_DIRNAME } from '../../main/automation/tailnet/tailnet-f
 import { WEB_UPLOADS_DIRNAME } from '../web/web-uploads'
 import { attachmentImagesRoot } from '../../main/attachment-image-file'
 import { createConversationLaunchService } from '../../main/conversation-launch-service'
+import { createSubagentLifecycle } from '../../main/subagent-lifecycle'
 import { createConversationImportService } from '../../main/conversation-import/conversation-import-service'
 import { createConversationModelCatalog } from '../../main/conversation-model-catalog'
 import { ConversationPlanStore } from '../../main/conversation-plan-store'
@@ -372,6 +373,49 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     sshServers?.onConnected((connection) => routed.attach(connection))
     conversations = routed
   }
+
+  // What becomes of a sub-agent once it runs. Its end and its parent's stop
+  // come from the runtime's events, here, and its record goes through the bus
+  // so every window sees it.
+  const subagentKey = (chat: { workspaceId: string; agentId: string }) => {
+    const record = workspaceRegistry.getRecord(chat.workspaceId)
+    const workspaceRoot = conversationWorkingRoot(record?.agents[chat.agentId], record?.folderPath)
+    return workspaceRoot ? { ...chat, workspaceRoot } : null
+  }
+  const subagents = createSubagentLifecycle({
+    agentsOf: (workspaceId) => workspaceRegistry.getRecord(workspaceId)?.agents ?? null,
+    workspaceIds: () => workspaceRegistry.getRecords().map((record) => record.id),
+    writeEnd: ({ workspaceId, agentId }, subagentEnd) => {
+      workspaceSyncService.updateWorkspaceAgent(workspaceId, agentId, { subagentEnd }, 'system')
+    },
+    removeAgent: ({ workspaceId, agentId }) => {
+      workspaceSyncService.updateWorkspaceAgent(workspaceId, agentId, null, 'system')
+    },
+    session: (chat) => {
+      const listed = conversations.listSessions({ workspaceId: chat.workspaceId, agentId: chat.agentId })
+      return listed.ok ? listed.sessions.sort((a, b) => b.updatedAt - a.updatedAt)[0] : undefined
+    },
+    interrupt: (sessionId) => conversations.interrupt({ sessionId }),
+    rest: (sessionId) => conversations.suspendSession({ sessionId }),
+    readEvents: async (chat, turns) => {
+      const key = subagentKey(chat)
+      if (!key) return []
+      const read = await conversations.readConversationSync(key, { turnLimit: turns })
+      if (!read.ok) return []
+      return read.kind === 'snapshot' ? read.page.events : read.events
+    },
+    deleteTranscript: async (chat) => {
+      const key = subagentKey(chat)
+      if (key) await conversations.deleteTranscript(key)
+    },
+    log: (message) => console.warn(`[subagents] ${message}`),
+  })
+  conversations.onEvent((event) => subagents.onConversationEvent(event))
+  conversationRuntime.onSessionIdle((summary) => subagents.onSessionIdle(summary))
+  workspaceSyncService.subscribeEvents((event) => {
+    if (event.type === 'workspace.agents_updated') subagents.onAgentsChanged(event.payload.workspaceId)
+  })
+  subagents.reconcile()
 
   const conversationModelCatalog = createConversationModelCatalog({
     listClis: () => listPluginRegistryEntries(),
@@ -1064,6 +1108,7 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
     workspaceSyncService,
     conversations,
     conversationOwner,
+    subagents,
     /** Windows: the WSL servers chats may run on, for Settings' status; null elsewhere. */
     wslServers,
     approvalRules,

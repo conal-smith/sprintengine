@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto'
-
 import { LAUNCH_PROMPT_READS_AS_OPTION_MESSAGE, launchPromptReadsAsOption } from '../../shared/agent-launch'
 import type { AgentState } from '../../shared/agent-state'
 import { parseCliPermissionPreset, type CliPermissionPreset } from '../../shared/cli-permission-preset'
@@ -20,6 +18,7 @@ import {
   type LaunchLinkResult,
 } from '../agent-launch-notices'
 import type { ConversationLaunchRequest, ConversationLaunchService } from '../conversation-launch-service'
+import type { SubagentLifecycle } from '../subagent-lifecycle'
 import type { ConversationChatControl } from './conversation-chat-tools'
 import {
   capLaunchPermissionPreset,
@@ -74,10 +73,7 @@ const READ_ONLY_BY_CLI: Readonly<Record<string, { preset: CliPermissionPreset; m
 
 export type SubagentStatus = 'starting' | 'working' | 'needs_input' | 'completed' | 'failed' | 'stopped'
 
-export type SubagentChatControl = Pick<
-  ConversationChatControl,
-  'session' | 'resolveKey' | 'command' | 'now' | 'sleep'
-> & {
+export type SubagentChatControl = Pick<ConversationChatControl, 'session' | 'now' | 'sleep'> & {
   /** The chat agents of a workspace, by id, as its record holds them. */
   agentsOf(workspaceId: string): Readonly<Record<string, AgentState>> | null
 }
@@ -92,6 +88,10 @@ export type SubagentToolsDeps = {
   displayNames?: (cli: string, modelId: string | null) => { cli: string; model: string | null }
   /** Tell the parent when the sub-agent ends (agent-launch-notices.ts). Absent where nothing here can. */
   linkLaunchedAgent?: (link: LaunchedAgentLink) => LaunchLinkResult
+  /** The parent heard the end from a `wait`, so the notice saying the same is dropped. */
+  dismissNotice?: (childSessionId: string) => void
+  /** What happens to a sub-agent after it starts (subagent-lifecycle.ts). */
+  subagents?: Pick<SubagentLifecycle, 'stop' | 'fail' | 'result'>
   /** Absent where this process has no chats to drive. */
   chats?: SubagentChatControl
 }
@@ -101,8 +101,12 @@ export function subagentEnded(status: SubagentStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'stopped'
 }
 
-/** Where a sub-agent's chat stands, from its session. */
-export function subagentStatusOf(summary: ConversationSessionSummary | undefined): SubagentStatus {
+/** Where a sub-agent stands: how it ended if it has, else what its session is doing. */
+export function subagentStatusOf(
+  agent: Pick<AgentState, 'subagentEnd'> | undefined,
+  summary: ConversationSessionSummary | undefined,
+): SubagentStatus {
+  if (agent?.subagentEnd) return agent.subagentEnd.status
   if (!summary) return 'stopped'
   const phase = conversationSummaryPhase(summary)
   if (phase === 'waiting_for_approval' || phase === 'waiting_for_input') return 'needs_input'
@@ -119,9 +123,6 @@ function isRunning(status: SubagentStatus): boolean {
 }
 
 export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistration[] {
-  // The first message of a sub-agent that was refused or failed, by agent id:
-  // its session is up, and no turn is coming.
-  const firstSendFailures = new Map<string, string>()
   // Starts in flight, by parent, so a burst of calls cannot pass the cap
   // before any of its chats is on the record.
   const starting = new Map<string, number>()
@@ -147,20 +148,22 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
   }
 
   function statusOf(chats: SubagentChatControl, workspaceId: string, agentId: string): SubagentStatus {
-    if (firstSendFailures.has(agentId)) return 'failed'
-    return subagentStatusOf(chats.session(workspaceId, agentId))
+    return subagentStatusOf(chats.agentsOf(workspaceId)?.[agentId], chats.session(workspaceId, agentId))
   }
 
-  function answer(
+  async function answer(
     chats: SubagentChatControl,
     workspaceId: string,
     agentId: string,
     extra: { waitTimedOut?: boolean; next?: string } = {},
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     const agent = chats.agentsOf(workspaceId)?.[agentId]
     const summary = chats.session(workspaceId, agentId)
-    const status = statusOf(chats, workspaceId, agentId)
+    const status = subagentStatusOf(agent, summary)
     const providerId = agent?.conversation?.providerId
+    const result = subagentEnded(status)
+      ? await deps.subagents?.result({ workspaceId, agentId }).catch(() => null)
+      : null
     return {
       ok: true,
       subagentId: agentId,
@@ -171,12 +174,12 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
       mode: agent?.conversationMode ?? 'default',
       permissionPreset: summary?.permissionPreset ?? agent?.cliPermissionPreset ?? null,
       status,
-      result: null,
-      resultTruncated: false,
-      error: firstSendFailures.get(agentId) ?? null,
+      result: result?.text ?? null,
+      resultTruncated: result?.truncated === true,
+      error: agent?.subagentEnd?.error ?? null,
       waitTimedOut: extra.waitTimedOut === true,
       startedAt: agent?.subagentOf?.startedAt ?? null,
-      endedAt: subagentEnded(status) ? (summary?.lastTurnEndedAt ?? null) : null,
+      endedAt: agent?.subagentEnd?.at ?? (subagentEnded(status) ? (summary?.lastTurnEndedAt ?? null) : null),
       ...(extra.next ? { next: extra.next } : {}),
     }
   }
@@ -194,7 +197,12 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
     const started = now()
     for (;;) {
       const status = statusOf(chats, workspaceId, agentId)
-      if (subagentEnded(status) || status === 'needs_input') return answer(chats, workspaceId, agentId)
+      if (subagentEnded(status)) {
+        const sessionId = chats.session(workspaceId, agentId)?.sessionId
+        if (sessionId) deps.dismissNotice?.(sessionId)
+        return answer(chats, workspaceId, agentId)
+      }
+      if (status === 'needs_input') return answer(chats, workspaceId, agentId)
       const elapsed = now() - started
       if (elapsed >= timeoutMs) return answer(chats, workspaceId, agentId, { waitTimedOut: true })
       await sleep(Math.min(SUBAGENT_WAIT_POLL_MS, timeoutMs - elapsed))
@@ -391,6 +399,8 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
 
         const prompt =
           role === 'general' ? args.task : `Act as the ${String(role)} sub-agent for this task.\n\n${args.task}`
+        const parentWorktree =
+          parentAgent.execution?.mode === 'worktree' ? parentAgent.execution.cwd?.trim() : undefined
         const cliModel = typeof args.cliModel === 'string' && args.cliModel.trim() ? args.cliModel.trim() : undefined
         const titles = deps.displayNames?.(cli, cliModel ?? null)
         const title = name || (titles?.model ? `${titles.cli} · ${titles.model}` : (titles?.cli ?? cli))
@@ -408,12 +418,14 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
             name: title,
             ...(cliModel ? { cliModel } : {}),
             ...(typeof args.effort === 'string' && args.effort.trim() ? { reasoningEffort: args.effort.trim() } : {}),
+            // Where the parent works, when that is a worktree of its own.
+            ...(parentWorktree ? { worktreePath: parentWorktree } : {}),
             ...(permissionPreset ? { permissionPreset } : {}),
             ...(readOnlyRun?.mode ? { mode: readOnlyRun.mode } : {}),
             subagentOf: { agentId: parent.agentId, startedAt },
             ...(readOnly ? { subagentReadOnly: true } : {}),
             onFirstSendFailed: (message) => {
-              if (childId) firstSendFailures.set(childId, message)
+              if (childId) deps.subagents?.fail({ workspaceId: parent.workspaceId, agentId: childId }, message)
               else firstSendFailed = message
             },
           } satisfies ConversationLaunchRequest)
@@ -431,7 +443,9 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
           return toolError(named ? launched.code : 'launch_failed', launched.message)
         }
         childId = launched.agentId
-        if (firstSendFailed) firstSendFailures.set(launched.agentId, firstSendFailed)
+        if (firstSendFailed) {
+          deps.subagents?.fail({ workspaceId: parent.workspaceId, agentId: launched.agentId }, firstSendFailed)
+        }
 
         const linked: LaunchLinkResult = deps.linkLaunchedAgent
           ? deps.linkLaunchedAgent({
@@ -442,13 +456,14 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
                 sessionId: launched.sessionId,
                 transport: 'conversation',
                 name: launched.name,
+                subagent: true,
               },
             })
           : { linked: false, reason: NOT_TOLD_UNAVAILABLE }
 
         if (args.wait === true) return toolSuccess(await waited(chats, parent.workspaceId, launched.agentId, timeoutMs))
         return toolSuccess(
-          answer(chats, parent.workspaceId, launched.agentId, {
+          await answer(chats, parent.workspaceId, launched.agentId, {
             next: linked.linked
               ? 'Its result reaches you as a notice when it ends; end your turn or call subagent.status with wait.'
               : 'Call subagent.status with wait for its result: no notice will reach this chat.',
@@ -486,7 +501,7 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
         return toolSuccess(
           args.wait === true
             ? await waited(chats, child.workspaceId, child.agentId, timeoutMs)
-            : answer(chats, child.workspaceId, child.agentId),
+            : await answer(chats, child.workspaceId, child.agentId),
         )
       },
     },
@@ -518,11 +533,8 @@ export function createSubagentTools(deps: SubagentToolsDeps): McpToolRegistratio
         const { workspaceId, agentId } = child
         const before = statusOf(chats, workspaceId, agentId)
         if (subagentEnded(before)) return toolSuccess({ ok: true, subagentId: agentId, status: before })
-        const key = chats.resolveKey(workspaceId, agentId)
-        if (!key) return toolError('unavailable', 'The sub-agent has no folder on this machine.')
-        const stopped = await chats.command(key, 'studio-subagent', randomUUID(), { kind: 'interrupt' })
-        if (!stopped.ok)
-          return toolError(stopped.code ?? 'refused', stopped.message ?? 'The sub-agent was not stopped.')
+        if (!deps.subagents) return unavailable()
+        await deps.subagents.stop({ workspaceId, agentId })
         return toolSuccess({ ok: true, subagentId: agentId, status: statusOf(chats, workspaceId, agentId) })
       },
     },
