@@ -13,7 +13,12 @@ import {
   resolveCliRuntimeSettings,
 } from './agent-launch-render'
 import { createPluginRegistry } from './plugin-registry'
-import { declaredPermissionPresets, permissionRenderKey, resolvePermissionArgs } from './plugin-render'
+import {
+  declaredPermissionModes,
+  declaredPermissionPresets,
+  permissionRenderKey,
+  resolvePermissionArgs,
+} from './plugin-render'
 import { buildCodexLegacyNativeAgentLaunchPowerShellScript } from './terminal-launch'
 import { __resetPluginRegistryForTest, __setPluginRegistryForTest, getPluginById } from './plugin-registry-instance'
 import { test } from 'vitest'
@@ -634,6 +639,11 @@ test('agent-launch-render', async () => {
       ['grok', 'manual', 'dontAsk', ['--permission-mode', 'dontAsk']],
       ['zai', 'manual', 'dontAsk', ['--permission-mode', 'dontAsk']],
       ['cursor', 'auto', 'acceptEdits', ['--auto-review']],
+      ['cursor', 'manual', 'ask', ['--mode', 'ask']],
+      ['cursor', 'manual', 'plan', ['--mode', 'plan']],
+      ['cursor', 'auto', 'ask', ['--auto-review']],
+      ['claude-code', 'manual', 'plan', ['--permission-mode', 'plan']],
+      ['grok', 'manual', 'plan', ['--permission-mode', 'plan']],
     ]
     for (const [cli, preset, mode, args] of ownModes) {
       const manifest = getPluginById(cli)!.manifest
@@ -643,6 +653,17 @@ test('agent-launch-render', async () => {
         `${cli}: ${mode} at ${preset}`,
       )
     }
+
+    // A read-only mode is listed at the Manual level, and says it is read-only.
+    const readOnlyModes = (cli: string) =>
+      declaredPermissionModes(getPluginById(cli)!.manifest)
+        .filter((mode) => mode.readOnly)
+        .map((mode) => `${mode.id}:${mode.level}`)
+    assert.deepEqual(readOnlyModes('cursor'), ['ask:manual', 'plan:manual'])
+    assert.deepEqual(readOnlyModes('claude-code'), ['plan:manual'])
+    assert.deepEqual(readOnlyModes('grok'), ['plan:manual'])
+    assert.deepEqual(readOnlyModes('codex'), ['manual:manual'])
+    assert.deepEqual(readOnlyModes('kimi-code'), [])
   }
 
   function testCodexRenderResume(): void {

@@ -11,6 +11,7 @@
     "manual": {
       "$comment": "Codex's own Read only: commands run in a read-only sandbox with no network, so every edit, and every command that writes or reaches out, has to ask to leave it. Not `--ask-for-approval untrusted`: Codex 0.157 refuses that value on the command line (`invalid value 'untrusted'`) and in config (`no longer supported`), so a terminal launched with it never started.",
       "label": "Read only",
+      "readOnly": true,
       "summary": "Reads freely; asks to edit or go online.",
       "description": "Codex’s Read Only: it reads the workspace and runs commands in a read-only sandbox, and asks before it edits a file or uses the network.",
       "args": ["--ask-for-approval", "on-request", "--sandbox", "read-only"]

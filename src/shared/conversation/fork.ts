@@ -33,6 +33,7 @@ export function forkedAgentPatch(parent: AgentState, name: string): Partial<Agen
     ...(parent.cliPermissionPreset ? { cliPermissionPreset: parent.cliPermissionPreset } : {}),
     ...(parent.cliPermissionMode ? { cliPermissionMode: parent.cliPermissionMode } : {}),
     ...(parent.conversationMode ? { conversationMode: parent.conversationMode } : {}),
+    ...(parent.conversationModeHeld ? { conversationModeHeld: true as const } : {}),
     ...(parent.conversationReasoningEffort ? { conversationReasoningEffort: parent.conversationReasoningEffort } : {}),
     ...(parent.conversationSkills?.length ? { conversationSkills: [...parent.conversationSkills] } : {}),
   }

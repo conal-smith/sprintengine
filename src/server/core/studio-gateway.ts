@@ -122,6 +122,7 @@ export function createStudioGateway(core: StudioCore, options: StudioGatewayOpti
     ...createConversationTools({
       launch: (request) => core.conversationLaunchService.launch(request),
       resolveAgentPermissionPreset: core.resolveAgentPermissionPreset,
+      permissionModesOf: (cli) => listPluginRegistryEntries().find((entry) => entry.id === cli)?.permissionModes ?? [],
       lifecycle: core.conversationLifecycle,
       ...(options.linkLaunchedAgent ? { linkLaunchedAgent: options.linkLaunchedAgent } : {}),
       // A paired desktop's Delete on a settled chat here: this process's own

@@ -124,6 +124,13 @@ export type AgentLaunchServiceDeps = {
    */
   permissionPresetsForCli?: (cli: string) => readonly CliPermissionPreset[] | null
   /**
+   * The level this CLI's manifest holds one of its own modes at, or null when
+   * it has no such mode. A mode at a level the CLI has no preset for (Cursor's
+   * read-only Ask, at Manual) is told to it all the same, in its own flag.
+   * Optional, like `isAgentSelectableCli`.
+   */
+  permissionModeLevelForCli?: (cli: string, mode: string) => CliPermissionPreset | null
+  /**
    * Whether this CLI's manifest declares a resume it has been verified to
    * honour (`capabilities.resumeSession`). A launch that asks to resume a
    * session on one that does not is refused rather than started fresh under
@@ -208,7 +215,10 @@ export function createAgentLaunchService(deps: AgentLaunchServiceDeps): AgentLau
     }
 
     const declared = deps.permissionPresetsForCli?.(cli) ?? null
-    if (request.permissionPreset && declared && !declared.includes(request.permissionPreset)) {
+    const namedMode = parseCliPermissionModeId(request.permissionMode)
+    const modeHolds =
+      namedMode !== null && deps.permissionModeLevelForCli?.(cli, namedMode) === request.permissionPreset
+    if (request.permissionPreset && declared && !declared.includes(request.permissionPreset) && !modeHolds) {
       return {
         ok: false,
         code: 'unsupported_permission_preset',

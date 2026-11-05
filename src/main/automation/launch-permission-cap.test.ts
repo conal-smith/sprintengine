@@ -11,7 +11,11 @@ import type { Workspace } from '../../renderer/src/types/workspace'
 import type { ConversationLaunchRequest } from '../conversation-launch-service'
 import { createAutomationTools, type AutomationBackends } from './automation-tools'
 import { createConversationTools } from './conversation-tools'
-import { createAgentPermissionResolver, type AgentPermissionResolver } from './launch-permission-cap'
+import {
+  createAgentPermissionResolver,
+  resolveNamedPermissionMode,
+  type AgentPermissionResolver,
+} from './launch-permission-cap'
 
 const WORKSPACE: Workspace = {
   id: 'ws-1',
@@ -495,4 +499,26 @@ test('resolver: a connection naming no workspace is held to the strictest agent 
 test('resolver: an agent nothing knows is unresolved', () => {
   assert.equal(resolverOver({})({ workspaceId: 'ws-1', agentId: 'agent-ghost' }), null)
   assert.equal(resolverOver({})({ agentId: 'agent-ghost' }), null)
+})
+
+test('a named mode launches at its level, with its own id only where it has one', () => {
+  const modes = [
+    { id: 'none', label: 'Default', level: 'none' },
+    { id: 'ask', label: 'Ask', level: 'manual', readOnly: true },
+    { id: 'auto', label: 'Auto-review', level: 'auto' },
+  ] as const
+  assert.deepEqual(resolveNamedPermissionMode(modes, 'cursor', 'ask', undefined), {
+    ok: true,
+    permissionPreset: 'manual',
+    permissionMode: 'ask',
+  })
+  assert.deepEqual(resolveNamedPermissionMode(modes, 'cursor', 'auto', 'auto'), {
+    ok: true,
+    permissionPreset: 'auto',
+  })
+  const unknown = resolveNamedPermissionMode(modes, 'cursor', 'yolo', undefined)
+  assert.equal(!unknown.ok && unknown.code, 'unknown_permission_mode')
+  assert.match(!unknown.ok ? unknown.message : '', /Pass one of: none, ask, auto/)
+  const mismatched = resolveNamedPermissionMode(modes, 'cursor', 'ask', 'bypass')
+  assert.equal(!mismatched.ok && mismatched.code, 'invalid_arguments')
 })

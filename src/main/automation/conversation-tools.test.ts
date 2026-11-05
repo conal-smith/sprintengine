@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 
+import type { CliPermissionPreset } from '../../shared/cli-permission-preset'
 import type { LaunchedAgentLink } from '../agent-launch-notices'
 import type { ConversationLaunchRequest, ConversationLaunchResult } from '../conversation-launch-service'
 import { CONVERSATION_MUTATION_TOOL_NAMES, createConversationTools } from './conversation-tools'
@@ -17,10 +18,21 @@ const noLifecycle = {
   setAutoSettle: () => assert.fail('no Auto-settle is switched here'),
 }
 
-function tool(launch: (request: ConversationLaunchRequest) => Promise<ConversationLaunchResult>) {
+function tool(
+  launch: (request: ConversationLaunchRequest) => Promise<ConversationLaunchResult>,
+  ceiling: CliPermissionPreset = 'bypass',
+) {
   const [registration] = createConversationTools({
     launch,
-    resolveAgentPermissionPreset: () => 'bypass',
+    resolveAgentPermissionPreset: () => ceiling,
+    permissionModesOf: (cli) =>
+      cli === 'claude-code'
+        ? [
+            { id: 'manual', label: 'Manual', level: 'manual' },
+            { id: 'acceptEdits', label: 'Accept edits', level: 'auto' },
+            { id: 'plan', label: 'Plan', level: 'manual', readOnly: true },
+          ]
+        : [],
     lifecycle: noLifecycle,
   })
   assert.equal(registration?.name, 'conversation.create')
@@ -174,4 +186,53 @@ test('conversation.create links the calling agent to the chat it started, unless
   })).handler({ workspaceId: 'ws-1' }, caller)
   assert.equal((unlinked.structuredContent as { notifyParent: boolean }).notifyParent, false)
   assert.match((unlinked.structuredContent as { notifyParentReason: string }).notifyParentReason, /agent\.status/u)
+})
+
+const agentCaller = { metadata: { kind: 'studio-agent' as const, workspaceId: 'ws-1', agentId: 'agent-lead' } }
+
+const launchedChat: ConversationLaunchResult = {
+  ok: true,
+  workspaceId: 'ws-1',
+  agentId: 'agent-1',
+  name: 'Ada',
+  cli: 'claude-code',
+  providerId: 'claude-agent',
+  modelId: 'opus',
+  sessionId: 'conv_1',
+}
+
+test('conversation.create forwards a turn mode, and refuses one that is not a mode', async () => {
+  const requests: ConversationLaunchRequest[] = []
+  const create = tool(async (request) => (requests.push(request), launchedChat))
+  assert.ok((await create.handler({ workspaceId: 'ws-1', cli: 'cursor', mode: 'ask' })).structuredContent)
+  assert.equal(requests[0]?.mode, 'ask')
+  await create.handler({ workspaceId: 'ws-1', mode: 'default' })
+  assert.equal(requests[1]?.mode, undefined)
+  const bad = await create.handler({ workspaceId: 'ws-1', mode: 'yolo' })
+  assert.equal((bad.structuredContent as { error?: { code?: string } }).error?.code, 'invalid_arguments')
+  assert.equal(requests.length, 2)
+})
+
+test("conversation.create takes a mode its chat runs, at that mode's level and under the caller's cap", async () => {
+  const requests: ConversationLaunchRequest[] = []
+  const create = tool(async (request) => (requests.push(request), launchedChat))
+  const named = await create.handler({ workspaceId: 'ws-1', cli: 'claude-code', permissionMode: 'acceptEdits' })
+  assert.equal(named.isError, undefined, JSON.stringify(named.structuredContent))
+  assert.equal(requests[0]?.permissionPreset, 'auto')
+  assert.equal(requests[0]?.permissionMode, 'acceptEdits')
+
+  const code = (result: Awaited<ReturnType<typeof create.handler>>) =>
+    (result.structuredContent as { error?: { code?: string } }).error?.code
+  // `plan` is the CLI's in a terminal; a chat is put in it with `mode`.
+  assert.equal(
+    code(await create.handler({ workspaceId: 'ws-1', cli: 'claude-code', permissionMode: 'plan' })),
+    'unknown_permission_mode',
+  )
+  assert.equal(code(await create.handler({ workspaceId: 'ws-1', permissionMode: 'acceptEdits' })), 'invalid_arguments')
+
+  const capped = tool(async () => assert.fail('a looser mode does not launch'), 'manual')
+  assert.equal(
+    code(await capped.handler({ workspaceId: 'ws-1', cli: 'claude-code', permissionMode: 'acceptEdits' }, agentCaller)),
+    'permission_escalation',
+  )
 })

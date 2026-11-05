@@ -32,6 +32,9 @@ export type PluginPermissionPreset = {
   // permissions through its configuration rather than a flag.
   env?: Record<string, string>
   level?: import('./cli-permission-preset').CliPermissionPreset
+  // The CLI cannot change anything in this mode, whatever its tools are asked
+  // to do: what a caller after a read-only agent looks for in `cli.runtime.list`.
+  readOnly?: boolean
   summary?: string
   description?: string
 }

@@ -148,6 +148,12 @@ export type ConversationLaunchRequest = {
   /** The CLI's own mode at `permissionPreset`, read only beside it. */
   permissionMode?: string
   /**
+   * The mode every turn of the chat runs in, the first included, kept on its
+   * record. `ask` and `plan` are read-only. A provider that cannot run one
+   * refuses the launch (`unsupported_mode`), never running the chat without it.
+   */
+  mode?: 'default' | 'plan' | 'ask'
+  /**
    * Tools the chat's session may use without asking, by its CLI's names for
    * them. They hold for the session this launch starts, as `connectorId`'s
    * servers do; a session started again later (after a restart) asks as its
@@ -259,7 +265,7 @@ export type ConversationLaunchServiceDeps = {
   send: (
     input: Pick<
       ConversationSendTurnInput,
-      'sessionId' | 'commandId' | 'message' | 'skills' | 'attachments' | 'reasoningEffort'
+      'sessionId' | 'commandId' | 'message' | 'skills' | 'attachments' | 'reasoningEffort' | 'mode'
     >,
   ) => Promise<ConversationSessionActionResult>
   /**
@@ -268,6 +274,8 @@ export type ConversationLaunchServiceDeps = {
    * runtime's own resolver at the first send, and no id is refused up front.
    */
   ensureSkillInstalled?: (workingRoot: string, skillId: string) => Promise<EnsureSkillInstalledResult>
+  /** Whether a provider can run a turn in `ask` or `plan`. Absent, a launch naming one is refused. */
+  runsTurnModes?: (providerId: string) => boolean
   /**
    * The effort levels a CLI declares (its manifest's `reasoningSelection`),
    * which a requested effort must be one of. Absent, or empty for a CLI, and
@@ -533,6 +541,10 @@ export function createConversationLaunchService(deps: ConversationLaunchServiceD
     // preset's own mode.
     const ownMode = request.permissionPreset ? parseCliPermissionModeId(request.permissionMode) : permission.mode
     const permissionMode = ownMode && conversationPermissionModes(cli).includes(ownMode) ? ownMode : undefined
+    const turnMode = request.mode === 'plan' || request.mode === 'ask' ? request.mode : undefined
+    if (turnMode && !deps.runsTurnModes?.(providerId)) {
+      return { ok: false, code: 'unsupported_mode', message: `A ${cli} chat cannot run in ${turnMode} mode.` }
+    }
     const allowedTools = [...new Set((request.allowedTools ?? []).map((tool) => tool.trim()).filter(Boolean))]
     // A new chat's own worktree, last of the checks and before anything is
     // written: it is the folder the chat is born in, so the skills below are
@@ -615,6 +627,7 @@ export function createConversationLaunchService(deps: ConversationLaunchServiceD
       conversation: { providerId, modelId },
       cliPermissionPreset: permissionPreset,
       ...(permissionMode ? { cliPermissionMode: permissionMode } : {}),
+      ...(turnMode ? { conversationMode: turnMode, conversationModeHeld: true as const } : {}),
       // Where a window's New chat keeps its effort pick, and where every
       // window's chat view and a paired device's send read it for each turn.
       ...(reasoningEffort ? { conversationReasoningEffort: reasoningEffort } : {}),
@@ -745,6 +758,7 @@ export function createConversationLaunchService(deps: ConversationLaunchServiceD
             commandId: newCommandId(),
             message: prompt,
             ...(turnEffort ? { reasoningEffort: turnEffort } : {}),
+            ...(turnMode ? { mode: turnMode } : {}),
             ...(skills.length > 0 ? { skills: skills.map((id) => ({ id })) } : {}),
             ...(request.attachments?.length ? { attachments: request.attachments } : {}),
           })

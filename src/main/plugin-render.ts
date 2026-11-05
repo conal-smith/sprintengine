@@ -211,6 +211,7 @@ export function declaredPermissionModes(manifest: PluginManifest): CliPermission
   const describe = (entry: PluginPermissionPreset | undefined) => ({
     ...(entry?.summary ? { summary: entry.summary } : {}),
     ...(entry?.description ? { description: entry.description } : {}),
+    ...(entry?.readOnly === true ? { readOnly: true as const } : {}),
   })
   for (const [key, entry] of Object.entries(manifest.permissionPresets)) {
     if (key === 'none') {

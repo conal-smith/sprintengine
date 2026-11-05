@@ -80,6 +80,7 @@ import {
   capLaunchPermissionPreset,
   launchPermissionCeiling,
   refuseScheduledAgentRun,
+  resolveNamedPermissionMode,
   type AgentPermissionResolver,
 } from './launch-permission-cap'
 import { normalizeExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
@@ -364,6 +365,8 @@ type LaunchPlan = {
   prompt?: string
   cliModel?: string
   permissionPreset?: CliPermissionPreset
+  /** The CLI's own mode at `permissionPreset`, read only beside it. */
+  permissionMode?: string
   connectorId?: string
   worktreeRequested: boolean
   worktreeName?: string
@@ -647,6 +650,31 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     return capped.permissionPreset
   }
 
+  // `agent.launch`'s `permissionMode`, as the preset it runs at and the CLI's
+  // own id beside it. Nothing named reads as nothing to change.
+  function resolveLaunchPermissionMode(
+    args: Record<string, unknown>,
+  ): { permissionPreset?: CliPermissionPreset; permissionMode?: string } | McpToolResult {
+    if (args.permissionMode === undefined) return {}
+    const cli = optionalString(args.cli)
+    if (!cli) return failure('invalid_arguments', '"permissionMode" is one CLI\'s own mode: name the "cli" with it.')
+    const plugin = backends.listPlugins().find((candidate) => candidate.manifest.id === cli)
+    if (!plugin) return failure('unknown_cli', `No agent CLI "${cli}" is registered in this app.`)
+    const preset = validatePermissionPreset(args)
+    if (preset !== undefined && typeof preset !== 'string') return preset
+    const resolved = resolveNamedPermissionMode(
+      declaredPermissionModes(plugin.manifest),
+      cli,
+      args.permissionMode as string,
+      preset,
+    )
+    if (!resolved.ok) return failure(resolved.code, resolved.message)
+    return {
+      permissionPreset: resolved.permissionPreset,
+      ...(resolved.permissionMode ? { permissionMode: resolved.permissionMode } : {}),
+    }
+  }
+
   // The launch-config fields agent.launch and backlog.work both accept:
   // `permissionPreset` (either preset, or omitted for the spawn default)
   // and `worktree` (an object with an optional name — never a bare cwd). Returns
@@ -771,6 +799,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
       prompt: plan.prompt,
       cliModel: plan.cliModel,
       permissionPreset: plan.permissionPreset,
+      ...(plan.permissionMode ? { permissionMode: plan.permissionMode } : {}),
       connectorId: plan.connectorId,
       worktreePath: worktree?.path,
       ...(plan.agentId ? { agentId: plan.agentId } : {}),
@@ -1186,6 +1215,15 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
             'exactly as the desktop launcher would. The older "bypass_all" is read as "bypass". ' +
             CALLER_PRESET_CAP_SENTENCE,
         },
+        permissionMode: {
+          type: 'string',
+          description:
+            "One of this CLI's own modes by id, from `permissionModes` in cli.runtime.list; `readOnly` there " +
+            'marks the ones that can change nothing (Cursor\'s "ask" and "plan", Claude Code\'s "plan"). Needs ' +
+            '"cli". An id the CLI does not have is refused with "unknown_permission_mode". It runs at its own ' +
+            'level, which the cap above reads as it reads "permissionPreset"; name a preset beside it only if ' +
+            'it is that level.',
+        },
         connectorId: {
           type: 'string',
           description:
@@ -1223,7 +1261,15 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
     handler: async (args, context) => {
       const workspaceId = requireString(args, 'workspaceId')
       if (typeof workspaceId !== 'string') return workspaceId
-      const invalid = firstInvalidOptionalString(args, ['cli', 'name', 'prompt', 'cliModel', 'connectorId', 'host'])
+      const invalid = firstInvalidOptionalString(args, [
+        'cli',
+        'name',
+        'prompt',
+        'cliModel',
+        'connectorId',
+        'host',
+        'permissionMode',
+      ])
       if (invalid) return invalid
       const dashed = refuseOptionLikePrompt(args.prompt)
       if (dashed) return dashed
@@ -1231,7 +1277,12 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
         return failure('invalid_arguments', '"notifyParent" must be a boolean when provided.')
       }
 
-      const options = resolveLaunchOptions(args, context)
+      const namedMode = resolveLaunchPermissionMode(args)
+      if ('content' in namedMode) return namedMode
+      const options = resolveLaunchOptions(
+        namedMode.permissionPreset ? { ...args, permissionPreset: namedMode.permissionPreset } : args,
+        context,
+      )
       if ('content' in options) return options
 
       const host = args.host === undefined ? undefined : normalizeExecutionHostId(args.host)
@@ -1262,6 +1313,7 @@ export function createAutomationTools(backends: AutomationBackends): McpToolRegi
           prompt: optionalString(args.prompt),
           cliModel: optionalString(args.cliModel),
           permissionPreset: options.permissionPreset,
+          ...(namedMode.permissionMode ? { permissionMode: namedMode.permissionMode } : {}),
           connectorId: optionalString(args.connectorId),
           worktreeRequested: options.worktreeRequested,
           worktreeName: options.worktreeName,
@@ -3076,13 +3128,15 @@ function cliRuntimeProjection(plugin: LoadedPlugin): Record<string, unknown> {
     // The presets a launch on this CLI can honour: `none` always (it passes no
     // flag), each other one only where the manifest names its setting.
     permissionPresets: declaredPermissionPresets(manifest),
-    // The CLI's modes under its own names, each with the preset a caller names
-    // to get it. A mode that is not a preset's own is chosen in the app; a
-    // caller's preset runs that preset's own mode.
+    // The CLI's modes under its own names, each with the preset it runs at. A
+    // caller names a mode by its id (`permissionMode` on agent.launch and
+    // conversation.create), or the preset for that preset's own mode. `readOnly`
+    // marks a mode that can change nothing.
     permissionModes: declaredPermissionModes(manifest).map((mode) => ({
       id: mode.id,
       label: mode.label,
       preset: mode.level,
+      ...(mode.readOnly ? { readOnly: true } : {}),
     })),
   }
 }
