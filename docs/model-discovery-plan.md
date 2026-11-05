@@ -58,8 +58,10 @@ What each CLI offers, verified on 2026-09-22:
    settings is unchanged.
 7. **Probes run** after boot CLI detection, when a CLI's detected version
    differs from the version that produced its catalog, after an install or
-   update through the app, and on Refresh in Settings. Otherwise a catalog is
-   fresh for 24 hours. Probes run concurrently with a 20 s timeout each, through
+   update through the app, and on Refresh or Re-check in Settings. Otherwise a
+   catalog is fresh for an hour, and a window coming back to the front asks
+   again: what a CLI lists can move with the account it is signed in to, with
+   no new version to notice. Probes run concurrently with a 20 s timeout each, through
    the same posix / Windows / WSL spawn plumbing CLI detection uses.
 8. **Probes are declared in main-process code** keyed by plugin id, not in the
    plugin manifests. Adding a manifest field means an SDK change and a drift

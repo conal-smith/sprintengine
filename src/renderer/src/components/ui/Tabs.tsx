@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { AGENT_TAB_CLASS, AgentPill } from './AgentPresence'
 import { Badge } from './Badge'
 import { Tooltip } from './Tooltip'
 import { TAB_DROP_MARKER_INSET_PX, TAB_REORDER_THRESHOLD_PX, tabReorderSlot, tabReorderTargetIndex } from './tabReorder'
 import { FOCUS_RING_CLASS, FOCUS_RING_INSET_CLASS } from './tokens'
+import { SCROLL_FADE_PX, useFadingScroll } from './useFadingScroll'
 
 export type TabItem<T extends string = string> = {
   id: T
@@ -254,8 +255,8 @@ export function Tabs<T extends string = string>({
       if (!list || !scroller || rects.length === 0 || scroller.scrollWidth <= scroller.clientWidth) return
       const x = slot < rects.length ? rects[slot].left : rects[rects.length - 1].right
       const view = scroller.getBoundingClientRect()
-      const past = x - (view.right - STRIP_FADE_PX)
-      const before = view.left + STRIP_FADE_PX - x
+      const past = x - (view.right - SCROLL_FADE_PX)
+      const before = view.left + SCROLL_FADE_PX - x
       if (past > 0) scroller.scrollBy({ left: past, behavior: 'instant' })
       else if (before > 0) scroller.scrollBy({ left: -before, behavior: 'instant' })
     },
@@ -559,10 +560,6 @@ export function Tabs<T extends string = string>({
   )
 }
 
-// How far the fade at an overflowing edge reaches. One value, both edges.
-const STRIP_FADE_PX = 28
-const STRIP_FADE = `${STRIP_FADE_PX}px`
-
 type TabsScrollerProps = {
   children: React.ReactNode
   /** Classes on the scroll container itself (sizing, alignment). */
@@ -587,67 +584,13 @@ type TabsScrollerProps = {
  *   ancestor.
  */
 export function TabsScroller({ children, className }: TabsScrollerProps) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [edges, setEdges] = useState({ start: false, end: false })
-
-  const measure = useCallback(() => {
-    const el = ref.current
-    if (!el) return
-    // 1px slack: fractional layout widths leave a sub-pixel of "overflow" on a
-    // strip that fits, which would paint a fade over nothing.
-    const max = el.scrollWidth - el.clientWidth
-    const next = { start: el.scrollLeft > 1, end: el.scrollLeft < max - 1 }
-    setEdges((prev) => (prev.start === next.start && prev.end === next.end ? prev : next))
-  }, [])
-
-  // Layout effect: the fade is part of the first paint, not a correction to it.
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    measure()
-    if (typeof ResizeObserver !== 'function') return
-    // The container AND its content: a tab opening or closing changes the
-    // scroll width without changing the box the observer was watching.
-    const observer = new ResizeObserver(measure)
-    observer.observe(el)
-    for (const child of Array.from(el.children)) observer.observe(child)
-    return () => observer.disconnect()
-  }, [measure, children])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const onWheel = (event: WheelEvent) => {
-      if (el.scrollWidth <= el.clientWidth) return
-      // A trackpad's horizontal component is already the browser's to handle.
-      if (Math.abs(event.deltaX) >= Math.abs(event.deltaY) || event.deltaY === 0) return
-      event.preventDefault()
-      el.scrollLeft += event.deltaY
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [])
-
-  // Masked, not overlaid: a gradient block painted on top would have to know
-  // the band's background colour, and the strip sits on three different ones.
-  // The stops are a mask's ALPHA channel — "opaque here, transparent there" —
-  // so they are the one thing in this file that cannot come from a colour
-  // token: any ink would do, and naming one would imply the fade has a hue.
-  // design-tokens-allow: mask alpha channel, not ink — a colour token cannot express "opaque"
-  const OPAQUE = '#000'
-  const mask =
-    edges.start || edges.end
-      ? `linear-gradient(to right, transparent 0, ${OPAQUE} ${edges.start ? STRIP_FADE : '0px'}, ${OPAQUE} calc(100% - ${edges.end ? STRIP_FADE : '0px'}), transparent 100%)`
-      : undefined
-
+  const { ref, onScroll, style } = useFadingScroll<HTMLDivElement>([children], { claimWheel: true })
   return (
     <div
       ref={ref}
-      onScroll={measure}
+      onScroll={onScroll}
       className={['strip-scroll overflow-x-auto overflow-y-hidden', className ?? ''].filter(Boolean).join(' ')}
-      // design-tokens-allow: the two stops are a mask's alpha channel (opaque /
-      // transparent), not ink — no palette token can express them.
-      style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+      style={style}
     >
       {children}
     </div>

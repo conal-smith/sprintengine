@@ -148,13 +148,13 @@ test("main's own cache dates rows when the renderer sent nothing", async () => {
   ])
 })
 
-test('a catalog under a day old from the same version is fresh; force, age and a new version each re-probe', async () => {
+test('a catalog under an hour old from the same version is fresh; force, age and a new version each re-probe', async () => {
   const h = harness()
   await discoverCliModels({}, h.deps)
   const first = { ...h.cache.data }
   h.runs.length = 0
 
-  h.clock.now = T0 + 23 * 60 * 60 * 1000
+  h.clock.now = T0 + 59 * 60 * 1000
   const fresh = await discoverCliModels({ previous: first }, h.deps)
   assert.deepEqual(entryFor(fresh, 'codex'), { cli: 'codex', catalog: null, skipped: 'fresh' })
   assert.deepEqual(h.runs, [], 'nothing was started')
@@ -163,16 +163,16 @@ test('a catalog under a day old from the same version is fresh; force, age and a
   assert.deepEqual(h.runs, ['codex'])
 
   h.runs.length = 0
-  h.clock.now = T0 + 23 * 60 * 60 * 1000
+  h.clock.now = T0 + 59 * 60 * 1000
   h.availability.grok = { ...h.availability.grok, version: 'grok 1.0.26' }
   await discoverCliModels({}, h.deps)
   assert.deepEqual(h.runs, ['grok'], 'an updated CLI is asked again at once')
 
   h.runs.length = 0
-  // Codex was last asked (forced) at +23 h.
-  h.clock.now = T0 + 47 * 60 * 60 * 1000 + 1
+  // Codex was last asked (forced) at +59 min.
+  h.clock.now = T0 + 119 * 60 * 1000 + 1
   await discoverCliModels({ clis: ['codex'] }, h.deps)
-  assert.deepEqual(h.runs, ['codex'], 'a day-old catalog is asked again')
+  assert.deepEqual(h.runs, ['codex'], 'an hour-old catalog is asked again')
 })
 
 test('a fresh catalog main holds is handed to a renderer that does not hold it', async () => {

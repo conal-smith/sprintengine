@@ -18,6 +18,7 @@ let listing: HostsListResult
 let appUpdate: AppUpdateState
 // What a WSL machine's list reads back; nothing unless a case says so.
 let wslAvailability: Record<string, unknown>
+const discoverInputs: Array<{ force?: boolean }> = []
 const detectInputs: unknown[] = []
 const advisoryInputs: unknown[] = []
 let pushState: ((state: AppUpdateState) => void) | null = null
@@ -49,6 +50,10 @@ function stubApi(): void {
     hostsList: async () => listing,
     onHostsChanged: () => () => {},
     // Codex is installed here; a WSL probe finds what the case put there.
+    cliModelsDiscover: async (input: { force?: boolean }) => {
+      discoverInputs.push(input)
+      return { entries: [], startedAt: '', finishedAt: '' }
+    },
     pluginsDetectAvailability: async (input: { cliRuntimes?: Record<string, { hostId?: string }> }) => {
       detectInputs.push(input)
       const wsl = JSON.stringify(input).includes('"hostId":"wsl:')
@@ -246,6 +251,8 @@ test('Re-check asks main to detect every machine again, then reads both lists ba
   expect(advisoryInputs.at(-1)).toEqual({ detect: true, force: true })
   expect(detectInputs.length).toBeGreaterThanOrEqual(2)
   expect(detectInputs.every((input) => !(input as { force?: boolean }).force)).toBe(true)
+  // The models too, once the CLIs have been found again.
+  expect(discoverInputs.some((input) => input.force === true)).toBe(true)
 })
 
 test('a dismissed CLI update loses every badge but keeps its Update button', async () => {
