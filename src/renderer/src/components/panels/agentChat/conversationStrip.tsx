@@ -473,7 +473,9 @@ function BranchItem({
   // No branch glyph: on a strip whose every item is about the checkout, a
   // monospace name already reads as a branch, and the glyph was width the
   // name needed. A worktree is the exception worth a mark. The cut name is
-  // what is drawn; the whole one is what a screen reader hears.
+  // what is drawn; the whole one is what a screen reader hears. It keeps its
+  // width: the fit below cuts the text, and an item the row could squeeze
+  // would measure small, confirm the cut it has, and run under the counts.
   const cut = text !== branch.name
   const content = (
     <>
@@ -487,7 +489,7 @@ function BranchItem({
     <Tooltip
       content={branch.worktree ? `${branch.name} · worktree` : branch.name}
       placement="top"
-      wrapperClassName="flex min-w-0"
+      wrapperClassName="flex shrink-0"
     >
       {branch.onOpen ? (
         // The strip's ghost: the item reads as the line's text until the
@@ -501,7 +503,7 @@ function BranchItem({
           onClick={branch.onOpen}
           aria-label={branchItemLabel(branch)}
           data-strip-branch={branch.name}
-          className="min-w-0 gap-1.5 whitespace-nowrap"
+          className="gap-1.5 whitespace-nowrap"
         >
           {content}
         </GhostButton>
@@ -511,7 +513,7 @@ function BranchItem({
           role="img"
           aria-label={branchItemLabel(branch)}
           data-strip-branch={branch.name}
-          className="inline-flex h-control-xs min-w-0 items-center gap-1.5 whitespace-nowrap px-2 text-meta text-[color:var(--text-muted)]"
+          className="inline-flex h-control-xs items-center gap-1.5 whitespace-nowrap px-2 text-meta text-[color:var(--text-muted)]"
         >
           {content}
         </span>

@@ -16,9 +16,10 @@ const languages = new Set([
   "shell",
   "diff",
   "patch",
+  "java",
 ]);
 const keywords = new Set(
-  "const let var function return class extends import export from default async await new if else for while switch case break throw try catch finally true false null undefined interface type public private static def lambda None True False in is and or not with as yield pass elif except print do done then fi echo".split(
+  "const let var function return class extends import export from default async await new if else for while switch case break throw try catch finally true false null undefined interface type public private static def lambda None True False in is and or not with as yield pass elif except print do done then fi echo void int long short byte char float double boolean protected final abstract implements package this super throws synchronized volatile transient instanceof enum".split(
     " ",
   ),
 );
