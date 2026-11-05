@@ -30,8 +30,9 @@ last whole tile is never faded and the row says it goes on.
 ## Usage
 
 The scrollbar stays out of it, as a [tab strip's](../tabs/component.md) does: the
-fade and the buttons are what say there is more. A plain vertical wheel over the
-row scrolls it, because that is the gesture people make.
+fade and the buttons are what say there is more. Unlike a tab strip it leaves a
+vertical wheel alone: the row sits in a page that scrolls, and a person scrolling
+that page should not be caught by the tiles passing under the pointer.
 
 Use it for a handful of optional things to try, where seeing them all at once does
 not matter. A choice someone has to compare side by side belongs in a grid. Tiles

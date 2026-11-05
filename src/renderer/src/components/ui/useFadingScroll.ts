@@ -14,11 +14,13 @@ const SCROLL_FADE = `${SCROLL_FADE_PX}px`
 
 /**
  * What a row that scrolls sideways with no scrollbar needs: which edges have
- * content past them, a mask that fades those edges, and a plain vertical wheel
- * that scrolls it. `content` is what can change its scroll width.
+ * content past them, a mask that fades those edges, and, with `claimWheel`, a
+ * plain vertical wheel that scrolls it, for a row with no page to scroll beneath
+ * it. `content` is what can change its scroll width.
  */
 export function useFadingScroll<E extends HTMLElement>(
   content: DependencyList,
+  { claimWheel = false }: { claimWheel?: boolean } = {},
 ): {
   ref: React.RefObject<E | null>
   edges: { start: boolean; end: boolean }
@@ -55,7 +57,7 @@ export function useFadingScroll<E extends HTMLElement>(
 
   useEffect(() => {
     const el = ref.current
-    if (!el) return
+    if (!el || !claimWheel) return
     const onWheel = (event: WheelEvent) => {
       if (el.scrollWidth <= el.clientWidth) return
       // A trackpad's horizontal component is already the browser's to handle.
@@ -65,7 +67,7 @@ export function useFadingScroll<E extends HTMLElement>(
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [claimWheel])
 
   // Masked, not overlaid: a gradient block painted on top would have to know
   // the band's background colour, and these rows sit on several. The stops are

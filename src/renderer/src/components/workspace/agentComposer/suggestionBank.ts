@@ -10,7 +10,8 @@
 // and a re-render cannot reshuffle what someone is reading.
 
 /** Grouping used to keep one draw from being eight flavours of the same idea. */
-export type SuggestionCategory = 'review' | 'design' | 'performance' | 'security' | 'tests' | 'backlog' | 'docs' | 'deps'
+export type SuggestionCategory =
+  'review' | 'design' | 'performance' | 'security' | 'tests' | 'backlog' | 'docs' | 'deps'
 
 export type SuggestionEntry = {
   id: string

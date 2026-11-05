@@ -17983,7 +17983,7 @@ button.ds-inbox-row:not(.ds-inbox-row--selected):hover {
 <h4>States</h4>
 <ul><li><strong>Fits</strong>: no buttons, no fade. Nothing says it scrolls, because it does not.</li><li><strong>Overflowing</strong>: each edge with tiles past it fades to transparent, and the two buttons appear. A button with nothing past it in its direction is disabled.</li><li><strong>Reduced motion</strong>: a press jumps a page rather than gliding one.</li></ul>
 <h4>Usage</h4>
-<p>The scrollbar stays out of it, as a [tab strip's](../tabs/component.md) does: the fade and the buttons are what say there is more. A plain vertical wheel over the row scrolls it, because that is the gesture people make.</p>
+<p>The scrollbar stays out of it, as a [tab strip's](../tabs/component.md) does: the fade and the buttons are what say there is more. Unlike a tab strip it leaves a vertical wheel alone: the row sits in a page that scrolls, and a person scrolling that page should not be caught by the tiles passing under the pointer.</p>
 <p>Use it for a handful of optional things to try, where seeing them all at once does not matter. A choice someone has to compare side by side belongs in a grid. Tiles in a row keep <code>card-button</code>'s rule: hover changes the ground and nothing else.</p>
 <h4>Accessibility</h4>
 <p>The row is a <code>section</code> named by its heading. The tiles stay in reading order and take focus normally, so tabbing through them brings each one into view; a person on a keyboard never needs the buttons. The buttons are named &quot;Scroll back&quot; and &quot;Scroll on&quot;, and a disabled one says there is nothing more that way.</p>

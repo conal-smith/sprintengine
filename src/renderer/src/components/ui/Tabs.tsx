@@ -584,7 +584,7 @@ type TabsScrollerProps = {
  *   ancestor.
  */
 export function TabsScroller({ children, className }: TabsScrollerProps) {
-  const { ref, onScroll, style } = useFadingScroll<HTMLDivElement>([children])
+  const { ref, onScroll, style } = useFadingScroll<HTMLDivElement>([children], { claimWheel: true })
   return (
     <div
       ref={ref}
