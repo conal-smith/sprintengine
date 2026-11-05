@@ -141,7 +141,7 @@ export type AgentState = {
    * It belongs to its parent: the Agents tab lists it there, and no list of a
    * workspace's chats does.
    */
-  subagentOf?: { agentId: string; startedAt: number }
+  subagentOf?: { agentId: string; startedAt: number; task?: string }
   /** A sub-agent started read-only: `conversationMode` asks its CLI for its read-only mode. */
   subagentReadOnly?: true
   /**
@@ -342,6 +342,6 @@ export function defaultAgent(id: AgentId, name = id): AgentState {
 }
 
 /** Whether an agent record is a sub-agent, which belongs to its parent rather than to the workspace's lists. */
-export function isSubagentRecord(agent: Pick<AgentState, 'subagentOf'> | null | undefined): boolean {
+export function isSubagentRecord(agent: { subagentOf?: unknown } | null | undefined): boolean {
   return Boolean(agent?.subagentOf)
 }

@@ -86,7 +86,10 @@ class FakeIntersectionObserver {
   }
 }
 
-async function mountAgentsTab({ focused = true }: { focused?: boolean } = {}) {
+async function mountAgentsTab({
+  focused = true,
+  subagents = {},
+}: { focused?: boolean; subagents?: Record<string, unknown> } = {}) {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost', pretendToBeVisual: true })
   const previous = Object.getOwnPropertyDescriptors(globalThis)
   const globals = {
@@ -131,6 +134,7 @@ async function mountAgentsTab({ focused = true }: { focused?: boolean } = {}) {
             runtimeKind: 'conversation',
             conversation: { providerId: 'claude-agent', modelId: 'sonnet' },
           },
+          ...subagents,
         },
       },
     ] as never,
@@ -351,20 +355,112 @@ test('while the chat streams, the lanes follow on a short beat rather than every
   }
 })
 
-test('a working agent’s character is held by the live-row motion rule, as a transcript lane is', async () => {
+test('a working agent reads as its model, and is held by the live-row motion rule, as a transcript lane is', async () => {
   const tab = await mountAgentsTab()
   try {
     await tab.deliver(transcript)
     await showList(tab)
     const row = tab.button('Find the router')!
-    expect(row.querySelectorAll('.agent-glyph [class^="agent-glyph__"]').length).toBeGreaterThan(0)
+    expect(row.querySelector('svg path')?.getAttribute('fill')).toBe('#D97757') // design-tokens-allow: the maker's own mark
+    expect(row.querySelector('.agent-glyph')).toBeNull()
     // The row only says it is out of view; the stylesheet's pause rule holds
-    // the character still, and nothing is written inline to beat that rule.
+    // what moves in it still, and nothing is written inline to beat that rule.
     expect(row.hasAttribute('data-live-offscreen'), 'on screen, the row is unmarked').toBe(false)
     await tab.act(async () => observed.get(row)?.([{ target: row, isIntersecting: false }]))
     expect(row.hasAttribute('data-live-offscreen'), 'scrolled away, the row is marked').toBe(true)
     const inline = [...row.querySelectorAll<HTMLElement>('*')].map((el) => el.style.animationPlayState)
     expect(inline.filter(Boolean)).toEqual([])
+  } finally {
+    await tab.unmount()
+  }
+})
+
+const reviewer = {
+  id: 'agent-reviewer',
+  name: 'Cursor · muse-wonder-1.0',
+  runtimeKind: 'conversation',
+  conversation: { providerId: 'cursor-agent', modelId: 'muse-wonder-1.0[context=300k,reasoning_effort=high]' },
+  subagentOf: { agentId: 'agent', startedAt: 1_000, task: 'Review the calendar screen' },
+  subagentReadOnly: true,
+  subagentEnd: { at: 91_000, status: 'completed' },
+}
+const failedReviewer = {
+  ...reviewer,
+  id: 'agent-failed',
+  name: 'Cursor · grok-4.7',
+  conversation: { providerId: 'cursor-agent', modelId: 'grok-4.7[context=256k,reasoning_effort=high,fast=true]' },
+  subagentReadOnly: undefined,
+  subagentOf: { agentId: 'agent', startedAt: 2_000, task: 'Review the sidebar' },
+  subagentEnd: { at: 12_000, status: 'failed', error: 'The model is unavailable.' },
+}
+const someoneElses = {
+  ...reviewer,
+  id: 'agent-other',
+  name: 'Not this chat’s',
+  subagentOf: { agentId: 'agent-second', startedAt: 3_000, task: 'Something else' },
+}
+
+test('Studio sub-agents are listed beside native lanes, with the model’s mark and a Read-only badge', async () => {
+  const tab = await mountAgentsTab({
+    subagents: { 'agent-reviewer': reviewer, 'agent-failed': failedReviewer, 'agent-other': someoneElses },
+  })
+  try {
+    await tab.deliver(transcript)
+    await showList(tab)
+    const text = tab.host.textContent ?? ''
+    expect(text).toContain('Finished · 3')
+    expect(text).toContain('Working · 1')
+    expect(text).toContain('Cursor · muse-wonder-1.0')
+    expect(text).toContain('Read-only')
+    expect(text).toContain('Review the calendar screen')
+    expect(text).toContain('Done in 1m 30s')
+    expect(text).toContain('Failed after 10s')
+    expect(text).toContain('The model is unavailable.')
+    expect(text).not.toContain('Not this chat’s')
+    expect(text).toContain('1 working · 3 finished')
+  } finally {
+    await tab.unmount()
+  }
+})
+
+test('a Studio sub-agent opens onto its own transcript, its final reply as the report', async () => {
+  const tab = await mountAgentsTab({ subagents: { 'agent-reviewer': reviewer } })
+  try {
+    await tab.deliver(transcript)
+    await showList(tab)
+    await tab.act(async () => tab.button('Review the calendar screen')!.click())
+    await tab.deliver([
+      event('user_message', {
+        turnId: 'turn-1',
+        text: 'Act as the review sub-agent for this task.\n\nReview the calendar screen',
+        origin: { kind: 'studio', reason: 'subagent-task' },
+      }),
+      event('turn_started', { turnId: 'turn-1' }),
+      event('tool_started', { turnId: 'turn-1', toolCallId: 'read-1', tool: 'Read', summary: 'Read: calendar.png' }),
+      event('tool_output', { turnId: 'turn-1', toolUseId: 'read-1', output: 'image', status: 'ok' }),
+      event('content_delta', { turnId: 'turn-1', text: 'Verdict: 68/100.' }),
+      event('turn_completed', { turnId: 'turn-1' }),
+    ])
+    const thread = tab.host.textContent ?? ''
+    expect(thread).toContain('‹ All agents')
+    expect(thread).toContain('Act as the review sub-agent for this task.')
+    expect(thread).toContain('Report')
+    expect(thread).toContain('Verdict: 68/100.')
+    expect(thread).toContain('Read-only')
+    await tab.act(async () => tab.button('All agents')!.click())
+    expect(tab.host.textContent).toContain('Review the calendar screen')
+  } finally {
+    await tab.unmount()
+  }
+})
+
+test('a chat with only sub-agents is not told it has no agents', async () => {
+  const tab = await mountAgentsTab({ subagents: { 'agent-reviewer': reviewer } })
+  try {
+    await tab.deliver([])
+    await showList(tab)
+    expect(tab.host.textContent).not.toContain('No agents yet')
+    expect(tab.host.textContent).toContain('Finished · 1')
   } finally {
     await tab.unmount()
   }

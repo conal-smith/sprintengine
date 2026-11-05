@@ -1,15 +1,16 @@
 // Where a spawned agent stands, as its lane and the Agents panel show it: the
-// glyph beside it and the words that say working, done, failed or stopped.
+// model's mark beside it and the words that say working, done, failed or
+// stopped. The mark says who, so the words have to say how it is doing.
 
 import { createContext, useContext, type JSX } from 'react'
-import { AgentGlyph, TruncatedText, WorkingMark, type AgentGlyphState } from '../../ui'
-import { useWorkspaceStore } from '../../../store/workspaceStore'
+import { TruncatedText, type AgentGlyphState } from '../../ui'
 import { openAgentsPane } from '../../workspace/pane/agents/agentsPaneFocus'
 import { useConversationLinkContext } from './conversationLinks'
 import type { TranscriptToolEntry } from './conversationProjection'
 import { flattenToolEntries, subagentLaneLabel, toolObject } from './conversationTimeline'
 import { LiveElapsed } from './liveElapsed'
 import { formatStepDuration } from './stepDuration'
+import { SubagentIcon, useLaneParentCli } from './subagentIcon'
 import { subagentResultPreview, subagentRunsOn } from './subagentResult'
 import { ToolKindGlyph } from './toolRows/ToolKindGlyph'
 import { formatTokenCount } from '../../../utils/tokenFormat'
@@ -65,29 +66,18 @@ export function laneOutcomeWords(tool: TranscriptToolEntry): string | undefined 
 }
 
 /**
- * The mark beside an agent: its character, or, with characters turned off in
- * Settings, the working mark while it runs and the agent kind glyph after.
+ * The mark beside an agent: the harness doing the work, here the chat's own,
+ * since a lane in its transcript was spawned by that CLI. A chat with no record
+ * here (one on a paired machine) has the agent kind glyph.
  */
 export function LaneGlyph({ tool, className }: { tool: TranscriptToolEntry; className?: string }): JSX.Element {
-  const characters = useWorkspaceStore((state) => state.appSettings.appearance.agentCharacters)
-  return <LaneMark tool={tool} characters={characters} className={className} />
-}
-
-export function LaneMark({
-  tool,
-  characters,
-  className,
-}: {
-  tool: TranscriptToolEntry
-  characters: boolean
-  className?: string
-}): JSX.Element {
-  const state = laneAgentState(tool)
-  if (characters) return <AgentGlyph agentId={tool.id} state={state} className={className} />
-  if (state === 'working') return <WorkingMark label="Agent working" seed={tool.id} className={className} />
-  const ink = state === 'failed' ? 'text-[color:var(--tone-error)]' : 'text-[color:var(--text-subtle)]'
+  const cli = useLaneParentCli()
+  const failed = laneAgentState(tool) === 'failed'
+  if (cli) return <SubagentIcon cli={cli} className={`icon-sm shrink-0 ${className ?? ''}`} />
   return (
-    <span className={`flex shrink-0 ${ink} ${className ?? ''}`}>
+    <span
+      className={`flex shrink-0 ${failed ? 'text-[color:var(--tone-error)]' : 'text-[color:var(--text-subtle)]'} ${className ?? ''}`}
+    >
       <ToolKindGlyph kind="subagent" />
     </span>
   )

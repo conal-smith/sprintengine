@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { AgentGlyph } from "../../components/glyphs/AgentGlyph";
+import { CliLogo } from "../../components/glyphs/CliLogo";
 import { useSecondsClock } from "../../components/useNow";
 import { MarkdownDocument } from "../../components/document/MarkdownDocument";
 import { useTheme, useThemedStyles } from "../../theme/ThemeProvider";
@@ -9,7 +9,6 @@ import { monoFontFamily } from "../../theme/fonts";
 import { fontWeight, iconSize, radius, space, typography, type Theme } from "../../theme/tokens";
 import {
   laneDetail,
-  laneGlyphState,
   laneLabel,
   laneStatus,
   type AgentLane,
@@ -363,7 +362,18 @@ function StatusText({ lane, now, style }: { lane: AgentLane; now: number; style?
  * doing, what it was sent to do, and what it is doing now while it runs.
  * Tapping opens its own thread.
  */
-export function AgentLaneCard({ lane, now, onOpen }: { lane: AgentLane; now: number; onOpen?: () => void }) {
+export function AgentLaneCard({
+  lane,
+  now,
+  onOpen,
+  cli,
+}: {
+  lane: AgentLane;
+  now: number;
+  onOpen?: () => void;
+  /** The harness the chat runs on, whose agent this is: its logo is the lane's mark. */
+  cli: string | null;
+}) {
   const styles = useThemedStyles(createStyles);
   const detail = laneDetail(lane);
   return (
@@ -374,7 +384,7 @@ export function AgentLaneCard({ lane, now, onOpen }: { lane: AgentLane; now: num
       onPress={onOpen}
       style={({ pressed }) => [styles.lane, pressed ? styles.pressed : null]}
     >
-      <AgentGlyph agentId={lane.id} state={laneGlyphState(lane)} size={26} />
+      <CliLogo cli={cli} size={26} />
       <View style={styles.laneBody}>
         <View style={styles.laneTop}>
           <Text numberOfLines={1} style={styles.who}>
@@ -403,11 +413,13 @@ export function AgentListRow({
   now,
   onOpen,
   first,
+  cli,
 }: {
   lane: AgentLane;
   now: number;
   onOpen: () => void;
   first: boolean;
+  cli: string | null;
 }) {
   const styles = useThemedStyles(createStyles);
   const detail = laneDetail(lane);
@@ -419,7 +431,7 @@ export function AgentListRow({
       style={({ pressed }) => [styles.agentRow, first ? null : styles.agentRowRule, pressed ? styles.pressed : null]}
     >
       <View style={styles.agentGlyph}>
-        <AgentGlyph agentId={lane.id} state={laneGlyphState(lane)} size={26} />
+        <CliLogo cli={cli} size={26} />
       </View>
       <View style={styles.laneBody}>
         <View style={styles.laneTop}>

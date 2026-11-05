@@ -103,3 +103,49 @@ test('a steer in a mode of its own that the turn cannot take is refused busy, no
     await f.cleanup()
   }
 })
+
+test('a sub-agent is no chat of the list: it belongs to its parent', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'conversation-list-subagent-'))
+  const adapter = createMockConversationProvider()
+  const runtime = new ConversationRuntime({ adapters: [adapter], getProviderById: () => undefined })
+  const workspaceId = 'workspace'
+  const host = createConversationGatewayHost(
+    runtime,
+    () => workspaceRoot,
+    () => [{ workspaceRoot, workspaceId }],
+    () => 'bypass',
+    () => null,
+    async () => null,
+    {},
+    {
+      workspaceOf: () => ({
+        name: 'Chat',
+        createdAt: 1,
+        agents: { child: { subagentOf: { agentId: 'parent', startedAt: 1 } }, parent: {} },
+      }),
+    },
+  )
+  try {
+    for (const agentId of ['parent', 'child']) {
+      const started = await runtime.startSession({
+        workspaceRoot,
+        workspaceId,
+        agentId,
+        providerId: adapter.id,
+        modelId: adapter.listModels()[0]!,
+        permissionPreset: 'bypass',
+      })
+      assert.ok(started.ok)
+      await runtime.sendTurn({ sessionId: started.session.sessionId, message: 'hello' })
+    }
+    for (let wait = 0; wait < 300; wait += 1) {
+      const indexed = await runtime.listThreads({ workspaceRoot, workspaceId })
+      if (indexed.ok && indexed.threads.length === 2) break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.deepEqual((await host.list()).map((thread) => thread.agentId).sort(), ['parent'])
+  } finally {
+    await runtime.shutdown()
+    await rm(workspaceRoot, { recursive: true, force: true })
+  }
+})

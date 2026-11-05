@@ -66,6 +66,7 @@ import { EditFromHereAction, type EditFromHereDraft } from './editFromHere'
 import { ForkMessageAction, ForkReplyAction, type ForkFromHereTarget } from './forkFromHere'
 import { ResolvedPlanCard } from './planCard'
 import { SubagentLaneResult, subagentRunsOn } from './subagentResult'
+import { isSubagentStart, SubagentStartRow } from './subagentStartRow'
 import {
   AgentCardContent,
   AgentLaneSummary,
@@ -834,6 +835,7 @@ const WorkTimelineGroup = memo(function WorkTimelineGroup({ tools }: { tools: Tr
 }, sameSteps)
 export const WorkTimelineStep = memo(function WorkTimelineStep({ tool }: { tool: TranscriptToolEntry }) {
   if (tool.subagentLane) return <SubagentLane tool={tool} />
+  if (isSubagentStart(tool)) return <SubagentStartRow tool={tool} />
   // A plugin the agent offered is a card for the person, not a step of its
   // work. One that cannot be drawn (gone from its source, a chat on another
   // machine) falls back to its tool row, so the call is never lost.
@@ -943,8 +945,8 @@ export const SubagentLane = memo(function SubagentLane({ tool }: { tool: Transcr
   const headerClass = `relative flex w-full items-baseline gap-2 rounded-sm px-2 py-1 text-left text-meta ${headerInk}`
   const header = (
     <>
-      {/* The agent itself: a character that works while it runs and whose
-          face says how it ended. The words beside it say the same. */}
+      {/* The agent itself: the model doing the work. The words beside it say
+          how it is doing. */}
       <LaneGlyph tool={tool} className="self-center" />
       {expandable ? (
         <ChevronRightGlyph
