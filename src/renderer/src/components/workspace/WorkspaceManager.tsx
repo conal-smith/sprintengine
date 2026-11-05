@@ -34,6 +34,7 @@ import { AGENTS_SETTINGS_TAB } from './cliInstallRoute'
 import { resumeCapabilitiesForCli, subscribePluginCatalogRefreshOnFocus } from '../../store/slices/pluginsSlice'
 import { subscribeHostedCardFeedChanges } from '../../store/slices/hostedCardFeedSlice'
 import { startCliModelDiscovery } from '../../store/cliModelDiscovery'
+import { focusedChatEngine } from './agentComposer/focusedChatEngine'
 import { subscribeCliVersionAdvisoryChanges } from '../../store/slices/cliVersionAdvisorySlice'
 import { discoveredModelAdditions, newModelsNotice, sourceUpdatesNotice } from '../../utils/feedNotifications'
 import { getRendererHost, onThirdPartyRendererModulesLoaded, selectModuleEnabled } from '../../modules'
@@ -4717,6 +4718,7 @@ export default function WorkspaceManager() {
           workspaceId={windowActiveWorkspaceId ?? ''}
           conversationWorkspaceSupported={conversationSpawnEnabled}
           initialSelection={lastNewChatAgent}
+          initialEngine={focusedChatEngine(windowActiveWorkspaceId)}
           permissionPreset={agentSpawnPermissionPreset}
           onLaunch={({ prompt, images, files, ...confirm }) =>
             runComposerSpawnRef.current(confirm, { tabId, prompt, images, files, agentName })

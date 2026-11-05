@@ -31,15 +31,24 @@ import { listPluginRegistryEntries } from './plugin-registry-instance'
 // reads the last answer each machine gave (`knownCliAvailability`) and asks
 // only the package registry.
 //
-// A CLI installed from a terminal after startup therefore waits for Re-check.
-// That was already the case for the fifteen minutes a probe used to be held,
-// and a launch of a CLI believed missing looks again before refusing (see
-// `preflightAgentCliLaunch`).
+// "Not installed" is the one answer that goes stale in a way nobody can see: a
+// CLI updated in a terminal is absent for a moment, and one installed from a
+// terminal arrives with no event. Held for good, the CLI would stay out of
+// every picker until Re-check, so that answer goes stale, while a CLI that is
+// there stays cached. On macOS and Linux looking for an absent CLI starts no
+// process, so two minutes costs nothing; on Windows it starts a PowerShell or a
+// `wsl.exe` for each machine, so it waits longer. A launch of a CLI believed
+// missing looks again before refusing too (see `preflightAgentCliLaunch`).
 const DEFAULT_CACHE_TTL_MS = Number.POSITIVE_INFINITY
+const NOT_INSTALLED_TTL_MS = (process.platform === 'win32' ? 15 : 2) * 60 * 1000
 
 const KEY_SEP = '\0'
 
 type CacheEntry = { availability: CliAvailability; expiresAt: number }
+
+function heldFor(availability: CliAvailability, ttlMs: number): number {
+  return availability.installed ? ttlMs : Math.min(ttlMs, NOT_INSTALLED_TTL_MS)
+}
 
 const cache = new Map<string, CacheEntry>()
 
@@ -176,7 +185,7 @@ export function recordCliDetection(
     version: detected.version,
   }
   const now = deps.now ?? Date.now
-  cache.set(key, { availability, expiresAt: now() + (deps.ttlMs ?? DEFAULT_CACHE_TTL_MS) })
+  cache.set(key, { availability, expiresAt: now() + heldFor(availability, deps.ttlMs ?? DEFAULT_CACHE_TTL_MS) })
   setKnown(key, hostId, availability)
 }
 
@@ -358,7 +367,7 @@ export async function detectAgentCliAvailability(
       version: detected.version,
     }
     result[cli] = availability
-    cache.set(key, { availability, expiresAt: now() + ttlMs })
+    cache.set(key, { availability, expiresAt: now() + heldFor(availability, ttlMs) })
     setKnown(key, hostId, availability)
   }
 

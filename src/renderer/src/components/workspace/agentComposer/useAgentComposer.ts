@@ -1,5 +1,6 @@
 import React from 'react'
 import type { AgentCliAvailabilityMap } from '../../../../../shared/electron-api'
+import type { CredentialSecretStatusResult } from '../../../../../shared/electron-api'
 import type { AgentCli } from '../../../types/workspace'
 import type { WorkspaceSkill } from '../../../../../shared/electron-api'
 import {
@@ -7,12 +8,14 @@ import {
   resolveCliReasoning,
   resolveSurfaceModel,
   selectAgentCliCatalog,
+  withoutUnkeyedRuntimes,
   type AgentCliCatalogOption,
 } from '../newWorkspace/cliRuntimeOptions'
 import { normalizeSelectedCli } from '../../../store/slices/settingsSlice'
 import { conversationProviderForCli } from '../../../../../shared/conversation-harness'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
 import { clientSupports } from '../../../clientCapabilities'
+import { subscribeCliKeyChanges } from './cliKeyChanges'
 
 // The agent a composer surface picks. The engine (CLI/model) is bound to the
 // selection and read from the store's remembered defaults, so a confirm only
@@ -162,6 +165,44 @@ type UseAgentComposerOptions = {
   availability?: { map: AgentCliAvailabilityMap; status: 'loading' | 'ready' | 'error' }
 }
 
+/** Whether a key status leaves a runtime in the pickers: only a clear "none" takes it out. */
+export function keyMayBeSet(result: CredentialSecretStatusResult): boolean {
+  return !result.ok || result.status.configured
+}
+
+/**
+ * The runtimes needing a key that have one saved, or null until that has been
+ * read. A key that cannot be read is not "no key": it stays in, and its launch
+ * says so if there is none.
+ */
+function useCliIdsWithKey(ids: string): ReadonlySet<string> | null {
+  const [withKey, setWithKey] = React.useState<ReadonlySet<string> | null>(null)
+  React.useEffect(() => {
+    const read = window.api?.credentialSecretStatus
+    if (typeof read !== 'function') return
+    let cancelled = false
+    const wanted = ids ? ids.split('\u0000') : []
+    const readAll = () =>
+      void Promise.all(
+        wanted.map((id) =>
+          read({ id }).then(
+            (result) => (keyMayBeSet(result) ? id : null),
+            () => id,
+          ),
+        ),
+      ).then((answers) => {
+        if (!cancelled) setWithKey(new Set(answers.filter((id): id is string => id !== null)))
+      })
+    readAll()
+    const stop = subscribeCliKeyChanges(readAll)
+    return () => {
+      cancelled = true
+      stop()
+    }
+  }, [ids])
+  return withKey
+}
+
 /**
  * The agent CLIs this machine can launch, as every model picker lists them:
  * the plugin catalog, filtered to what is installed, with each CLI's own model
@@ -219,7 +260,18 @@ export function useAgentComposer({
   const setLastSelectedAgentReasoning = useWorkspaceStore((s) => s.setLastSelectedAgentReasoning)
   const pluginCatalogStatus = useWorkspaceStore((s) => s.pluginCatalogStatus)
   const pluginCatalogError = useWorkspaceStore((s) => s.pluginCatalogError)
-  const agentCliOptions = useAgentCliCatalogOptions(availability)
+  // What a launch can start. A running chat reads the whole catalog instead, so
+  // one whose key has since gone keeps its model list and labels.
+  const catalogOptions = useAgentCliCatalogOptions(availability)
+  const keyedIds = React.useMemo(
+    () => catalogOptions.flatMap((option) => (option.needsCredential ? [option.value] : [])).join('\u0000'),
+    [catalogOptions],
+  )
+  const withKey = useCliIdsWithKey(keyedIds)
+  const agentCliOptions = React.useMemo(
+    () => withoutUnkeyedRuntimes(catalogOptions, withKey),
+    [catalogOptions, withKey],
+  )
   // The CLIs a chat agent can run on: the installed ones with a conversation
   // runtime. The picker's rail offers only these while Chat agent is chosen,
   // because a chat on any other CLI would have nothing to drive it.
@@ -296,10 +348,10 @@ export function useAgentComposer({
       // The opening engine answers for ITS OWN runtime only, exactly as a
       // stored pair does: a model chosen for one CLI must never surface on
       // another.
-      if (openingEngine && resolvePickerCli(openingEngine.cli) === cli) return openingEngine.model ?? undefined
+      if (openingEngine?.cli === cli) return openingEngine.model ?? undefined
       return resolveSurfaceModel(cli, lastSelectedAgentModel ?? undefined)
     },
-    [lastSelectedAgentModel, openingEngine, resolvePickerCli],
+    [lastSelectedAgentModel, openingEngine],
   )
 
   // Display names for a selection's remembered engine. Resolved from the
@@ -328,7 +380,7 @@ export function useAgentComposer({
   const reasoningForSelection = React.useCallback(
     (target: AgentComposerSelection, cli: AgentCli): string | undefined => {
       if (target.kind === 'terminal') return undefined
-      if (openingEngine && resolvePickerCli(openingEngine.cli) === cli) return openingEngine.reasoning ?? undefined
+      if (openingEngine?.cli === cli) return openingEngine.reasoning ?? undefined
       return resolveCliReasoning(cli, lastSelectedAgentModel ?? undefined)
     },
     [lastSelectedAgentModel, openingEngine, resolvePickerCli],
