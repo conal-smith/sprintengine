@@ -235,6 +235,13 @@ export function cliForChatProvider(providerId: string | null | undefined): strin
   return match ? match[1] : null;
 }
 
+/** The harness a chat runs on, however it is known. */
+export function chatThreadCli(
+  thread: { models?: { cli?: string | null } | null; providerId?: string | null } | null | undefined,
+): string | null {
+  return thread?.models?.cli ?? cliForChatProvider(thread?.providerId);
+}
+
 /**
  * The presets a phone may offer for a chat on one desktop, in the menu's order.
  *

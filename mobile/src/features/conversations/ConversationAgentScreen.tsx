@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-import { AgentGlyph } from "../../components/glyphs/AgentGlyph";
+import { CliLogo } from "../../components/glyphs/CliLogo";
 import { MarkdownDocument } from "../../components/document/MarkdownDocument";
 import { PrimaryButton } from "../../components/PrimaryButton";
 import { Screen } from "../../components/Screen";
@@ -15,7 +15,6 @@ import {
   formatDuration,
   formatElapsed,
   formatTokens,
-  laneGlyphState,
   laneLabel,
   laneNow,
   laneStatus,
@@ -24,6 +23,7 @@ import {
 } from "./agentLogic";
 import { ToolStepRow, type StepDetailSource } from "./conversationParts";
 import { toolDetailChat } from "./toolOutput";
+import { chatThreadCli } from "./launchLogic";
 import { useLiveConversation, type LiveConversationKey } from "./liveConversation";
 
 /**
@@ -100,7 +100,7 @@ export function ConversationAgentScreen({
   return (
     <Screen title={laneLabel(lane)} onBack={onBack} backLabel="All agents">
       <View style={styles.hero}>
-        <AgentGlyph agentId={lane.id} state={laneGlyphState(lane)} size={44} />
+        <CliLogo cli={chatThreadCli(live?.effectiveThread)} size={44} />
         <View style={styles.heroText}>
           <Text style={[styles.who, status.tone === "failed" ? styles.errorInk : null]}>
             {laneLabel(lane)} · {running ? "Working" : status.text}

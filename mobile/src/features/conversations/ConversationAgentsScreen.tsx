@@ -7,6 +7,7 @@ import { useThemedStyles } from "../../theme/ThemeProvider";
 import { fontWeight, space, typography, type Theme } from "../../theme/tokens";
 import { summarizeAgents, type AgentLane } from "./agentLogic";
 import { AgentListRow } from "./conversationParts";
+import { chatThreadCli } from "./launchLogic";
 import { useLiveConversation, type LiveConversationKey } from "./liveConversation";
 
 /**
@@ -41,6 +42,7 @@ export function ConversationAgentsScreen({
               lane={lane}
               now={now}
               first={index === 0}
+              cli={chatThreadCli(live?.effectiveThread)}
               onOpen={() => onOpenAgent(lane.id)}
             />
           ))}

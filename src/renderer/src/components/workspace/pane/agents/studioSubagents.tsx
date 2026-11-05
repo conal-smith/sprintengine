@@ -33,7 +33,6 @@ export type StudioSubagent = {
   id: string
   name: string
   cli: AgentCli | null
-  modelId: string | null
   readOnly: boolean
   status: SubagentStatus
   task: string
@@ -57,7 +56,6 @@ export function useStudioSubagents(workspaceId: string, agentId: string): Studio
         id,
         name: agent.name,
         cli: cliForConversationProvider(agent.conversation?.providerId) as AgentCli | null,
-        modelId: agent.conversation?.modelId ?? null,
         readOnly: agent.subagentReadOnly === true,
         status: subagentStatusOf(agent, summary),
         task: agent.subagentOf.task ?? '',
@@ -108,7 +106,7 @@ export function StudioSubagentRow({
     >
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2 text-meta">
-          <SubagentIcon cli={subagent.cli} modelId={subagent.modelId} />
+          <SubagentIcon cli={subagent.cli} />
           <span className="shrink-0 font-medium text-[color:var(--text-default)]">{subagent.name}</span>
           {subagent.readOnly ? <ReadOnlyBadge /> : null}
           <span className="ml-auto shrink-0 pl-2 text-micro tabular-nums text-[color:var(--text-subtle)]">
@@ -200,7 +198,7 @@ export const StudioSubagentThread = React.memo(function StudioSubagentThread({
           ‹ All agents
         </GhostButton>
         <div className="mt-2 flex items-center gap-2 px-2 text-body">
-          <SubagentIcon cli={subagent.cli} modelId={subagent.modelId} />
+          <SubagentIcon cli={subagent.cli} />
           <span className="min-w-0 truncate font-medium text-[color:var(--text-strong)]">{subagent.name}</span>
           {subagent.readOnly ? <ReadOnlyBadge /> : null}
           <span className="ml-auto shrink-0 text-meta tabular-nums text-[color:var(--text-subtle)]">

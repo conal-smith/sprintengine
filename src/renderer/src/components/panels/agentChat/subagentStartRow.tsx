@@ -4,7 +4,7 @@ import type { AgentCli } from '../../../types/workspace'
 import { studioToolName } from './chatActivity'
 import { ConversationMarkdown } from './conversationLinks'
 import type { TranscriptToolEntry } from './conversationProjection'
-import { SubagentIcon } from './subagentIcon'
+import { SubagentIcon, useLaneParentCli } from './subagentIcon'
 import { useOpenAgentsPane } from './subagentStatus'
 import { ToolKindGlyph } from './toolRows/ToolKindGlyph'
 
@@ -58,14 +58,15 @@ export function SubagentStartRow({ tool }: { tool: TranscriptToolEntry }): JSX.E
   const [replyOpen, setReplyOpen] = useState(false)
   const input = inputOf(tool)
   const { subagentId, result } = answerOf(tool)
-  const cli = typeof input.cli === 'string' ? (input.cli as AgentCli) : null
-  const model = typeof input.cliModel === 'string' ? input.cliModel : null
+  // A call that names no CLI starts one on this chat's own.
+  const chatCli = useLaneParentCli()
+  const harness = typeof input.cli === 'string' ? (input.cli as AgentCli) : chatCli
   const words = subagentStartWords(tool)
   return (
     <div className="min-w-0">
       <RowButton density="row" onClick={() => open?.(subagentId)} aria-label={`${words}. Open in Agents`}>
         <span className="flex min-w-0 flex-1 items-center gap-2 text-meta text-[color:var(--text-muted)]">
-          {cli || model ? <SubagentIcon cli={cli} modelId={model} /> : <ToolKindGlyph kind="subagent" />}
+          {harness ? <SubagentIcon cli={harness} /> : <ToolKindGlyph kind="subagent" />}
           <TruncatedText as="span" text={words} className="min-w-0" />
         </span>
       </RowButton>
