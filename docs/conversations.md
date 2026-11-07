@@ -236,9 +236,13 @@ Comment: your comment, when there is one
 The quote rides inside the message's own text, so a queued, scheduled,
 retried or recalled message and Edit from here keep their chips. Anywhere a
 message is shown as plain words — a chat's title, the history search, an
-export, a preview — a quote reads as its passage and comment. A phone or
-another desktop following the chat over the tailnet sees the same words, and
-a chat on a paired machine quotes as a blockquote.
+export, a preview — a quote reads as its passage and comment. A phone
+following the chat over the tailnet sees the same words. A chat on a paired
+machine quotes as a chat here does, chips, marks and Go to source included,
+and that machine's agent reads the same `[quote N]` block, where both Studios
+take a quote's token (`conversation-quote-tokens`). With a machine that does
+not, a chat quotes as a blockquote. A passage holding a path of that machine
+carries it as this machine reads it, relative to the chat's folder.
 
 ## Installed CLI providers
 

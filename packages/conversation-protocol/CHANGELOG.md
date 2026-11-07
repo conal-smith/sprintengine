@@ -31,6 +31,16 @@
   `queue` only to a desktop that advertises the capability. The pinned files
   are unchanged.
 
+- **A quote can cross the wire as its token.**
+  `CONVERSATION_QUOTE_TOKENS_CAPABILITY` (`conversation-quote-tokens`) names a
+  desktop that expands a quote's token in a message it is sent into what its
+  agent reads. It leaves tokens in the `text` of a socket's `user_message`
+  events and `queued` and `scheduled` messages only for a client that named the
+  capability in `clientCapabilities`, a new optional member of
+  `ConversationHelloRequest` that `parseConversationClientMessage` keeps and
+  `parseConversationClientCapabilities` reads; every other client reads a quote
+  as words, as before. The pinned files are unchanged.
+
 - **A paired device can make an "always allow" rule.**
   `CONVERSATION_PERMANENT_APPROVALS_CAPABILITY`
   (`conversation-permanent-approvals`) names a desktop that takes

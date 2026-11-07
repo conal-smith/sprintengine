@@ -2763,11 +2763,12 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
     loadEarlier,
     submit: submitComposer,
   })
-  // A chat on another machine keeps the blockquote: the token a quote rides in
-  // stays on the machine that made it, and the wire carries messages as words
-  // (docs/compatibility.md), so the far side would neither mark the passage
-  // nor, on an older release, expand it for its agent.
-  const citeIntoComposer = transport.kind === 'local' ? chatQuotes.cite : undefined
+  // A chat on another machine quotes as a chat here does where that machine
+  // says it expands a quote's token for its agent. It sends the token back to
+  // this client, so the chip and the mark survive the wire. Any other keeps the
+  // blockquote: an older release would hand its agent the address, and the
+  // message would come back as words (docs/compatibility.md).
+  const citeIntoComposer = transport.capabilities.quotes ? chatQuotes.cite : undefined
   const goToQuoteSource = chatQuotes.goToSource
   const quoteActions = useMemo(() => ({ goToSource: goToQuoteSource }), [goToQuoteSource])
   // Replay: the conversation played back from its first message, drawn over

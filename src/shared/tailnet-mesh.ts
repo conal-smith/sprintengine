@@ -802,6 +802,11 @@ export type MeshConversationFrame =
  * `permanentApprovals`: the machine advertises
  * `conversation-permanent-approvals` — an approval in its chats may be
  * answered here with "Always allow … in this workspace", the rule saved there.
+ *
+ * `quotes`: the machine advertises `conversation-quote-tokens` — a quote made
+ * in its chats here may ride as a token, which it expands for its agent. False
+ * for a machine that would hand its agent the address, where Quote writes a
+ * blockquote.
  */
 export type MeshConversationListResult =
   | {
@@ -832,6 +837,7 @@ export type MeshConversationListResult =
       usageLimits?: boolean
       queuedAttachments?: boolean
       permanentApprovals?: boolean
+      quotes?: boolean
       createPullRequest?: boolean
       rowMenu?: boolean
       markUnread?: boolean

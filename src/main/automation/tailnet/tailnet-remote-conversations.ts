@@ -18,6 +18,7 @@ import {
 } from '../../../../packages/conversation-protocol/src/clientFrames'
 import {
   CONVERSATION_QUEUED_SENDS_CAPABILITY,
+  CONVERSATION_QUOTE_TOKENS_CAPABILITY,
   CONVERSATION_SCHEDULED_SENDS_CAPABILITY,
   CONVERSATION_USAGE_LIMITS_CAPABILITY,
   conversationPeerSupports,
@@ -493,6 +494,7 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
     follow.socket = socket
     follow.synchronized = false
     options.onReachable?.(connection.id)
+    declareReads(follow)
     subscribe(follow)
   }
 
@@ -891,6 +893,24 @@ export function createRemoteConversations(options: RemoteConversationsOptions): 
         message: answer.message ?? readRefusal(answer.code, machineName(follow)),
       }
     }
+  }
+
+  /**
+   * Say what this client reads, ahead of the `subscribe` whose replay it
+   * shapes: a machine sends a quote's token only to a socket that asked. Said
+   * to a machine that has not said what it serves as well, whose copy of the
+   * chat would otherwise settle on words; one from before it drops the member
+   * or refuses the frame, and nobody waits on the answer. Never to one that
+   * said and left `conversation-quote-tokens` out.
+   */
+  function declareReads(follow: Follow): void {
+    const capabilities = options.capabilitiesOf?.(follow.key.connectionId)
+    if (capabilities && !conversationPeerSupports(capabilities, CONVERSATION_QUOTE_TOKENS_CAPABILITY)) return
+    send(follow, {
+      type: 'hello',
+      requestId: `hello-${++follow.requestSequence}`,
+      clientCapabilities: [CONVERSATION_QUOTE_TOKENS_CAPABILITY],
+    })
   }
 
   /**
