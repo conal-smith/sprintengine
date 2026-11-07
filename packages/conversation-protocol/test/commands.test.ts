@@ -70,6 +70,24 @@ test('hello asks the desktop for its version and capabilities', () => {
   for (const protocolVersion of [0, 1.5, '1', -2])
     assert.equal(parseConversationClientMessage({ type: 'hello', requestId: 'h-1', protocolVersion }), null)
   assert.equal(parseConversationClientMessage({ type: 'hello' }), null)
+  // What the client reads rides beside it; a member that does not read is no
+  // names, never a refused hello.
+  assert.deepEqual(
+    parseConversationClientMessage({
+      type: 'hello',
+      requestId: 'h-1',
+      clientCapabilities: ['conversation-quote-tokens', 7, 'Not A Name', ''],
+    }),
+    { type: 'hello', requestId: 'h-1', clientCapabilities: ['conversation-quote-tokens'] },
+  )
+  for (const clientCapabilities of ['conversation-quote-tokens', null, {}, [], [1]])
+    assert.deepEqual(parseConversationClientMessage({ type: 'hello', requestId: 'h-1', clientCapabilities }), {
+      type: 'hello',
+      requestId: 'h-1',
+    })
+  const many = Array.from({ length: 100 }, (_, index) => `name-${index}`)
+  const hello = parseConversationClientMessage({ type: 'hello', requestId: 'h-1', clientCapabilities: many })
+  assert.equal(hello?.type === 'hello' ? hello.clientCapabilities?.length : 0, 64)
   // A desktop from before hello answers it under its request id, which is
   // how a client tells an old desktop from a broken one.
   assert.equal(parseConversationClientFrame({ type: 'hello', requestId: 'h-1' }), null)

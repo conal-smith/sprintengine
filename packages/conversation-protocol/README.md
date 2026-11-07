@@ -111,6 +111,11 @@ the capabilities the transport's own handshake listed. Ask capabilities, not
 the version, whether a feature is there; `checkConversationProtocolVersion`
 refuses a peer outside the window and names both numbers.
 
+A `hello` may also carry `clientCapabilities`, the capability names of what
+this client reads that a desktop must otherwise keep from it. It holds for the
+socket it was said on, so send it ahead of your `subscribe`; you need not wait
+for the answer. A desktop that does not know the member drops it.
+
 The full contract reads frames with `parseConversationClientMessage`, which
 takes every first-version frame exactly as `parseConversationClientFrame` does
 and adds, each behind its capability:
@@ -260,6 +265,14 @@ under their `requestId`, as it answers `watchQueued`.
   its own "always allow" rules, as its own "Always allow … in this workspace"
   saves one. A desktop without it refuses the decision as
   `unsafe_remote_decision`, as the first version does.
+- `conversation-quote-tokens`: a quote of an earlier reply may cross the wire
+  as the token the desktop keeps it in, a Markdown link with a scheme of its
+  own, and both ends must say so. The desktop advertises it, and expands a
+  token in a message it is sent into what its agent reads, so write one only
+  where it is listed. A client names it in `clientCapabilities` on its `hello`,
+  and only then does the desktop leave tokens in the `text` of that socket's
+  `user_message` events and held and scheduled messages. Without that a quote
+  arrives as words: its passage as a blockquote, then `Comment: …`.
 
 `conversation-message-images` (`CONVERSATION_MESSAGE_IMAGES_CAPABILITY`)
 names no frame. A `user_message`'s `attachments` record each picture the

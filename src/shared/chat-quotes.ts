@@ -22,7 +22,10 @@
 //   the token becomes `[quote N]` where it stood and the passage, with its
 //   comment, is set out once in a block after the message;
 // - anything that shows the message as plain text reads it as the passage and
-//   comment (`quotesToPlainText`), never as the address.
+//   comment (`quotesToPlainText`), never as the address;
+// - a device is sent the words, unless both ends said they take the token
+//   (`conversation-quote-tokens`), which then crosses the wire as it stands
+//   here, its words rewritten as the frame's are (`mapQuoteWords`).
 //
 // The number is the quote's within its conversation, stored in the token so
 // the chip, the highlight and the agent's text agree on it.
@@ -191,6 +194,33 @@ export function clipKeepingQuotes(text: string, max: number): string {
   if (text.length <= max) return text
   const split = collectQuotes(text).find((quote) => quote.from < max && quote.to > max)
   return text.slice(0, split ? split.from : max)
+}
+
+/**
+ * `text` with every word its tokens carry passed through `rewrite`: the
+ * rewrite a frame's strings get cannot reach them, percent-encoded inside an
+ * address. Context kept up to its cap loses the word at its cut, which may be
+ * a stretch of a path no rewrite would recognise; it only tells repeats apart,
+ * so finding the passage does not need it.
+ */
+export function mapQuoteWords(text: string, rewrite: (words: string) => string): string {
+  let out = ''
+  let at = 0
+  for (const quote of collectQuotes(text)) {
+    const { from, to, token: _token, ...fields } = quote
+    const prefix = quote.prefix.length < QUOTE_CONTEXT_CHARS ? quote.prefix : quote.prefix.replace(/^\S+\s*/u, '')
+    const suffix = quote.suffix.length < QUOTE_CONTEXT_CHARS ? quote.suffix : quote.suffix.replace(/\s*\S+$/u, '')
+    out += `${text.slice(at, from)}${quoteToken({
+      ...fields,
+      quote: rewrite(quote.quote),
+      exact: rewrite(quote.exact),
+      prefix: rewrite(prefix),
+      suffix: rewrite(suffix),
+      comment: rewrite(quote.comment),
+    })}`
+    at = to
+  }
+  return `${out}${text.slice(at)}`
 }
 
 // ── Reading it as words ──────────────────────────────────────────────────

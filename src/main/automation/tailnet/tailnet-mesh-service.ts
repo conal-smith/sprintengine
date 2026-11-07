@@ -124,6 +124,7 @@ import {
 } from '../../../shared/conversation/attachedFiles'
 import { MAX_TAILNET_FILE_BYTES } from './tailnet-file-uploads'
 import { asRecord, isRecord } from '../../../shared/records'
+import { mayHoldQuotes, quotesToPlainText } from '../../../shared/chat-quotes'
 import { parseCliPermissionPreset } from '../../../shared/cli-permission-preset'
 import { powerActivity, type PowerActivity } from '../../power-activity'
 
@@ -2585,6 +2586,7 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
             tailnetPeerSupports(identity.value.capabilities, 'conversation-queued-attachments'),
           // An approval may be answered there with an "always allow" rule.
           permanentApprovals: tailnetPeerSupports(identity.value.capabilities, 'conversation-permanent-approvals'),
+          quotes: tailnetPeerSupports(identity.value.capabilities, 'conversation-quote-tokens'),
           createPullRequest: tailnetPeerSupports(identity.value.capabilities, 'chat-create-pull-request'),
           rowMenu: tailnetPeerSupports(identity.value.capabilities, 'chat-row-menu'),
           markUnread: tailnetPeerSupports(identity.value.capabilities, 'chat-mark-unread'),
@@ -2826,7 +2828,18 @@ export function createTailnetMeshService(options: TailnetMeshServiceOptions): Ta
           message: `${connection.machineName} cannot resume its chats from here yet. Update SprintEngine Studio there.`,
         }
     }
-    const result = await remoteConversations.command(key, input.command)
+    // A quote's token goes only to a machine that expands one. This composer
+    // writes a blockquote for any other, but a token can still come in by a
+    // paste or a stashed prompt, and a machine that did not say so would hand
+    // its agent the address. It goes as the words a token reads as.
+    const words =
+      (command?.kind === 'send' || command?.kind === 'scheduleSend') &&
+      typeof command.message === 'string' &&
+      mayHoldQuotes(command.message) &&
+      !tailnetPeerSupports(peerCapabilities.get(key.connectionId), 'conversation-quote-tokens')
+        ? { ...command, message: quotesToPlainText(command.message) }
+        : input.command
+    const result = await remoteConversations.command(key, words)
     // A command carried out (a model switched, a preset changed) changes
     // what the list says, and the list is re-read straight after it. A
     // revert's preview carries nothing out.

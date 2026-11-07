@@ -12,6 +12,7 @@ import type {
   ConversationSessionFrame,
   ConversationSideQuestionResult,
 } from '../../shared/conversation-runtime'
+import { collectQuotes, quoteToken } from '../../shared/chat-quotes'
 import type { TailnetScope } from '../../shared/tailnet'
 import type { MeshConversationFrame, MeshConversationKey } from '../../shared/tailnet-mesh'
 import { ConversationRuntime } from '../conversation-runtime'
@@ -32,7 +33,12 @@ import {
   createRemoteConversationCache,
   type RemoteConversationCache,
 } from './tailnet/tailnet-remote-conversation-cache'
-import type { RemoteJsonSocket, RemoteJsonSocketHandlers } from './tailnet/tailnet-remote-client'
+import {
+  openRemoteConversationSocket,
+  pairWithMachine,
+  type RemoteJsonSocket,
+  type RemoteJsonSocketHandlers,
+} from './tailnet/tailnet-remote-client'
 import { pairingUrl } from './tailnet/tailnet-service'
 import { createScheduledMessages } from '../scheduled-messages/scheduled-messages'
 import { heldMessageSend, studioHeldMessages, studioScheduledSends } from '../../server/core/studio-scheduled-messages'
@@ -57,6 +63,8 @@ function pushProvider() {
   let turnStarted = new Promise<void>((resolve) => (started = resolve))
   let running = false
   const switched: string[] = []
+  // What the agent was handed for each turn.
+  const read: string[] = []
   // A CLI chat provider takes a new model mid-conversation; mid-turn it says
   // the reply finishes on the model it started with, as the real ones do.
   const base = createMockConversationProvider({ liveModelSwitch: true })
@@ -70,6 +78,7 @@ function pushProvider() {
     },
     sendTurn: (input) =>
       (async function* () {
+        read.push(input.message)
         const queue: Array<string | null> = []
         let wake: (() => void) | null = null
         push = (text) => {
@@ -104,6 +113,7 @@ function pushProvider() {
   return {
     adapter,
     switched,
+    read,
     turnStarted: () => turnStarted,
     nextTurn: () => (turnStarted = new Promise<void>((resolve) => (started = resolve))),
     push: (text: string | null) => push(text),
@@ -130,6 +140,10 @@ type Harness = {
   mesh: TailnetMeshService
   newMesh(): TailnetMeshService
   pair(scopes: TailnetScope[]): Promise<string>
+  /** Where the far end listens, for a test that dials it as a device of its own. */
+  endpointOf(): { host: string; port: number }
+  /** A second device's token, paired as a phone pairs, not through the mesh. */
+  deviceToken(scopes: TailnetScope[]): Promise<string>
   stopServer(): Promise<void>
   restartServer(): Promise<void>
   close(): Promise<void>
@@ -282,6 +296,17 @@ async function startHarness(
       const result = await harness.mesh.pair({ pairingUrl: pairingUrl('127.0.0.1', port, offer.token) })
       assert.ok(result.ok, result.ok ? '' : result.message)
       return result.connection.id
+    },
+    endpointOf: () => ({ host: '127.0.0.1', port }),
+    async deviceToken(scopes) {
+      const offer = devices.offerPairing({ scopes })
+      const paired = await pairWithMachine({
+        endpoint: { host: '127.0.0.1', port },
+        pairingToken: offer.token,
+        deviceName: 'android-phone',
+      })
+      assert.ok(paired.ok, paired.ok ? '' : paired.message)
+      return paired.value.deviceToken
     },
     stopServer: () => server.stop(),
     async restartServer() {
@@ -1671,5 +1696,152 @@ test("a side question and the window's breakdown are asked of the chat over ther
     assert.ok(!forked.ok && forked.message.includes('cannot add a forked chat'))
   } finally {
     await h.close()
+  }
+})
+
+const quoteFromHere = quoteToken({
+  turnId: 'turn_earlier',
+  n: 1,
+  quote: 'Keep the cache warm.',
+  exact: 'Keep the cache warm.',
+  prefix: '',
+  suffix: '',
+  comment: 'Why?',
+})
+
+/** The texts of the `user_message` events a window was handed. */
+const sentTexts = (pane: ReturnType<typeof follower>) =>
+  pane.of('event').flatMap((frame) => (frame.event.type === 'user_message' ? [String(frame.event.payload?.text)] : []))
+
+test('a quote made on a paired desktop reaches the agent expanded and comes back as its token', async () => {
+  const h = await startHarness({ holdQueued: true })
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const listed = await h.mesh.listConversations(connectionId)
+    assert.ok(listed.ok, listed.ok ? '' : listed.message)
+    assert.equal(listed.quotes, true, 'the machine says it expands a quote')
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+
+    const message = `Is this right? ${quoteFromHere} thanks`
+    void h.mesh.conversationCommand({ key, command: { kind: 'send', message } })
+    await h.provider.turnStarted()
+    assert.match(h.provider.read[0]!, /Is this right\? \[quote 1\] thanks/)
+    assert.match(h.provider.read[0]!, /\[quote 1\]\n> Keep the cache warm\.\nComment: Why\?\n<\/quotes>/)
+    assert.equal(h.provider.read[0]!.includes('sprintengine-quote:'), false, 'the agent never reads the address')
+    await waitFor(() => sentTexts(pane).length === 1, 'the message comes back over the wire')
+    assert.equal(sentTexts(pane)[0], message, 'the token survives the trip, so the chip does')
+
+    // Held over there for the turn's end, it stays a token here and is
+    // expanded when the machine sends it, this desktop gone or not.
+    const held = await h.mesh.conversationSend({ key, message: `And ${quoteFromHere}`, queue: true })
+    assert.deepEqual(held, { ok: true })
+    await waitFor(() => (pane.of('queued').at(-1)?.messages.length ?? 0) > 0, 'the window sees what is held')
+    assert.equal(collectQuotes(pane.of('queued').at(-1)!.messages[0]!.text).length, 1)
+    h.provider.nextTurn()
+    h.provider.push(null)
+    await h.provider.turnStarted()
+    assert.match(h.provider.read[1]!, /And \[quote 1\]/)
+    assert.equal(h.provider.read[1]!.includes('sprintengine-quote:'), false)
+    h.provider.push(null)
+  } finally {
+    await h.close()
+  }
+})
+
+test('a device that did not name the token follows the same chat in words, beside one that did', async () => {
+  const h = await startHarness()
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    assert.ok((await h.mesh.listConversations(connectionId)).ok)
+    const key = { connectionId, workspaceId, agentId }
+    const pane = follower(h.mesh, key)
+    await waitFor(pane.live, 'the follow goes live')
+    const message = `Is this right? ${quoteFromHere}`
+    void h.mesh.conversationCommand({ key, command: { kind: 'send', message } })
+    await h.provider.turnStarted()
+    await waitFor(() => sentTexts(pane).length === 1, 'the message comes back')
+    assert.equal(sentTexts(pane)[0], message)
+    h.provider.push(null)
+
+    // A second device on the same machine, opening as a phone does: no `hello`
+    // naming anything, just a `subscribe`.
+    const connection = h.endpointOf()
+    const seen: Array<Record<string, unknown>> = []
+    const opened = await openRemoteConversationSocket({
+      endpoint: connection,
+      token: await h.deviceToken(['conversation:read']),
+      handlers: { onFrame: (frame) => seen.push(frame as Record<string, unknown>), onClosed: () => undefined },
+    })
+    assert.ok(opened.ok, opened.ok ? '' : opened.message)
+    opened.value.send({ type: 'subscribe', key: { workspaceId, agentId } })
+    await waitFor(() => seen.some((frame) => frame.type === 'synchronized'), 'the phone is caught up')
+    const wire = JSON.stringify(seen)
+    assert.equal(wire.includes('sprintengine-quote'), false, 'never a raw token')
+    assert.ok(wire.includes('Keep the cache warm.'), 'the passage is there, as words')
+    opened.value.close('Done.')
+  } finally {
+    await h.close()
+  }
+})
+
+test('a token is not sent to a machine that has not said it expands one: it goes as words', async () => {
+  const h = await startHarness()
+  let later: TailnetMeshService | null = null
+  try {
+    const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+    const key = { connectionId, workspaceId, agentId }
+    // A fresh start of this desktop: the pairing is on disk, and nothing has
+    // read what the machine serves yet.
+    h.mesh.shutdown()
+    later = h.newMesh()
+    const pane = follower(later, key)
+    await waitFor(pane.live, 'the follow goes live')
+    void later.conversationCommand({ key, command: { kind: 'send', message: `Why ${quoteFromHere}` } })
+    await h.provider.turnStarted()
+    assert.equal(h.provider.read[0]!.includes('sprintengine-quote:'), false)
+    assert.equal(h.provider.read[0]!.includes('[quote 1]'), false, 'the machine had no token to expand')
+    assert.match(h.provider.read[0]!, /> Keep the cache warm\.\nComment: Why\?/)
+    h.provider.push(null)
+  } finally {
+    later?.shutdown()
+    await h.close()
+  }
+})
+
+test('the client says it reads tokens ahead of its subscribe, unless the machine said it does not serve them', async () => {
+  vi.useFakeTimers()
+  try {
+    const opening = (sent: Array<Record<string, unknown>>) => sent.slice(0, 2).map((frame) => frame.type)
+    for (const capabilities of [null, ['conversations', 'conversation-quote-tokens']]) {
+      const client = drivenClient({ capabilities })
+      await client.follow()
+      await vi.advanceTimersByTimeAsync(0)
+      assert.deepEqual(opening(client.sent), ['hello', 'subscribe'])
+      assert.deepEqual(client.sent[0]!.clientCapabilities, ['conversation-quote-tokens'])
+      // Nobody waits on the answer: a machine from before `hello` refuses it
+      // under its id, and the follow carries on.
+      client.handlers.at(-1)!.onFrame({
+        type: 'result',
+        requestId: client.sent[0]!.requestId as string,
+        ok: false,
+        code: 'invalid_frame',
+      })
+      client.fence(1)
+      assert.equal(client.link()?.state, 'live')
+      client.client.shutdown()
+    }
+    const without = drivenClient({ capabilities: ['conversations', 'conversation-models'] })
+    await without.follow()
+    await vi.advanceTimersByTimeAsync(0)
+    assert.equal(without.sent[0]!.type, 'subscribe')
+    assert.equal(
+      without.sent.some((frame) => frame.type === 'hello'),
+      false,
+    )
+    without.client.shutdown()
+  } finally {
+    vi.useRealTimers()
   }
 })

@@ -34,6 +34,7 @@ const READ_ONLY = {
   operate: false,
   startSession: false,
   permanentApprovals: false,
+  quotes: false,
   checkpointRevert: false,
   modelSwitch: false,
   composerContext: false,

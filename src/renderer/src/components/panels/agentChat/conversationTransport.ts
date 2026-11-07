@@ -87,6 +87,13 @@ export type ConversationTransportCapabilities = {
    */
   permanentApprovals: boolean
   /**
+   * Make a quote as a token: a chip in the composer, marked in the reply, and
+   * expanded for the agent where the chat runs. A paired machine's chat does
+   * where that machine expands one (`conversation-quote-tokens`); any other
+   * quotes as a blockquote, whose words it can read.
+   */
+  quotes: boolean
+  /**
    * Revert a turn's files from its checkpoint. A paired machine's chat does,
    * in that machine's checkout, where it advertises doing so
    * (`conversation-checkpoint-revert`).
@@ -397,6 +404,7 @@ const LOCAL_CAPABILITIES: ConversationTransportCapabilities = {
   operate: true,
   startSession: true,
   permanentApprovals: true,
+  quotes: true,
   checkpointRevert: true,
   modelSwitch: true,
   composerContext: true,
@@ -598,6 +606,9 @@ export function createRemoteConversationTransport(input: {
       // Turned on from the machine's list, when it saves an "always allow"
       // rule a device chose (`conversation-permanent-approvals`).
       permanentApprovals: false,
+      // Turned on from the machine's list, when it expands a quote's token for
+      // its agent (`conversation-quote-tokens`).
+      quotes: false,
       // Turned on from the machine's list, when it reverts a turn's files
       // itself (`conversation-checkpoint-revert`): the checkpoint is on its disk.
       checkpointRevert: false,

@@ -21,7 +21,7 @@ import {
   type ConversationWatchUsageLimitsRequest,
   type ConversationUsageLimitResumeAction,
 } from './commands.js'
-import type { ConversationHelloRequest } from './handshake.js'
+import { parseConversationClientCapabilities, type ConversationHelloRequest } from './handshake.js'
 import {
   parseConversationSideQuestionRequest,
   type ConversationAskSideQuestionRequest,
@@ -97,10 +97,12 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
     const version = value.protocolVersion
     if (version !== undefined && !(typeof version === 'number' && Number.isSafeInteger(version) && version >= 1))
       return null
+    const clientCapabilities = parseConversationClientCapabilities(value.clientCapabilities)
     return {
       type: 'hello',
       requestId: value.requestId,
       ...(version === undefined ? {} : { protocolVersion: version as number }),
+      ...(clientCapabilities.length ? { clientCapabilities } : {}),
     }
   }
   if (value.type === 'watchQueued')

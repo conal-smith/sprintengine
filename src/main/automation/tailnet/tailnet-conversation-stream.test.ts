@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, vi } from 'vitest'
+import { collectQuotes, quoteToken } from '../../../shared/chat-quotes'
 import type { ConversationEvent, ConversationSessionFrame } from '../../../shared/conversation-runtime'
 import type { TailnetScope } from '../../../shared/tailnet'
 import { ConversationRuntime } from '../../conversation-runtime'
@@ -1498,4 +1499,104 @@ test("a paired phone's steer and queued send reach the host whole while its own 
   endTurn()
   await waitFor(() => answered().length === 3, 'the first is answered as its turn ends')
   stream.close(1000, '')
+})
+
+const quoted = (seq: number) =>
+  wireEvent(seq, 'user_message', {
+    text: `Why ${quoteToken({
+      turnId: 'turn_1',
+      n: 1,
+      quote: 'See /Users/dev/proj/a.ts now.',
+      exact: 'See /Users/dev/proj/a.ts now.',
+      prefix: '',
+      suffix: '',
+      comment: '',
+    })}`,
+  })
+
+/** What a client that opens with `hello` is sent of a quote, live, replayed and held. */
+async function quoteAsRead(options: { clientCapabilities?: string[]; capabilities?: string[] }) {
+  const socket = new Socket()
+  const gateway = host()
+  let tellHeld: (messages: Array<{ id: string; text: string; createdAt: number }>) => void = () => undefined
+  gateway.subscribe = (_key, _cursor, listener) => {
+    const ready = Promise.resolve().then(() => {
+      listener({ type: 'snapshot', page: { events: [quoted(1)], hasMore: false, beforeCursor: null }, generation: 'g' })
+      listener({ type: 'synchronized', seq: 1, generation: 'g' })
+      listener({ type: 'event', event: quoted(2) })
+    })
+    return { dispose: () => {}, ready }
+  }
+  gateway.watchQueued = (_key, listener) => {
+    tellHeld = listener
+    return () => undefined
+  }
+  gateway.loadEarlier = async () => ({
+    ok: true,
+    page: { events: [quoted(0)], hasMore: false, beforeCursor: null },
+  })
+  createTailnetConversationStream({
+    socket,
+    deviceId: 'device',
+    deviceName: 'mac-mini',
+    scopes: ['conversation:read'],
+    host: gateway,
+    ...(options.capabilities ? { capabilities: options.capabilities } : {}),
+    onClosed: () => {},
+    audit: () => {},
+  })
+  if (options.clientCapabilities)
+    socket.receive({ type: 'hello', requestId: 'h-1', clientCapabilities: options.clientCapabilities })
+  socket.receive({ type: 'subscribe', key: { workspaceId: 'w', agentId: 'a' } })
+  await until(() => assemble(socket.output()).some((frame) => frame.event?.seq === 2), 'the live event arrives')
+  socket.receive({ type: 'watchQueued', requestId: 'q-1' })
+  socket.receive({ type: 'loadEarlier', requestId: 'e-1', beforeCursor: 1 })
+  await until(
+    () => assemble(socket.output()).some((frame) => frame.requestId === 'e-1'),
+    'the earlier page is answered',
+  )
+  tellHeld([{ id: 'sm-1', text: String(quoted(3).payload!.text), createdAt: 1 }])
+  await tick()
+  const frames = assemble(socket.output()) as Array<
+    Frame & { messages?: Array<{ text: string }>; data?: { page?: { events: ConversationEvent[] } } }
+  >
+  socket.destroy()
+  return [
+    ...frames.flatMap((frame) => frame.page?.events ?? []).map((event) => String(event.payload!.text)),
+    ...frames.flatMap((frame) => (frame.event ? [String(frame.event.payload!.text)] : [])),
+    ...frames.flatMap((frame) => frame.data?.page?.events ?? []).map((event) => String(event.payload!.text)),
+    ...frames.flatMap((frame) => frame.messages ?? []).map((message) => message.text),
+  ]
+}
+
+test('a quote stays a token only for a client that named it, on a machine that serves it', async () => {
+  const name = 'conversation-quote-tokens'
+  const served = ['conversations', 'conversation-hello', name]
+  const tokens = await quoteAsRead({ clientCapabilities: [name], capabilities: served })
+  assert.equal(tokens.length, 4, 'the replay, the live event, the earlier page and the held message')
+  for (const text of tokens) assert.equal(collectQuotes(text).length, 1, text)
+
+  // No `hello`, as an older phone or Studio opens; a `hello` that names
+  // nothing, as a phone's probe does; a machine that does not serve it.
+  for (const options of [
+    { capabilities: served },
+    { clientCapabilities: ['conversation-other'], capabilities: served },
+    { clientCapabilities: [name], capabilities: ['conversations', 'conversation-hello'] },
+    { clientCapabilities: [name] },
+  ]) {
+    const words = await quoteAsRead(options)
+    assert.equal(words.length, 4, 'every path a message leaves by')
+    for (const text of words) {
+      assert.equal(text.includes('sprintengine-quote:'), false, text)
+      assert.match(text, /> See /)
+    }
+  }
+})
+
+test('a phone probing with hello, with no socket naming the token, is sent the words', async () => {
+  const words = await quoteAsRead({
+    clientCapabilities: [],
+    capabilities: ['conversations', 'conversation-hello', 'conversation-quote-tokens'],
+  })
+  for (const text of words) assert.equal(text.includes('sprintengine-quote:'), false, text)
 })

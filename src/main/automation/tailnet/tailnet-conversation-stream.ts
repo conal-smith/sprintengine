@@ -7,6 +7,7 @@ import {
   CONVERSATION_MAX_FRAME_BYTES,
   CONVERSATION_PROTOCOL_MIN_SUPPORTED,
   CONVERSATION_PROTOCOL_VERSION,
+  CONVERSATION_QUOTE_TOKENS_CAPABILITY,
   CONVERSATION_RESYNC_CLOSE_CODE,
   CONVERSATION_SCOPE_CLOSE_CODE,
   conversationCloseReason,
@@ -35,7 +36,7 @@ import {
 } from '../../../server/conversation-stream-shaping'
 import type { ConversationGatewayHost } from './tailnet-conversation-host'
 import { redactConversationValue } from '../../conversation-tool-details'
-import { mayHoldQuotes, quotesToPlainText } from '../../../shared/chat-quotes'
+import { mapQuoteWords, mayHoldQuotes, quotesToPlainText } from '../../../shared/chat-quotes'
 import {
   createWebSocketFrameDecoder,
   encodeCloseFrame,
@@ -212,6 +213,9 @@ export function createTailnetConversationStream(options: TailnetConversationStre
   let lastPong = now()
   let currentKey: ConversationKey | null = null
   let subscription: { dispose(): void } | null = null
+  // Whether the client said it reads a quote's token (its `hello`) on a machine
+  // that serves them. Until it does, a quote leaves this socket as words.
+  let sendsQuoteTokens = false
   // What this desktop holds for the chat followed, told to a client that
   // asked (`watchQueued`); it ends when the socket follows another chat.
   let queuedWatch: { chat: string; stop(): void } | null = null
@@ -376,9 +380,13 @@ export function createTailnetConversationStream(options: TailnetConversationStre
   // Paths are rewritten against the conversation the socket follows, so its
   // own files read workspace-relative, as they do on the desktop.
   // A quote in a message leaves as its words (`quotesForWire`), before the
-  // paths are rewritten, so a path inside a quoted passage is rewritten too.
-  const redact = <T>(frame: T, workspaceRoot: string | null = currentKey?.workspaceRoot ?? null): T =>
-    redactHostPaths(quotesForWire(redactConversationValue(frame)), { home: homedir(), workspaceRoot })
+  // paths are rewritten, so a path inside a quoted passage is rewritten too;
+  // a token going to a client that reads it has its words rewritten inside it.
+  const redact = <T>(frame: T, workspaceRoot: string | null = currentKey?.workspaceRoot ?? null): T => {
+    const paths = { home: homedir(), workspaceRoot }
+    const keep = sendsQuoteTokens ? (words: string) => redactHostPaths(words, paths) : undefined
+    return redactHostPaths(quotesForWire(redactConversationValue(frame), keep), paths)
+  }
   /** Extend a waiting delta with a later one of the same message. */
   const extend = (into: LiveEntry & { delta: object }, event: ConversationEvent): void => {
     const text = String(event.payload!.text)
@@ -669,6 +677,11 @@ export function createTailnetConversationStream(options: TailnetConversationStre
       return
     }
     if (frame.type === 'hello') {
+      // Set before anything awaits: frames are handled in the order they
+      // arrive, so a `subscribe` right behind this reads it.
+      sendsQuoteTokens =
+        (frame.clientCapabilities?.includes(CONVERSATION_QUOTE_TOKENS_CAPABILITY) ?? false) &&
+        (options.capabilities?.includes(CONVERSATION_QUOTE_TOKENS_CAPABILITY) ?? false)
       const answer: ConversationHelloAnswer = {
         protocolVersion: CONVERSATION_PROTOCOL_VERSION,
         minProtocolVersion: CONVERSATION_PROTOCOL_MIN_SUPPORTED,
@@ -1092,14 +1105,19 @@ function pathRewriter(home: string, workspaceRoot: string | null): PathRewriter 
 }
 
 /**
- * A message's quotes as a device reads them: the passage and its comment as
- * words (`quotesToPlainText`), never the token the desktop keeps them in
- * (shared/chat-quotes.ts). The `text` of a `user_message` has always been the
+ * A message's quotes as a device reads them, in a `user_message` and in the
+ * messages a `queued` or `scheduled` frame lists. By default the passage and
+ * its comment as words (`quotesToPlainText`), not the token the desktop keeps
+ * them in (shared/chat-quotes.ts): the `text` of a message has always been the
  * person's words alone, and a phone or a paired Studio reading it may be any
- * release, so the token stays on this machine (docs/compatibility.md, "Direct
- * conversation lane"). Only a frame that holds one is copied.
+ * release. A client that named `conversation-quote-tokens` in its `hello` is
+ * the exception, and for it the stream passes `keep`: the token goes, with
+ * each of its words passed through `keep`, as the words of the frame around it
+ * are rewritten (docs/compatibility.md, "Direct conversation lane"). Only a
+ * frame that holds one is copied.
  */
-export function quotesForWire<T>(value: T): T {
+export function quotesForWire<T>(value: T, keep?: (words: string) => string): T {
+  const read = (text: string) => (keep ? mapQuoteWords(text, keep) : quotesToPlainText(text))
   // Copy-on-write: a frame is walked without allocating, and only the arrays
   // and objects on the way to a `user_message` whose text holds a token are
   // copied. Every other frame — a streamed delta, a snapshot of megabytes —
@@ -1119,7 +1137,16 @@ export function quotesForWire<T>(value: T): T {
     if (record.type === 'user_message') {
       const payload = record.payload as Record<string, unknown> | undefined
       if (typeof payload?.text !== 'string' || !mayHoldQuotes(payload.text)) return entry
-      return { ...record, payload: { ...payload, text: quotesToPlainText(payload.text) } }
+      return { ...record, payload: { ...payload, text: read(payload.text) } }
+    }
+    if ((record.type === 'queued' || record.type === 'scheduled') && Array.isArray(record.messages)) {
+      let held: unknown[] | null = null
+      for (const [index, message] of record.messages.entries()) {
+        const text = (message as { text?: unknown } | null)?.text
+        if (typeof text !== 'string' || !mayHoldQuotes(text)) continue
+        ;(held ??= record.messages.slice())[index] = { ...(message as object), text: read(text) }
+      }
+      return held ? { ...record, messages: held } : entry
     }
     let copy: Record<string, unknown> | null = null
     for (const key in record) {
