@@ -67,6 +67,8 @@ import type {
   ConversationRewindResult,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationSwitchProviderInput,
+  ConversationSwitchProviderResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
@@ -150,6 +152,7 @@ export type ConversationIpcHandlers = {
   revertToTurn?(input: ConversationRevertInput): Promise<ConversationRevertResult>
   rewindToTurn?(input: ConversationRewindInput): Promise<ConversationRewindResult>
   handoffConversation?(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
+  switchConversationProvider?(input: ConversationSwitchProviderInput): Promise<ConversationSwitchProviderResult>
   forkAtTurn?(input: ConversationForkInput): Promise<ConversationForkResult>
   listApprovalRules?(): Promise<ConversationApprovalRulesResult>
   revokeApprovalRule?(ruleId: string): Promise<ConversationApprovalRuleRevokeResult>
@@ -445,6 +448,9 @@ export function createConversationIpcHandlers(
     handoffConversation(input) {
       return sessions.handoffConversation(input)
     },
+    switchConversationProvider(input) {
+      return runtime.switchConversationProvider(input)
+    },
     forkAtTurn(input) {
       return sessions.forkAtTurn(input)
     },
@@ -612,6 +618,23 @@ export function registerConversationIpc(
       }
     )
   })
+  ipcMain.handle(
+    'conversation:switch-provider',
+    async (_, input: unknown): Promise<ConversationSwitchProviderResult> => {
+      if (!isRecord(input)) return { ok: false, message: 'The chat to move is required.' }
+      const key = parseTranscriptInput(input.key)
+      if (!key.ok) return key
+      if (typeof input.providerId !== 'string' || !input.providerId.trim() || input.providerId.length > 200)
+        return { ok: false, message: 'The agent to move the chat to is required.' }
+      const modelId = typeof input.modelId === 'string' && input.modelId.length <= 400 ? input.modelId : ''
+      return (
+        handlers.switchConversationProvider?.({ key: key.input, providerId: input.providerId, modelId }) ?? {
+          ok: false,
+          message: 'Switching the agent is unavailable.',
+        }
+      )
+    },
+  )
   ipcMain.handle('conversation:turn:fork', async (_, input: unknown): Promise<ConversationForkResult> => {
     if (
       !isRecord(input) ||

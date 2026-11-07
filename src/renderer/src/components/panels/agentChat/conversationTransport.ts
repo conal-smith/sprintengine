@@ -18,6 +18,8 @@ import type {
   ConversationRewindInput,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationSwitchProviderInput,
+  ConversationSwitchProviderResult,
   ConversationImageAttachment,
   ConversationMcpServerActionInput,
   ConversationMcpServerActionResult,
@@ -314,6 +316,12 @@ export type ConversationTransport = {
    */
   handoff?(input: ConversationHandoffInput): Promise<ConversationHandoffResult>
   /**
+   * Move the chat to another agent CLI, or a model its session cannot take
+   * live, carrying the conversation over (`switchConversationProvider`).
+   * A chat on this computer only: absent for a paired machine's.
+   */
+  switchProvider?(input: ConversationSwitchProviderInput): Promise<ConversationSwitchProviderResult>
+  /**
    * Start a new chat beside this one holding it up to an earlier message
    * ("Fork from here"). Absent where the transport cannot. A paired machine's
    * chat has it: the fork is made over there, beside the chat, and opens
@@ -443,6 +451,10 @@ const ipcConversationParts: Required<
   attachment: (input) => window.api.conversationAttachment(input),
   rewind: (input) => window.api.conversationRewindToTurn(input),
   handoff: (input) => window.api.conversationHandoff(input),
+  switchProvider: (input) =>
+    typeof window.api.conversationSwitchProvider === 'function'
+      ? window.api.conversationSwitchProvider(input)
+      : Promise.resolve({ ok: false, message: 'Switching the agent needs an app restart.' }),
   fork: (input) => window.api.conversationForkAtTurn(input),
   startSession: (input) => window.api.conversationSessionStart(input),
   revert: (input) => window.api.conversationRevertToTurn(input),
@@ -525,6 +537,11 @@ export const localConversationTransport: ConversationTransport = {
   attachment: (input) => localParts().attachment(input),
   rewind: (input) => localParts().rewind(input),
   handoff: (input) => localParts().handoff(input),
+  // The Studio protocol has no such command yet: over it the property is
+  // absent, and the picker stays on the chat's own CLI.
+  get switchProvider() {
+    return chatOverStudioProtocol() ? undefined : ipcConversationParts.switchProvider
+  },
   fork: (input) => localParts().fork(input),
   startSession: (input) => localParts().startSession(input),
   revert: (input) => localParts().revert(input),

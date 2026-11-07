@@ -59,6 +59,7 @@ const SERVER_IPC_CHANNEL_TABLE = {
   },
   'conversation:events:unsubscribe': {},
   'conversation:handoff': {},
+  'conversation:switch-provider': {},
   'conversation:plan-document': { retry: 'once' },
   'conversation:providers:list': { retry: 'once' },
   'conversation:providers:models': { retry: 'once' },

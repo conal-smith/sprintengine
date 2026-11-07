@@ -501,6 +501,14 @@ export function createRoutedConversationBackend(deps: RoutedConversationBackendD
     revertToTurn: byWorkspace('revertToTurn'),
     rewindToTurn: byWorkspace('rewindToTurn'),
     handoffConversation: byWorkspace('handoffConversation'),
+    // Moving a chat to another agent is this computer's alone for now: a
+    // distribution's or an SSH machine's server is not asked to, and says so.
+    switchConversationProvider: (input: Parameters<ConversationBackend['switchConversationProvider']>[0]) => {
+      const { workspaceId, workspaceRoot } = workspaceKeyOf(input)
+      return workspaceId && routeOf(workspaceId, workspaceRoot)
+        ? Promise.resolve({ ok: false as const, message: 'Switching the agent works for chats on this computer only.' })
+        : local.switchConversationProvider(input)
+    },
     forkAtTurn: byWorkspace('forkAtTurn'),
   }
   return backend as unknown as RoutedConversationBackend

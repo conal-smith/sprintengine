@@ -68,6 +68,8 @@ import type {
   ConversationRewindResult,
   ConversationHandoffInput,
   ConversationHandoffResult,
+  ConversationSwitchProviderInput,
+  ConversationSwitchProviderResult,
   ConversationForkInput,
   ConversationForkResult,
   ConversationApprovalRulesResult,
@@ -103,6 +105,10 @@ type ConversationIpcRenderer = {
   invoke(channel: 'conversation:turn:revert', input: ConversationRevertInput): Promise<ConversationRevertResult>
   invoke(channel: 'conversation:turn:rewind', input: ConversationRewindInput): Promise<ConversationRewindResult>
   invoke(channel: 'conversation:handoff', input: ConversationHandoffInput): Promise<ConversationHandoffResult>
+  invoke(
+    channel: 'conversation:switch-provider',
+    input: ConversationSwitchProviderInput,
+  ): Promise<ConversationSwitchProviderResult>
   invoke(channel: 'conversation:turn:fork', input: ConversationForkInput): Promise<ConversationForkResult>
   invoke(
     channel: 'conversation:session:subscribe',
@@ -255,6 +261,8 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
       renderer.invoke('conversation:turn:rewind', input),
     conversationHandoff: (input: ConversationHandoffInput): Promise<ConversationHandoffResult> =>
       renderer.invoke('conversation:handoff', input),
+    conversationSwitchProvider: (input: ConversationSwitchProviderInput): Promise<ConversationSwitchProviderResult> =>
+      renderer.invoke('conversation:switch-provider', input),
     conversationForkAtTurn: (input: ConversationForkInput): Promise<ConversationForkResult> =>
       renderer.invoke('conversation:turn:fork', input),
     conversationProvidersList: (input?: ConversationProvidersListInput): Promise<ConversationProviderListResult> =>
@@ -409,6 +417,7 @@ export function createConversationApi(renderer: ConversationIpcRenderer) {
     | 'conversationRevertToTurn'
     | 'conversationRewindToTurn'
     | 'conversationHandoff'
+    | 'conversationSwitchProvider'
     | 'conversationForkAtTurn'
     | 'conversationApprovalRules'
     | 'conversationRevokeApprovalRule'
