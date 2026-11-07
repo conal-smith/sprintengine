@@ -125,7 +125,7 @@ export function defaultAppearanceSettings(): AppearanceSettings {
     replyStreaming: DEFAULT_REPLY_STREAMING,
     agentCharacters: true,
     usageLimits: true,
-    projectIconColors: false,
+    quietProjectIcons: false,
     interfaceFont: '',
     codeFont: '',
   }
@@ -152,8 +152,10 @@ export function normalizeAppearanceSettings(value: unknown): AppearanceSettings 
     agentCharacters:
       typeof candidate.agentCharacters === 'boolean' ? candidate.agentCharacters : defaults.agentCharacters,
     usageLimits: typeof candidate.usageLimits === 'boolean' ? candidate.usageLimits : defaults.usageLimits,
-    projectIconColors:
-      typeof candidate.projectIconColors === 'boolean' ? candidate.projectIconColors : defaults.projectIconColors,
+    // A new name rather than the old `projectIconColors` turned over: that one
+    // was written false into every profile, which would have kept the rows gray.
+    quietProjectIcons:
+      typeof candidate.quietProjectIcons === 'boolean' ? candidate.quietProjectIcons : defaults.quietProjectIcons,
     // Absent before the font settings existed, which reads as the bundled faces.
     interfaceFont: normalizeFontFamilyPreference(candidate.interfaceFont),
     codeFont: normalizeFontFamilyPreference(candidate.codeFont),
@@ -1173,7 +1175,7 @@ export interface SettingsSliceActions {
   setAppearanceReplyStreaming: (mode: ReplyStreaming) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
-  setAppearanceProjectIconColors: (enabled: boolean) => void
+  setAppearanceQuietProjectIcons: (enabled: boolean) => void
   /** A family name (or comma-separated list); empty restores the bundled face. */
   setAppearanceInterfaceFont: (family: string) => void
   setAppearanceCodeFont: (family: string) => void
@@ -1970,11 +1972,11 @@ export function createSettingsSlice(set: SettingsSliceSet): SettingsSlice {
         })
       }),
 
-    setAppearanceProjectIconColors: (enabled) =>
+    setAppearanceQuietProjectIcons: (enabled) =>
       set((state) => {
         state.appSettings.appearance = normalizeAppearanceSettings({
           ...state.appSettings.appearance,
-          projectIconColors: enabled,
+          quietProjectIcons: enabled,
         })
       }),
 

@@ -779,12 +779,20 @@ const ROW_ACTIVITY_LOUDNESS: readonly string[] = ['needs-input', 'working', 'fai
  * doing: the louder of what this desktop's own sessions say and what its
  * machine says. Its turns run over there, so this desktop's sessions alone
  * read it as idle while it works or waits on the person.
+ *
+ * `conversation.activity` has no word for a failed turn, because the marks it
+ * drives are working and waiting; a chat stopped by one reads as failed here
+ * all the same, or By status files it with the chats at rest while a local one
+ * leads the list.
  */
 export function remoteRowActivity<A extends string>(
   local: A | undefined,
-  conversation: RemoteConversation,
-): A | RemoteRowActivity {
-  const remote = conversation.activity
+  conversation: Pick<RemoteConversation, 'activity' | 'agents'>,
+): A | RemoteRowActivity | 'failed' {
+  const stopped =
+    conversation.activity === 'idle' &&
+    conversation.agents.some((row) => row.activity === 'idle' && row.phase === 'failed')
+  const remote = stopped ? 'failed' : conversation.activity
   if (local === undefined) return remote
   return ROW_ACTIVITY_LOUDNESS.indexOf(remote) < ROW_ACTIVITY_LOUDNESS.indexOf(local) ? remote : local
 }
@@ -1112,11 +1120,15 @@ export function remoteConversationAsleep(conversation: Pick<RemoteConversation, 
 }
 
 /** Whether two readings of a chat carry the same marks for a row opened here. */
-export function sameRemoteChatMarks(
-  a: Pick<RemoteConversation, 'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle' | 'title' | 'manage'>,
-  b: Pick<RemoteConversation, 'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle' | 'title' | 'manage'>,
-): boolean {
+type RemoteChatMarksFacts = Pick<
+  RemoteConversation,
+  'rowMenu' | 'highlight' | 'snoozedUntil' | 'autoSettle' | 'title' | 'manage' | 'workspaceRoot' | 'repository'
+>
+
+export function sameRemoteChatMarks(a: RemoteChatMarksFacts, b: RemoteChatMarksFacts): boolean {
   return (
+    a.workspaceRoot === b.workspaceRoot &&
+    a.repository?.canonicalKey === b.repository?.canonicalKey &&
     a.manage?.rename === b.manage?.rename &&
     (!a.manage?.rename || a.title === b.title) &&
     a.rowMenu === b.rowMenu &&
@@ -1128,13 +1140,32 @@ export function sameRemoteChatMarks(
 }
 
 /**
+ * A row opened here from a paired machine's chat, filed by what that machine
+ * says of it now. The origin is stamped when the chat is opened and never
+ * written again, so a row kept across a repository's rename, or opened before
+ * the machine could name it, went on filing under the old answer: the same
+ * project as two headers, in two colours, beside the rows that are only listed.
+ * A machine that says nothing (null) leaves the stamp, which is the better
+ * guess while a read is out.
+ */
+function withRemoteChatProject(workspace: Workspace, conversation: RemoteConversation): Workspace {
+  const origin = workspace.remoteOrigin
+  if (!origin) return workspace
+  const repository = conversation.repository ?? origin.repository ?? null
+  const workspaceRoot = conversation.workspaceRoot ?? origin.workspaceRoot
+  if (repository?.canonicalKey === origin.repository?.canonicalKey && workspaceRoot === origin.workspaceRoot)
+    return workspace
+  return { ...workspace, remoteOrigin: { ...origin, repository, workspaceRoot } }
+}
+
+/**
  * A row opened here from a paired machine's chat, wearing the marks that
  * machine keeps for it, when it keeps them (`rowMenu`): its star, colour,
  * sleep and Auto-settle are the chat's there, not this row's. A row from a
  * machine that does not keep them is its own record, as before.
  */
 export function withRemoteChatMarks(workspace: Workspace, conversation: RemoteConversation): Workspace {
-  const named = withRemoteChatName(workspace, conversation)
+  const named = withRemoteChatName(withRemoteChatProject(workspace, conversation), conversation)
   if (!conversation.rowMenu) return named
   workspace = named
   const highlight = conversation.highlight ?? undefined

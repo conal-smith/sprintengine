@@ -737,8 +737,8 @@ export default function SettingsPanel({
   const setAppearanceAgentCharacters = useWorkspaceStore((s) => s.setAppearanceAgentCharacters)
   const usageLimits = useWorkspaceStore((s) => s.appSettings.appearance.usageLimits)
   const setAppearanceUsageLimits = useWorkspaceStore((s) => s.setAppearanceUsageLimits)
-  const projectIconColors = useWorkspaceStore((s) => s.appSettings.appearance.projectIconColors)
-  const setAppearanceProjectIconColors = useWorkspaceStore((s) => s.setAppearanceProjectIconColors)
+  const quietProjectIcons = useWorkspaceStore((s) => s.appSettings.appearance.quietProjectIcons)
+  const setAppearanceQuietProjectIcons = useWorkspaceStore((s) => s.setAppearanceQuietProjectIcons)
   const isMac = window.api.platform === 'darwin'
   const chatListView = useWorkspaceStore((s) => s.chatListView)
   const sidebarWorkingSection = useWorkspaceStore((s) => s.appSettings.sidebarWorkingSection)
@@ -1346,10 +1346,10 @@ export default function SettingsPanel({
                 onChange={setAppearanceUsageLimits}
               />
               <SettingToggle
-                label="Colored project icons"
-                description="Keep each project's colour on its folder icon in the chat list. Off, the icons rest gray and colour in on the chat you point at or open."
-                enabled={projectIconColors}
-                onChange={setAppearanceProjectIconColors}
+                label="Quiet project icons"
+                description="Rest each project's folder icon gray in the chat list, colouring it in on the chat you point at or open. Off, every chat shows its project's colour."
+                enabled={quietProjectIcons}
+                onChange={setAppearanceQuietProjectIcons}
               />
             </SettingCard>
           </section>

@@ -176,6 +176,7 @@ import {
   folderKey,
   groupKeyOf,
   newChatProjectTarget,
+  remoteFolderGroupKey,
   remoteProjectName,
   reorderFolders,
   reorderWithinFolder,
@@ -2048,7 +2049,7 @@ function WorkspaceSidebar({
       if (projectlessScopeOf(conversation.workspaceRoot)) return resolvedGroups.projectlessKey ?? PROJECTLESS_GROUP_KEY
       const canonicalKey = conversation.repository?.canonicalKey
       if (canonicalKey) return groupKeyByRepository.get(canonicalKey) ?? `remote-repo:${canonicalKey}`
-      return `remote:${conversation.connectionId}:${folderKey(conversation.workspaceRoot)}`
+      return remoteFolderGroupKey(conversation.connectionId, conversation.workspaceRoot)
     },
     [groupKeyByRepository, resolvedGroups],
   )
@@ -2437,7 +2438,9 @@ function WorkspaceSidebar({
   // quiet-folder case above.
   // The chats folded into the Working section while their agent works, when
   // the person has turned it on (sidebar/workingSection.ts), or into the By
-  // status list's Working shelf, which is that list's whole point.
+  // status list's Working shelf, which is that list's whole point: there the
+  // chat in front goes too (`front` below), since a list by status that left
+  // out the one chat being watched would say something false about it.
   const workingSectionSetting = useWorkspaceStore((s) => s.appSettings.sidebarWorkingSection)
   const workingSectionOn = workingSectionSetting || chatListView === 'status'
   const workingIds = useMemo<ReadonlySet<WorkspaceId>>(() => {
@@ -2445,7 +2448,10 @@ function WorkspaceSidebar({
     const ids = new Set<WorkspaceId>()
     for (const workspace of localRailWorkspaces) {
       if (isShelved(workspace) || isAsleep(workspace)) continue
-      const chat = { starred: starredWorkspaceIds.has(workspace.id), front: workspace.id === frontWorkspaceId }
+      const chat = {
+        starred: starredWorkspaceIds.has(workspace.id),
+        front: chatListView !== 'status' && workspace.id === frontWorkspaceId,
+      }
       const sources = {
         activity: rowActivityByWorkspaceId[workspace.id] ?? 'idle',
         conversations: conversationsByWorkspaceId.get(workspace.id) ?? NO_CONVERSATIONS,
@@ -2456,6 +2462,7 @@ function WorkspaceSidebar({
     return ids
   }, [
     workingSectionOn,
+    chatListView,
     localRailWorkspaces,
     isShelved,
     isAsleep,
@@ -3608,11 +3615,16 @@ function WorkspaceSidebar({
   // the list leads with what is waiting on them. The fold's count still says
   // how much is going on. A paired machine's working chats fold in with this
   // computer's: by status, where a chat runs is not the question.
+  //
+  // The chat in front sits in here while it works, and the shelf stands open
+  // for it until the person folds it themselves: a row must not vanish from
+  // under the person reading it.
   const renderStatusWorkingShelf = (remoteWorking: readonly RemoteConversation[]) => {
     const local = sortWorkspacesByUserMessage(localRailWorkspaces.filter((w) => workingIds.has(w.id)))
     const rows = interleaveChats(local, remoteWorking, chatRecency)
     if (rows.length === 0) return null
-    const expanded = expandedShelves[STATUS_WORKING_SHELF_KEY] === true
+    const holdsFront = frontWorkspaceId !== null && workingIds.has(frontWorkspaceId)
+    const expanded = expandedShelves[STATUS_WORKING_SHELF_KEY] ?? holdsFront
     return (
       <>
         <ShelfFoldRow
@@ -3648,7 +3660,7 @@ function WorkspaceSidebar({
     if (entry.kind === 'remote') {
       const conversation = entry.conversation
       return chatStatusRank({
-        activity: conversation.activity,
+        activity: remoteRowActivity<Activity>(undefined, conversation),
         unseenDone: remoteRowFinishUnseen(conversation, now),
       })
     }

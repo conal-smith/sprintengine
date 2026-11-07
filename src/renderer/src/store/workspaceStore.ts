@@ -363,7 +363,7 @@ export interface WorkspaceStore
   setAppearanceReplyStreaming: (mode: ReplyStreaming) => void
   setAppearanceAgentCharacters: (enabled: boolean) => void
   setAppearanceUsageLimits: (enabled: boolean) => void
-  setAppearanceProjectIconColors: (enabled: boolean) => void
+  setAppearanceQuietProjectIcons: (enabled: boolean) => void
   setAppearanceInterfaceFont: (family: string) => void
   setAppearanceCodeFont: (family: string) => void
   addWorkspace: (
