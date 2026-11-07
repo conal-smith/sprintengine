@@ -6,6 +6,7 @@ import {
   subagentStatusOf,
   type SubagentStatus,
 } from '../../../../../../shared/conversation/subagentStatus'
+import type { MeshSubagent } from '../../../../../../shared/tailnet-mesh'
 import { useConversationSessions, type ConversationSessionEntry } from '../../../../hooks/conversationSessionsStore'
 import { useWorkspaceStore } from '../../../../store/workspaceStore'
 import type { AgentCli } from '../../../../types/workspace'
@@ -28,7 +29,9 @@ import { useConversationSession } from '../../../panels/agentChat/useConversatio
 // The Studio sub-agents of a chat, beside the agents its CLI spawned on its
 // own. A sub-agent is a chat of its own that belongs to this one
 // (subagent-tools.ts), so its row reads from its record and its session, and
-// its thread is its own transcript rather than a lane of the parent's.
+// its thread is its own transcript rather than a lane of the parent's. A chat on
+// a paired machine has no record here: that machine reads them for it and names
+// them (`conversation-subagents`), and each is followed as a chat over there.
 
 export type StudioSubagent = {
   id: string
@@ -40,6 +43,10 @@ export type StudioSubagent = {
   startedAt: number
   endedAt: number | null
   error: string | null
+  /** What it runs on, for one a machine named; one here reads its record. */
+  providerId?: string
+  /** The session its answers go to, for one a machine named; one here is found among this window's. */
+  sessionId?: string
 }
 
 /** A sub-agent's current session: a follow-up to a rested one starts a new one, so it may have several. */
@@ -76,6 +83,28 @@ export function useStudioSubagents(workspaceId: string, agentId: string): Studio
     }
     return list.sort((a, b) => a.startedAt - b.startedAt)
   }, [agents, agentId, sessions, workspaceId])
+}
+
+/**
+ * The sub-agents a paired machine named for one of its chats, as this tab draws
+ * them. That machine read them as a chat of its own there reads them, so a row
+ * says here what it says there. The remote answer ignores the session id, which
+ * is the pane's own stand-in for one at rest, as a remote chat's is.
+ */
+export function studioSubagentsOf(named: readonly MeshSubagent[]): StudioSubagent[] {
+  return named.map((subagent) => ({
+    id: subagent.agentId,
+    name: subagent.title,
+    cli: cliForConversationProvider(subagent.providerId) as AgentCli | null,
+    readOnly: subagent.readOnly,
+    status: subagent.status,
+    task: subagent.task,
+    startedAt: subagent.startedAt,
+    endedAt: subagent.endedAt ?? null,
+    error: subagent.error ?? null,
+    providerId: subagent.providerId,
+    sessionId: subagent.sessionId ?? `remote:${subagent.agentId}`,
+  }))
 }
 
 /** How it is doing, in words: working and for how long, waiting on the person, or how it ended. */
@@ -139,7 +168,8 @@ export function StudioSubagentRow({
  * One sub-agent's own transcript, as an agent's thread reads: what it was asked,
  * the steps it took, what it said on the way, and its final reply as the
  * report. What it waits on the person for shows here to be answered, since it
- * has no chat view of its own.
+ * has no chat view of its own. One on a paired machine is read through its own
+ * transport, which the tab provides around this.
  */
 export const StudioSubagentThread = React.memo(function StudioSubagentThread({
   subagent,
@@ -167,8 +197,13 @@ export const StudioSubagentThread = React.memo(function StudioSubagentThread({
     (entry): entry is Extract<TranscriptEntry, { kind: 'approval' }> =>
       entry.kind === 'approval' && entry.status === 'pending',
   )
-  const sessionId = latestSessionOf(useConversationSessions(), workspaceId, subagent.id)?.sessionId
+  const localSession = latestSessionOf(useConversationSessions(), workspaceId, subagent.id)
+  const sessionId = subagent.sessionId ?? localSession?.sessionId
   const transport = useConversationTransport()
+  // The root a session is keyed by on a paired machine is its link, which is no
+  // folder here to resolve a file link against.
+  const fileRoot = transport.kind === 'remote' ? '' : root
+  const { operate } = transport.capabilities
   const [responding, setResponding] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -200,7 +235,13 @@ export const StudioSubagentThread = React.memo(function StudioSubagentThread({
     [sessionId, transport],
   )
   return (
-    <ConversationLinkProvider workspaceId={workspaceId} agentId={subagent.id} cwd={root} workspaceRoot={root}>
+    <ConversationLinkProvider
+      workspaceId={workspaceId}
+      agentId={subagent.id}
+      cwd={fileRoot}
+      workspaceRoot={fileRoot}
+      {...(subagent.providerId ? { providerId: subagent.providerId } : {})}
+    >
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 pb-6 pt-2">
         <GhostButton size="inline" tone="subtle" align="start" onClick={onBack}>
           ‹ All agents
@@ -246,9 +287,10 @@ export const StudioSubagentThread = React.memo(function StudioSubagentThread({
           <div className="mt-3">
             <ConversationPendingDock
               pendingApprovals={pending}
-              workspaceRoot={root}
+              workspaceRoot={fileRoot || undefined}
               onApprove={respond}
-              busy={responding}
+              // Read-only: what it asks is shown, not answerable.
+              busy={responding || !operate}
             />
           </div>
         ) : null}

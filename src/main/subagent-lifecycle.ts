@@ -64,6 +64,49 @@ export type SubagentLifecycle = {
   result(chat: ChatRef): Promise<SubagentResult | null>
 }
 
+// As a window refreshes its own list of sessions, so a paired machine's Agents
+// tab is as current as this machine's.
+const SUBAGENT_CHANGE_DELAY_MS = 300
+
+/**
+ * Hears that a chat's sub-agents may read differently, for a paired machine
+ * following that chat (`conversation-subagents`): a record written (one
+ * started or ended), or a session moved. A session says so by its events, whose
+ * streamed words move nothing a sub-agent's row says. Once per burst, on a
+ * trailing timer, since an event can land before the summary it changes.
+ */
+export function subagentChangesOf(
+  sources: {
+    onEvent(listener: (event: ConversationEvent) => void): () => void
+    onRecords(listener: () => void): () => void
+  },
+  delayMs = SUBAGENT_CHANGE_DELAY_MS,
+): (listener: () => void) => () => void {
+  return (listener) => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const soon = () => {
+      if (timer) return
+      timer = setTimeout(() => {
+        timer = null
+        listener()
+      }, delayMs)
+      timer.unref?.()
+    }
+    const stopEvents = sources.onEvent((event) => {
+      if (event.type === 'content_delta' || event.type === 'reasoning_delta') return
+      if (event.type === 'tool_output' && event.payload?.partial === true) return
+      soon()
+    })
+    const stopRecords = sources.onRecords(soon)
+    return () => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      stopEvents()
+      stopRecords()
+    }
+  }
+}
+
 /** How each runtime says a turn was stopped, as `conversation-attention.ts` reads it. */
 export function turnWasInterrupted(event: ConversationEvent): boolean {
   if (event.type === 'turn_completed') return event.payload?.interrupted === true

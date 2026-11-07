@@ -13,6 +13,17 @@
 
 ### Added
 
+- **A chat's sub-agents, where it is followed.**
+  `CONVERSATION_SUBAGENTS_CAPABILITY` (`conversation-subagents`) names a desktop
+  that answers `ConversationWatchSubagentsRequest` (`watchSubagents`) with
+  `ConversationSubagentsFrame`s (`subagents`: the chat's `key` and its
+  `ConversationSubagent`s, oldest first, at most
+  `CONVERSATION_MAX_SUBAGENTS`, whole each time). A row is a chat a `subscribe`
+  follows by its ids, and names what a listed chat names of itself beside how
+  it stands (`CONVERSATION_SUBAGENT_STATUSES`). The `list` still leaves
+  sub-agents out. `parseConversationServerFrame` drops a row it cannot read
+  alone. A client asks; an older desktop refuses the request under its id. The
+  pinned files are unchanged.
 - **`subagent-task` among a Studio message's reasons.** The task a sub-agent
   was started with, which is Studio's message and not the person's. A reader
   that does not know the reason still reads it as Studio's.

@@ -686,6 +686,32 @@ the phone's pinned copy, refuses the decision as `unsafe_remote_decision`, as
 it always did, and a client offers the rule only where it is advertised. The
 Studio RPC does not advertise it: `conversation.resolveApproval` there still
 refuses the decision.
+A chat's sub-agents are the `conversation-subagents` capability (2026-11-07):
+`{ type: 'watchSubagents', requestId }` has the desktop send a `subagents`
+frame (`ConversationSubagentsFrame`: the followed chat's `key` and its
+`subagents`, oldest first, the newest `CONVERSATION_MAX_SUBAGENTS` of them,
+whole each time) now and whenever one starts, moves or ends. A row
+(`ConversationSubagent`) names the chat a sub-agent is (`workspaceId`,
+`agentId`, `title`, `providerId`, `modelId`, `sessionId`, its preset and
+`capabilities`), as a listed chat names itself, beside what is its own:
+`readOnly`, `status`, `task`, `startedAt`, `endedAt` and `error`. The status
+is the desktop's own reading (`subagentStatusOf`), so a client does not work it
+out again. A sub-agent is a chat like any other on the wire: `subscribe` follows
+it by those ids on a socket of its own, and `resolveApproval` and
+`answerQuestion` there answer what it asks. That was always so, since
+`subscribe` never read the list; what a device lacked was the ids. The `list`
+still leaves sub-agents out, on purpose: it is what a paired sidebar and a phone
+draw as chats, and neither should draw one. That is why the rows are a request
+of their own and not a member of the list, and why they are no part of
+`ConversationThread`. The watch is `conversation:read`, and an answer
+`conversation:operate`, as for any chat. All of it is additive: a desktop without
+the capability answers the request `invalid_frame` under its id, which nobody
+waits on, and a client asks only where it is advertised, or where the machine
+has not said; its chat then shows the agents its CLI spawned, as before. A
+desktop sends `subagents` frames only to a client that asked, so a phone, which
+does not, sees exactly what it saw. One row a client cannot read is dropped
+alone. The Studio RPC does not advertise it: its conversation topic carries no
+`subagents` frames, and a window on it reads the records themselves.
 A `send` may say when it was written, `composedAt` (epoch ms, the client's
 clock), and that the person confirmed one written long ago, `confirmedStale`
 (2026-10-20). A desktop that reads them records `composedAt` on the

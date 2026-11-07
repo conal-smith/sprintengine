@@ -77,6 +77,14 @@ export const CONVERSATION_STEER_SENDS_CAPABILITY = 'conversation-steer-sends' as
  */
 export const CONVERSATION_STOP_SUBAGENT_CAPABILITY = 'conversation-stop-subagent' as const
 /**
+ * The chats a chat started for one task may be read where it is followed, as
+ * the desktop's own Agents tab reads them: `watchSubagents` has the desktop
+ * name the followed chat's sub-agents in `subagents` frames, and each is a chat
+ * of its own, followed by its `agentId` and answered there. No listed chat is
+ * one: the `list` leaves them out, so only a client that asks is told of them.
+ */
+export const CONVERSATION_SUBAGENTS_CAPABILITY = 'conversation-subagents' as const
+/**
  * A chat may be handed off to a fresh session instead of compacted, as its
  * Handoff does on the desktop: `handoff` writes the chat's messages to a file
  * there and lets the provider session go, and the next message starts a new
@@ -275,6 +283,7 @@ export const CONVERSATION_CAPABILITIES = [
   CONVERSATION_USAGE_LIMITS_CAPABILITY,
   CONVERSATION_QUEUED_ATTACHMENTS_CAPABILITY,
   CONVERSATION_PERMANENT_APPROVALS_CAPABILITY,
+  CONVERSATION_SUBAGENTS_CAPABILITY,
 ] as const
 
 export type ConversationCapability = (typeof CONVERSATION_CAPABILITIES)[number]

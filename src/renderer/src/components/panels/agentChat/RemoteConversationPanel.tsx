@@ -12,6 +12,7 @@ import type {
   MeshQueuedMessage,
   MeshScheduledMessage,
   MeshConversationUsageLimits,
+  MeshSubagent,
 } from '../../../../../shared/tailnet-mesh'
 import type { CliRuntimeOption } from '../../ui/CliModelPicker'
 import {
@@ -28,6 +29,7 @@ import type { ChatReadiness } from './chatStates'
 import {
   ConversationTransportProvider,
   createRemoteConversationTransport,
+  type ConversationTransport,
   type ConversationTransportCapabilities,
 } from './conversationTransport'
 
@@ -277,6 +279,9 @@ export default function RemoteConversationPanel({
   // last said of them for this chat.
   const [usageLimits, setUsageLimits] = useState(false)
   const [hostUsage, setHostUsage] = useState<MeshConversationUsageLimits | null>(null)
+  // The chat's sub-agents, as the machine last said. It says only where it
+  // advertises `conversation-subagents`; the Agents tab reads them from here.
+  const [hostSubagents, setHostSubagents] = useState<MeshSubagent[]>([])
   const modelSwitch = listedModelSwitch && Boolean(thread?.models)
   // Bumped after an accepted model switch, so the list is read again and the
   // chip names what the machine says the chat is now on.
@@ -329,6 +334,7 @@ export default function RemoteConversationPanel({
       onQueued: setHostQueued,
       onScheduled: setHostScheduled,
       onUsageLimits: setHostUsage,
+      onSubagents: setHostSubagents,
       // A pull request Create PR opened there is in the machine's list now:
       // read it again, so the strip says "Open PR #N" without waiting for the
       // sidebar's next read.
@@ -401,6 +407,32 @@ export default function RemoteConversationPanel({
             },
           }
         : {}),
+    }
+  }, [key, machineName])
+
+  // A sub-agent is a chat of its own over there, followed by its own ids: what
+  // the Agents tab reads of one, and the answer to what it asks, go through
+  // this. Made once for each, as the pane's own is, and with the pane's word on
+  // what this pairing may do.
+  const subagentTransport = useMemo(() => {
+    const made = new Map<string, ConversationTransport>()
+    return (agentId: string): ConversationTransport => {
+      const existing = made.get(agentId)
+      if (existing) return existing
+      const base = createRemoteConversationTransport({ key: { ...key, agentId }, machineName, access: null })
+      const capabilities = base.capabilities
+      const transport: ConversationTransport = {
+        ...base,
+        get capabilities(): ConversationTransportCapabilities {
+          return {
+            ...capabilities,
+            operate: accessRef.current === 'operate',
+            permanentApprovals: permanentApprovalsRef.current,
+          }
+        },
+      }
+      made.set(agentId, transport)
+      return transport
     }
   }, [key, machineName])
 
@@ -585,8 +617,15 @@ export default function RemoteConversationPanel({
   // The Agents tab beside it reads the chat through this transport, as it
   // reads a local chat through its record.
   useEffect(
-    () => publishRemoteChat(workspaceId, { agentId: remoteAgentId, transport, binding }),
-    [workspaceId, remoteAgentId, transport, binding],
+    () =>
+      publishRemoteChat(workspaceId, {
+        agentId: remoteAgentId,
+        transport,
+        binding,
+        subagents: hostSubagents,
+        subagentTransport,
+      }),
+    [workspaceId, remoteAgentId, transport, binding, hostSubagents, subagentTransport],
   )
 
   return (

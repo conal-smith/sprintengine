@@ -28,9 +28,15 @@ import { TimedProse, WorkTimeline } from '../../../panels/agentChat/timelineRows
 import { useChatViewActive } from '../../../panels/agentChat/chatViewActivity'
 import { useConversationSession } from '../../../panels/agentChat/useConversationSession'
 import { ConversationTransportProvider } from '../../../panels/agentChat/conversationTransport'
-import { useRemoteChat } from '../../../panels/agentChat/remoteChatRegistry'
+import { useRemoteChat, type RemoteChatEntry } from '../../../panels/agentChat/remoteChatRegistry'
 import { useAgentFocusRequest } from './agentsPaneFocus'
-import { StudioSubagentRow, StudioSubagentThread, useStudioSubagents, type StudioSubagent } from './studioSubagents'
+import {
+  StudioSubagentRow,
+  StudioSubagentThread,
+  studioSubagentsOf,
+  useStudioSubagents,
+  type StudioSubagent,
+} from './studioSubagents'
 
 // The Agents tab: every agent the focused chat sent off to work, the ones still
 // working first, and each one's own thread — what it was asked, the steps it
@@ -126,7 +132,8 @@ export function AgentsTab({ workspaceId, active }: { workspaceId: string; active
   const askedAgentId = target?.agentId ?? focusedAgentId
   const local = useLocalChatBinding(workspaceId, askedAgentId ?? '')
   // A chat on a paired machine has no record here: its pane says it is open
-  // in this workspace, and the tab reads it through the pane's transport.
+  // in this workspace, and the tab reads it through the pane's transport, and
+  // its sub-agents as that machine names them.
   // The focus a local chat's tab records is not recorded for it, so with no
   // chat asked for, the one open here is shown.
   const remote = useRemoteChat(workspaceId, local ? null : askedAgentId)
@@ -156,6 +163,7 @@ export function AgentsTab({ workspaceId, active }: { workspaceId: string; active
       initialLaneId={target?.laneId ?? null}
       requestSerial={target?.serial ?? 0}
       active={active}
+      remote={remoteShown ? remote : null}
     />
   )
   return remoteShown ? (
@@ -175,6 +183,7 @@ function ChatAgents({
   initialLaneId,
   requestSerial,
   active,
+  remote,
 }: {
   workspaceId: string
   agentId: string
@@ -184,6 +193,8 @@ function ChatAgents({
   requestSerial: number
   /** The pane is open on this tab and its workspace is on screen. */
   active: boolean
+  /** The chat's entry, for one on a paired machine: its sub-agents are that machine's to name. */
+  remote: RemoteChatEntry | null
 }) {
   // Nobody can see a collapsed pane, another tab's, or a background
   // workspace's: `active` says the first two, and the view's own placement
@@ -208,7 +219,9 @@ function ChatAgents({
   // (every frame, while the tab is hidden) re-renders no section or thread.
   const working = useMemo(() => lanes.filter((candidate) => candidate.status === 'running'), [lanes])
   const finished = useMemo(() => lanes.filter((candidate) => candidate.status !== 'running').reverse(), [lanes])
-  const subagents = useStudioSubagents(workspaceId, agentId)
+  const hereSubagents = useStudioSubagents(workspaceId, agentId)
+  const named = remote?.subagents
+  const subagents = useMemo(() => (named ? studioSubagentsOf(named) : hereSubagents), [named, hereSubagents])
   const subagent = selected ? subagents.find((candidate) => candidate.id === selected) : undefined
   const workingSubagents = useMemo(() => subagents.filter((entry) => !subagentEnded(entry.status)), [subagents])
   const finishedSubagents = useMemo(
@@ -235,13 +248,15 @@ function ChatAgents({
         <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-[color:var(--bg-app)]">
           <PanelHeader title="Agents" subtitle={binding.agent.name} count={agentCount || undefined} />
           {subagent ? (
-            <StudioSubagentThread
-              subagent={subagent}
-              workspaceId={workspaceId}
-              root={root}
-              active={seen}
-              onBack={showList}
-            />
+            <SubagentThreadOn remote={remote} agentId={subagent.id}>
+              <StudioSubagentThread
+                subagent={subagent}
+                workspaceId={workspaceId}
+                root={root}
+                active={seen}
+                onBack={showList}
+              />
+            </SubagentThreadOn>
           ) : lane ? (
             <AgentThread lane={lane} onBack={showList} />
           ) : (
@@ -295,6 +310,23 @@ function ChatAgents({
         </div>
       </SubagentTypesProvider>
     </ConversationLinkProvider>
+  )
+}
+
+// A sub-agent on a paired machine is a chat of its own there, so its thread is
+// read and answered through its own transport, not its parent's.
+function SubagentThreadOn({
+  remote,
+  agentId,
+  children,
+}: {
+  remote: RemoteChatEntry | null
+  agentId: string
+  children: React.ReactNode
+}) {
+  if (!remote) return <>{children}</>
+  return (
+    <ConversationTransportProvider value={remote.subagentTransport(agentId)}>{children}</ConversationTransportProvider>
   )
 }
 

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, vi } from 'vitest'
+import { describe, test, vi } from 'vitest'
 import { createSecretCipherStandIn } from '../../../tests/stubs/secret-cipher'
 
 import type {
@@ -21,7 +21,9 @@ import {
   createConversationGatewayHost,
   type ConversationGatewayHost,
   type ConversationUsageLimits,
+  type ConversationListWorkspace,
 } from './tailnet/tailnet-conversation-host'
+import { subagentChangesOf } from '../subagent-lifecycle'
 import { createTailnetDeviceStore, type TailnetDeviceStore } from './tailnet/tailnet-devices'
 import { createTailnetMeshService, type TailnetMeshService } from './tailnet/tailnet-mesh-service'
 import { createTailnetMeshStore } from './tailnet/tailnet-mesh-store'
@@ -120,6 +122,9 @@ async function waitFor(predicate: () => boolean, what: string): Promise<void> {
 type Harness = {
   /** The far end's clock, which its scheduled messages keep time by. */
   hostNow(): number
+  workspaceRoot: string
+  /** The far end wrote one of its chat records. */
+  recordsMoved(): void
   runtime: ConversationRuntime
   provider: ReturnType<typeof pushProvider>
   devices: TailnetDeviceStore
@@ -137,6 +142,7 @@ type Harness = {
 
 const workspaceId = 'workspace'
 const agentId = 'agent'
+const SUBAGENT_PROVIDER = 'subagent-mock'
 
 /**
  * The far end's gateway tools, for a test that starts a chat there: built once
@@ -145,13 +151,25 @@ const agentId = 'agent'
 type HarnessTools = (runtime: ConversationRuntime, workspaceRoot: string) => McpToolRegistration[]
 
 async function startHarness(
-  options: { holdQueued?: boolean; tools?: HarnessTools; usageLimits?: ConversationUsageLimits } = {},
+  options: {
+    holdQueued?: boolean
+    tools?: HarnessTools
+    usageLimits?: ConversationUsageLimits
+    /** The far end's chat records, which say what is a sub-agent of what. */
+    subagentRecords?: () => ConversationListWorkspace['agents']
+  } = {},
 ): Promise<Harness> {
   const workspaceRoot = mkdtempSync(join(tmpdir(), 'remote-conversation-host-'))
   const remoteDir = mkdtempSync(join(tmpdir(), 'remote-conversation-devices-'))
   const localDir = mkdtempSync(join(tmpdir(), 'remote-conversation-local-'))
   const provider = pushProvider()
-  const runtime = new ConversationRuntime({ adapters: [provider.adapter], getProviderById: () => undefined })
+  // A second provider, whose turn stops on an approval, for a sub-agent to run on.
+  const subagentAdapter = { ...createMockConversationProvider(), id: SUBAGENT_PROVIDER }
+  const runtime = new ConversationRuntime({
+    adapters: [provider.adapter, subagentAdapter],
+    getProviderById: () => undefined,
+  })
+  const recordChanges = new Set<() => void>()
   // The far end's scheduled messages, where a queued send is held: the real
   // ones, kept in memory, following this runtime's chats and sending through
   // the host as a scheduled message does. Their clock runs past the start's
@@ -208,6 +226,21 @@ async function startHarness(
           }
         : {}),
       ...(options.usageLimits ? { usageLimits: options.usageLimits } : {}),
+      ...(options.subagentRecords
+        ? {
+            workspaceOf: () => ({ name: 'Project', createdAt: 1, agents: options.subagentRecords!() }),
+            subagentChanges: subagentChangesOf(
+              {
+                onEvent: (listener) => runtime.onEvent(listener),
+                onRecords: (listener) => {
+                  recordChanges.add(listener)
+                  return () => recordChanges.delete(listener)
+                },
+              },
+              5,
+            ),
+          }
+        : {}),
     },
   )
   if (scheduled) {
@@ -269,6 +302,10 @@ async function startHarness(
   assert.ok(started.ok)
   const harness: Harness = {
     hostNow: () => Date.now() + skew,
+    workspaceRoot,
+    recordsMoved: () => {
+      for (const listener of recordChanges) listener()
+    },
     runtime,
     provider,
     devices,
@@ -1523,6 +1560,173 @@ test("a paired desktop hears a chat's usage limits from the machine it runs on, 
   } finally {
     await h.close()
   }
+})
+
+describe('a chat’s sub-agents on a paired desktop', () => {
+  const child = 'agent-child'
+  const records = (end?: { at: number; status: 'completed' }): ConversationListWorkspace['agents'] => ({
+    [agentId]: { name: 'Router work' },
+    [child]: {
+      name: 'Reviewer',
+      conversation: { providerId: SUBAGENT_PROVIDER, modelId: 'mock-model' },
+      subagentOf: { agentId, startedAt: 1_000, task: 'Review the calendar screen' },
+      subagentReadOnly: true,
+      ...(end ? { subagentEnd: end } : {}),
+    },
+  })
+  const startChild = async (h: Harness) => {
+    const started = await h.runtime.startSession({
+      workspaceRoot: h.workspaceRoot,
+      workspaceId,
+      agentId: child,
+      providerId: SUBAGENT_PROVIDER,
+      modelId: 'mock-model',
+      permissionPreset: 'manual',
+    })
+    assert.ok(started.ok)
+    return started.session.sessionId
+  }
+
+  test('are named live where the chat is followed, opened as chats, and answered there, and no list shows one', async () => {
+    let end: { at: number; status: 'completed' } | undefined
+    const h = await startHarness({ subagentRecords: () => records(end) })
+    try {
+      const sessionId = await startChild(h)
+      const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+      const listed = await h.mesh.listConversations(connectionId)
+      assert.ok(listed.ok, listed.ok ? '' : listed.message)
+      assert.deepEqual(
+        listed.conversations.map((entry) => entry.agentId),
+        [agentId],
+        'the sidebar’s list leaves a sub-agent out',
+      )
+
+      const key = { connectionId, workspaceId, agentId }
+      const pane = follower(h.mesh, key)
+      await waitFor(pane.live, 'the follow goes live')
+      await waitFor(() => pane.of('subagents').length > 0, 'told which sub-agents the chat has')
+      const named = () => pane.of('subagents').at(-1)?.subagents[0]
+      assert.equal(pane.of('subagents').at(-1)?.subagents.length, 1)
+      assert.equal(named()?.agentId, child)
+      assert.equal(named()?.title, 'Reviewer')
+      assert.equal(named()?.providerId, SUBAGENT_PROVIDER)
+      assert.equal(named()?.task, 'Review the calendar screen')
+      assert.equal(named()?.readOnly, true)
+      assert.equal(named()?.status, 'starting')
+      assert.equal(named()?.sessionId, sessionId)
+
+      // Opened, it is followed as any chat, by the ids the row names.
+      const childKey = { connectionId, workspaceId: named()!.workspaceId, agentId: named()!.agentId }
+      const thread = follower(h.mesh, childKey, 'agents-tab')
+      await waitFor(thread.live, 'the sub-agent is followed')
+      const sent = h.mesh.conversationCommand({ key: childKey, command: { kind: 'send', message: 'Go' } })
+      await waitFor(() => named()?.status === 'needs_input', 'its question reaches the list by itself')
+      await waitFor(
+        () => thread.of('event').some((frame) => frame.event.type === 'approval_requested'),
+        'its own transcript carries what it asks',
+      )
+      assert.ok(
+        thread.of('event').some((frame) => frame.event.type === 'content_delta'),
+        'and what it said',
+      )
+      const asked = thread.of('event').find((frame) => frame.event.type === 'approval_requested')!
+      assert.deepEqual(
+        await h.mesh.conversationCommand({
+          key: childKey,
+          command: {
+            kind: 'resolveApproval',
+            requestId: String(asked.event.payload?.requestId),
+            decision: 'once',
+          },
+        }),
+        { ok: true },
+      )
+      await sent
+      await waitFor(() => named()?.status === 'completed', 'its end reaches the list by itself')
+      end = { at: 5_000, status: 'completed' }
+      h.recordsMoved()
+      await waitFor(() => named()?.endedAt === 5_000, 'a record written reaches the list too')
+
+      // A second window opened now is told at once, without asking the machine again.
+      const second = follower(h.mesh, key, 'pane-2')
+      await second.following
+      assert.equal(second.of('subagents').at(-1)?.subagents[0]?.endedAt, 5_000)
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('a pairing that may only read sees them and cannot answer them', async () => {
+    const h = await startHarness({ subagentRecords: () => records() })
+    try {
+      await startChild(h)
+      const connectionId = await h.pair(['conversation:read'])
+      const pane = follower(h.mesh, { connectionId, workspaceId, agentId })
+      await waitFor(() => pane.of('subagents').length > 0, 'following is enough to be told them')
+      const childKey = { connectionId, workspaceId, agentId: child }
+      const thread = follower(h.mesh, childKey, 'agents-tab')
+      await waitFor(thread.live, 'the sub-agent is followed')
+      const answered = await h.mesh.conversationCommand({
+        key: childKey,
+        command: { kind: 'resolveApproval', requestId: 'r-1', decision: 'once' },
+      })
+      assert.equal(answered.ok, false)
+      assert.equal(!answered.ok && answered.code, 'conversation_operate_required')
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('a machine that says nothing of them keeps the chat as it was, with no error', async () => {
+    const h = await startHarness()
+    try {
+      const connectionId = await h.pair(['conversation:read', 'conversation:operate'])
+      const pane = follower(h.mesh, { connectionId, workspaceId, agentId })
+      await waitFor(pane.live, 'the follow goes live')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      assert.equal(pane.of('subagents').length, 0)
+      assert.equal(pane.link()?.state, 'live')
+    } finally {
+      await h.close()
+    }
+  })
+
+  test('are asked for after each fence, and never of a machine that said it has no such thing', async () => {
+    vi.useFakeTimers()
+    try {
+      const watches = (sent: Array<Record<string, unknown>>) => sent.filter((frame) => frame.type === 'watchSubagents')
+      // Not said yet: asked anyway, and an older machine refuses under the id,
+      // which nobody waits on: the follow goes on.
+      const unknown = drivenClient({ capabilities: null })
+      await unknown.follow()
+      await vi.advanceTimersByTimeAsync(0)
+      unknown.fence(1)
+      assert.equal(watches(unknown.sent).length, 1)
+      unknown.handlers.at(-1)!.onFrame({
+        type: 'result',
+        requestId: watches(unknown.sent)[0].requestId,
+        ok: false,
+        code: 'invalid_frame',
+        message: 'Unknown frame.',
+      })
+      unknown.fence(2)
+      assert.equal(watches(unknown.sent).length, 2, 'each fence begins the watch afresh')
+      assert.equal(unknown.frames.filter((frame) => frame.type === 'subagents').length, 0)
+      // Another chat's sub-agents are not this one's.
+      unknown.handlers.at(-1)!.onFrame({ type: 'subagents', key: { workspaceId, agentId: 'other' }, subagents: [] })
+      assert.equal(unknown.frames.filter((frame) => frame.type === 'subagents').length, 0)
+      unknown.client.shutdown()
+
+      const without = drivenClient({ capabilities: ['conversations', 'conversation-models'] })
+      await without.follow()
+      await vi.advanceTimersByTimeAsync(0)
+      without.fence(1)
+      assert.equal(watches(without.sent).length, 0)
+      without.client.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 test('the held messages are asked for after each fence, and never of a machine that said it holds none', async () => {

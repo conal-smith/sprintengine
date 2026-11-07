@@ -68,6 +68,7 @@ export const CONVERSATION_LANE_ACCESS: { readonly [T in ConversationClientMessag
   watchQueued: FOLLOW,
   watchScheduled: FOLLOW,
   watchUsageLimits: FOLLOW,
+  watchSubagents: FOLLOW,
   // A device cancels only a question it asked itself.
   cancelSideQuestion: FOLLOW,
   askSideQuestion: DRIVE,

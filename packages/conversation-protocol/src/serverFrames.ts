@@ -508,6 +508,7 @@ export type ConversationParsedServerFrame =
   | ConversationQueuedFrame
   | ConversationScheduledFrame
   | ConversationUsageLimitsFrame
+  | ConversationSubagentsFrame
 
 /**
  * A command's result under the full contract: a command that answers more
@@ -532,6 +533,7 @@ const SERVER_FRAME_TYPES = new Set([
   'queued',
   'scheduled',
   'usageLimits',
+  'subagents',
 ])
 const PHASES = new Set<ConversationWirePhase>([
   'idle',
@@ -717,6 +719,133 @@ export function parseConversationWireHighlight(value: unknown): ConversationWire
   return { starred, ...(color ? { color } : {}) }
 }
 
+/** Where a sub-agent stands, as the desktop's Agents tab says it. */
+export const CONVERSATION_SUBAGENT_STATUSES = [
+  'starting',
+  'working',
+  'needs_input',
+  'completed',
+  'failed',
+  'stopped',
+] as const
+export type ConversationSubagentStatus = (typeof CONVERSATION_SUBAGENT_STATUSES)[number]
+
+/**
+ * A chat another chat started for one task. It is a chat of its own, which the
+ * `list` leaves out because it belongs to its parent: a `subscribe` naming its
+ * ids follows it as any chat is followed, and a command there answers what it
+ * asks. So it names what a listed chat names of itself (its title, what it runs
+ * on, its session, its preset and what it can do), and a client can draw a chat
+ * from this row as it draws one from the list, beside what is a sub-agent's
+ * own: what it was asked, how it stands, and how it ended.
+ */
+export type ConversationSubagent = ConversationWireKey &
+  Pick<
+    ConversationThread,
+    'title' | 'providerId' | 'modelId' | 'sessionId' | 'permissionPreset' | 'permissionMode' | 'capabilities'
+  > & {
+    readOnly: boolean
+    status: ConversationSubagentStatus
+    /** The first line of its task. Empty when it was given none to show. */
+    task: string
+    startedAt: number
+    /** When its task ended, once it has. A follow-up sent later moves nothing here. */
+    endedAt?: number
+    /** Why it failed, when it says. */
+    error?: string
+  }
+
+/**
+ * The sub-agents of the chat followed, oldest first, whole each time
+ * (`conversation-subagents`). `key` names that chat, the parent.
+ */
+export type ConversationSubagentsFrame = {
+  type: 'subagents'
+  key: ConversationWireKey
+  subagents: ConversationSubagent[]
+}
+
+/** The most sub-agents a `subagents` frame names: the newest, when a chat has started more. */
+export const CONVERSATION_MAX_SUBAGENTS = 256
+
+/** What a listed chat can do, or null when it does not say: unknown, not refused. */
+function threadCapabilities(value: unknown): ConversationThread['capabilities'] | null {
+  if (!record(value)) return null
+  const flags = value
+  const flag = (name: string) => flags[name] === true
+  return {
+    images: flag('images'),
+    approvals: flag('approvals'),
+    questions: flag('questions'),
+    planMode: flag('planMode'),
+    interrupt: flag('interrupt'),
+    checkpoints: flag('checkpoints'),
+    ...(Array.isArray(flags.permissionPresets)
+      ? { permissionPresets: flags.permissionPresets.filter(isConversationWirePermissionPreset) }
+      : {}),
+    ...(Array.isArray(flags.permissionModes)
+      ? { permissionModes: flags.permissionModes.filter(isConversationPermissionModeId) }
+      : {}),
+    ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
+    ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
+    ...(typeof flags.handoff === 'boolean' ? { handoff: flags.handoff } : {}),
+    ...(typeof flags.rewind === 'boolean' ? { rewind: flags.rewind } : {}),
+    ...(typeof flags.fork === 'boolean' ? { fork: flags.fork } : {}),
+    ...(typeof flags.sideQuestion === 'boolean' ? { sideQuestion: flags.sideQuestion } : {}),
+    ...(typeof flags.contextBreakdown === 'boolean' ? { contextBreakdown: flags.contextBreakdown } : {}),
+    ...(Array.isArray(flags.mcpServerActions)
+      ? {
+          mcpServerActions: flags.mcpServerActions.filter((action): action is ConversationWireMcpServerAction =>
+            CONVERSATION_MCP_SERVER_ACTIONS.includes(action as never),
+          ),
+        }
+      : {}),
+    ...(Array.isArray(flags.reasoningEfforts)
+      ? { reasoningEfforts: flags.reasoningEfforts.filter(isConversationReasoningEffortId) }
+      : {}),
+  }
+}
+
+/** One sub-agent of a `subagents` frame, or null for one this client cannot read. */
+function subagent(value: unknown): ConversationSubagent | null {
+  if (!record(value)) return null
+  const named = key(value)
+  if (
+    !named ||
+    !text(value.title, 2_000) ||
+    !text(value.providerId, 200) ||
+    !text(value.modelId, 400) ||
+    !optional(value.sessionId, id) ||
+    typeof value.readOnly !== 'boolean' ||
+    !CONVERSATION_SUBAGENT_STATUSES.includes(value.status as ConversationSubagentStatus) ||
+    !text(value.task, 2_000) ||
+    !clock(value.startedAt)
+  )
+    return null
+  const capabilities = threadCapabilities(value.capabilities)
+  return {
+    ...named,
+    title: value.title,
+    providerId: value.providerId,
+    modelId: value.modelId,
+    readOnly: value.readOnly,
+    status: value.status as ConversationSubagentStatus,
+    task: value.task,
+    startedAt: value.startedAt,
+    ...(value.sessionId === undefined ? {} : { sessionId: value.sessionId as string }),
+    // As a listed chat's: a preset this client does not know is left out, and
+    // a mode only means something beside the preset it belongs to.
+    ...(isConversationWirePermissionPreset(value.permissionPreset) ? { permissionPreset: value.permissionPreset } : {}),
+    ...(isConversationWirePermissionPreset(value.permissionPreset) &&
+    isConversationPermissionModeId(value.permissionMode)
+      ? { permissionMode: value.permissionMode }
+      : {}),
+    ...(capabilities ? { capabilities } : {}),
+    ...(clock(value.endedAt) ? { endedAt: value.endedAt } : {}),
+    ...(text(value.error) && value.error ? { error: value.error } : {}),
+  }
+}
+
 /** One listed conversation, or null. Capabilities absent or malformed read as unknown, not as refused. */
 function thread(value: unknown): ConversationThread | null {
   if (!record(value)) return null
@@ -734,8 +863,7 @@ function thread(value: unknown): ConversationThread | null {
     !optional(value.sessionId, id)
   )
     return null
-  const flags = record(value.capabilities) ? value.capabilities : null
-  const flag = (name: string) => flags?.[name] === true
+  const capabilities = threadCapabilities(value.capabilities)
   // A catalog in the wrong shape is left out, like an unknown preset: the
   // model control hides rather than offering rows it could not read.
   const models = value.models === undefined ? null : parseConversationWireModels(value.models)
@@ -805,41 +933,7 @@ function thread(value: unknown): ConversationThread | null {
     ...(changes ? { changes } : {}),
     ...(value.worktree === true ? { worktree: true } : {}),
     ...(typeof value.autoCompact === 'boolean' ? { autoCompact: value.autoCompact } : {}),
-    ...(flags
-      ? {
-          capabilities: {
-            images: flag('images'),
-            approvals: flag('approvals'),
-            questions: flag('questions'),
-            planMode: flag('planMode'),
-            interrupt: flag('interrupt'),
-            checkpoints: flag('checkpoints'),
-            ...(Array.isArray(flags.permissionPresets)
-              ? { permissionPresets: flags.permissionPresets.filter(isConversationWirePermissionPreset) }
-              : {}),
-            ...(Array.isArray(flags.permissionModes)
-              ? { permissionModes: flags.permissionModes.filter(isConversationPermissionModeId) }
-              : {}),
-            ...(typeof flags.steer === 'boolean' ? { steer: flags.steer } : {}),
-            ...(typeof flags.stopSubagent === 'boolean' ? { stopSubagent: flags.stopSubagent } : {}),
-            ...(typeof flags.handoff === 'boolean' ? { handoff: flags.handoff } : {}),
-            ...(typeof flags.rewind === 'boolean' ? { rewind: flags.rewind } : {}),
-            ...(typeof flags.fork === 'boolean' ? { fork: flags.fork } : {}),
-            ...(typeof flags.sideQuestion === 'boolean' ? { sideQuestion: flags.sideQuestion } : {}),
-            ...(typeof flags.contextBreakdown === 'boolean' ? { contextBreakdown: flags.contextBreakdown } : {}),
-            ...(Array.isArray(flags.mcpServerActions)
-              ? {
-                  mcpServerActions: flags.mcpServerActions.filter((action): action is ConversationWireMcpServerAction =>
-                    CONVERSATION_MCP_SERVER_ACTIONS.includes(action as never),
-                  ),
-                }
-              : {}),
-            ...(Array.isArray(flags.reasoningEfforts)
-              ? { reasoningEfforts: flags.reasoningEfforts.filter(isConversationReasoningEffortId) }
-              : {}),
-          },
-        }
-      : {}),
+    ...(capabilities ? { capabilities } : {}),
   }
 }
 
@@ -1100,6 +1194,18 @@ export function parseConversationServerFrame(value: unknown): ConversationParsed
         autoResume: frame.autoResume,
         limits,
       }
+    }
+    case 'subagents': {
+      const key = frame.key
+      if (!record(key) || !id(key.workspaceId) || !id(key.agentId) || !Array.isArray(frame.subagents)) return null
+      const subagents: ConversationSubagent[] = []
+      // The newest, when there are more than a frame names; oldest first.
+      for (const entry of frame.subagents.slice(-CONVERSATION_MAX_SUBAGENTS)) {
+        // One unreadable sub-agent does not hide the rest.
+        const read = subagent(entry)
+        if (read) subagents.push(read)
+      }
+      return { type: 'subagents', key: { workspaceId: key.workspaceId, agentId: key.agentId }, subagents }
     }
     default:
       return null

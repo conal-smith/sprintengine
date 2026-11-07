@@ -2,13 +2,18 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
 
 import type { AgentState } from '../shared/agent-state'
 import type { ConversationEvent, ConversationSessionSummary } from '../shared/conversation-runtime'
 import { ConversationRuntime } from './conversation-runtime'
 import { createMockConversationProvider } from './providers/mock-conversation-provider'
-import { createSubagentLifecycle, SUBAGENT_RESULT_MAX_CHARS, type SubagentLifecycleDeps } from './subagent-lifecycle'
+import {
+  createSubagentLifecycle,
+  subagentChangesOf,
+  SUBAGENT_RESULT_MAX_CHARS,
+  type SubagentLifecycleDeps,
+} from './subagent-lifecycle'
 
 const WORKSPACE = 'ws-1'
 const parent = { workspaceId: WORKSPACE, agentId: 'agent-parent' }
@@ -297,5 +302,49 @@ test("with the runtime: a mock sub-agent's turn ends it, leaves it at rest, and 
   } finally {
     await runtime.shutdown()
     await rm(workspaceRoot, { recursive: true, force: true })
+  }
+})
+
+test('a paired machine hears of a sub-agent once per burst, and not for its streamed words', async () => {
+  vi.useFakeTimers()
+  try {
+    const events = new Set<(event: ConversationEvent) => void>()
+    const records = new Set<() => void>()
+    const heard: number[] = []
+    const stop = subagentChangesOf(
+      {
+        onEvent: (listener) => {
+          events.add(listener)
+          return () => events.delete(listener)
+        },
+        onRecords: (listener) => {
+          records.add(listener)
+          return () => records.delete(listener)
+        },
+      },
+      100,
+    )(() => heard.push(Date.now()))
+    const say = (type: string, payload: Record<string, unknown> = {}) => {
+      for (const listener of events) listener({ type, payload } as unknown as ConversationEvent)
+    }
+    say('content_delta')
+    say('reasoning_delta')
+    say('tool_output', { partial: true })
+    await vi.advanceTimersByTimeAsync(500)
+    assert.equal(heard.length, 0, 'streamed words move nothing a row says')
+    say('turn_started')
+    say('tool_started')
+    for (const listener of records) listener()
+    await vi.advanceTimersByTimeAsync(99)
+    assert.equal(heard.length, 0, 'held for the summary the event changes')
+    await vi.advanceTimersByTimeAsync(1)
+    assert.equal(heard.length, 1, 'a burst is heard once')
+    say('turn_completed')
+    stop()
+    await vi.advanceTimersByTimeAsync(500)
+    assert.equal(heard.length, 1, 'nothing is heard once it stopped')
+    assert.equal(events.size + records.size, 0)
+  } finally {
+    vi.useRealTimers()
   }
 })

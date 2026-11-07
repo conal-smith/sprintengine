@@ -43,7 +43,7 @@ import { TAILNET_UPLOADS_DIRNAME } from '../../main/automation/tailnet/tailnet-f
 import { WEB_UPLOADS_DIRNAME } from '../web/web-uploads'
 import { attachmentImagesRoot } from '../../main/attachment-image-file'
 import { createConversationLaunchService } from '../../main/conversation-launch-service'
-import { createSubagentLifecycle } from '../../main/subagent-lifecycle'
+import { createSubagentLifecycle, subagentChangesOf } from '../../main/subagent-lifecycle'
 import { createConversationImportService } from '../../main/conversation-import/conversation-import-service'
 import { createConversationModelCatalog } from '../../main/conversation-model-catalog'
 import { ConversationPlanStore } from '../../main/conversation-plan-store'
@@ -934,6 +934,11 @@ export function createStudioCore(platform: StudioPlatform, options: StudioCoreOp
         // resume it sends a chat a limit stopped, for a paired machine's strip
         // and tray.
         usageLimits: studioConversationUsageLimits(() => usageLimitResumes),
+        // What moves a paired machine's Agents tab for a chat here.
+        subagentChanges: subagentChangesOf({
+          onEvent: (listener) => conversations.onEvent(listener),
+          onRecords: (listener) => workspaceRegistry.subscribe(listener),
+        }),
       },
     )
 

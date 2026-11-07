@@ -18,6 +18,7 @@ import {
   type ConversationCommand,
   type ConversationWatchQueuedRequest,
   type ConversationWatchScheduledRequest,
+  type ConversationWatchSubagentsRequest,
   type ConversationWatchUsageLimitsRequest,
   type ConversationUsageLimitResumeAction,
 } from './commands.js'
@@ -46,6 +47,7 @@ export type ConversationClientMessage =
   | ConversationContextBreakdownRequest
   | ConversationWatchScheduledRequest
   | ConversationWatchUsageLimitsRequest
+  | ConversationWatchSubagentsRequest
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -114,6 +116,8 @@ export function parseConversationClientMessage(value: unknown): ConversationClie
     return id(value.requestId) ? { type: 'watchScheduled', requestId: value.requestId } : null
   if (value.type === 'watchUsageLimits')
     return id(value.requestId) ? { type: 'watchUsageLimits', requestId: value.requestId } : null
+  if (value.type === 'watchSubagents')
+    return id(value.requestId) ? { type: 'watchSubagents', requestId: value.requestId } : null
   if (value.type === 'command' && record(value.command)) {
     const command = value.command
     // When the message was written, and whether the person confirmed one
