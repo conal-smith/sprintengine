@@ -18,6 +18,10 @@ import { combinedAgentActivity, workspaceIsWorking } from './conversationLines'
 // front stays where it is, as it does for Settle and Snooze, so a row never
 // slides out from under the person reading it. A chat waiting on the person,
 // or whose turn failed, is not working: it goes back, where its tint says so.
+//
+// The By status list asks the same question without the `front` exception: it
+// sorts by what a chat is doing, so the open chat is sorted with the rest and
+// the shelf opens for it.
 
 export type WorkingSectionSources = {
   activity: Activity

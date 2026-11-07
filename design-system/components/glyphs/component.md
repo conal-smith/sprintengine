@@ -174,8 +174,11 @@ makes from an OS string and a host name, this family is a machine's settled
 identity: a default kind from what the machine is, a default colour from a
 hash of its stable id, and both changeable in Settings › Machines. It marks a
 machine wherever a surface names one — the composer's context strip, a
-sidebar row (trailing), a chat tab, the machine picker's rows and Settings ›
-Machines — and **never this machine**, which is the unmarked default.
+sidebar row, a chat tab, the machine picker's rows and Settings › Machines —
+and **never this machine**, which is the unmarked default. A sidebar row in the
+project tree carries it trailing; a row's project line in a flat list leads
+with it, before the folder, in the folder's ink (owner, 2026-11-07), because
+two colours a few pixels apart clash and the line is about the project.
 
 | Kind | Export | Asset | Drawing | Default for |
 |---|---|---|---|---|
@@ -208,6 +211,8 @@ the machine's name, a row wash or a pill.
 `MachineGlyph({ identity })` is the one way to draw one: the kind's drawing
 inside a span inked by `MACHINE_COLOUR_INK`, decorative, carrying
 `data-machine-mark` with the machine's id. The surface names the machine.
+`inheritInk` leaves the colour off for the surface to set, which only the
+project line does.
 
 ### Composer (16-grid — `ui/ComposerGlyphs.tsx`)
 

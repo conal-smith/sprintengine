@@ -35,6 +35,7 @@ import {
   remoteHighlightAfter,
   withPendingRemoteMarks,
   withRemoteChatMarks,
+  sameRemoteChatMarks,
   type RemoteBrowseEntry,
   type RemoteConversation,
 } from './remoteSessionsModel'
@@ -962,4 +963,43 @@ test('a chat on a paired machine finished unseen when any of its agents did', ()
   assert.equal(remoteRowFinishUnseen(chat(agent(50_000, 40_000)), now), true)
   assert.equal(remoteRowFinishUnseen(chat(agent(50_000, 60_000)), now), false, 'seen since')
   assert.equal(remoteRowFinishUnseen(chat(agent(50_000, 60_000), agent(70_000, 60_000)), now), true)
+})
+
+test('a row opened from a paired machine files by what that machine says of it now', () => {
+  const stale = { canonicalKey: 'github.com/old-org/demo-app', remoteUrl: '', name: 'demo-app' }
+  const current = { canonicalKey: 'github.com/acme/demo-app', remoteUrl: '', name: 'demo-app' }
+  const workspace = {
+    id: 'w1',
+    name: 'Chat',
+    remoteOrigin: { connectionId: 'c1', workspaceId: 'rw1', workspaceRoot: '/Users/dev/demo-app', repository: stale },
+  } as unknown as Workspace
+  const conversation = {
+    rowMenu: false,
+    manage: null,
+    title: 'Chat',
+    workspaceRoot: '/Users/dev/demo-app',
+    repository: current,
+  } as unknown as RemoteConversation
+  const refreshed = withRemoteChatMarks(workspace, conversation)
+  assert.equal(refreshed.remoteOrigin?.repository, current)
+  assert.equal(withRemoteChatMarks(refreshed, conversation), refreshed, 'the same answer, the same row')
+  assert.equal(
+    withRemoteChatMarks(workspace, { ...conversation, repository: null }),
+    workspace,
+    'a machine that says nothing leaves the stamp',
+  )
+  assert.equal(
+    sameRemoteChatMarks(conversation, { ...conversation, repository: stale }),
+    false,
+    'a new answer is not served from the cache of the old one',
+  )
+})
+
+test('a chat a failed turn stopped on its machine reads as failed here', () => {
+  const chat = (activity: string, phase: string, rowActivity = activity) =>
+    ({ activity, agents: [{ activity: rowActivity, phase }] }) as unknown as RemoteConversation
+  assert.equal(remoteRowActivity(undefined, chat('idle', 'failed')), 'failed')
+  assert.equal(remoteRowActivity('idle', chat('idle', 'failed')), 'failed')
+  assert.equal(remoteRowActivity(undefined, chat('working', 'failed')), 'working', 'background work is still work')
+  assert.equal(remoteRowActivity(undefined, chat('idle', 'completed')), 'idle')
 })

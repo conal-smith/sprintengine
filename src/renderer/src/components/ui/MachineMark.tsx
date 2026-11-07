@@ -74,14 +74,17 @@ export function MachineKindGlyph({ kind, className }: { kind: MachineKind; class
 export function MachineGlyph({
   identity,
   className = 'icon-xs shrink-0',
+  inheritInk = false,
 }: {
   identity: MachineIdentity
   className?: string
+  /** Take the surrounding ink instead of the machine's colour, where another mark beside it sets the ink. */
+  inheritInk?: boolean
 }): React.JSX.Element {
   return (
     <span
       aria-hidden="true"
-      className={`inline-flex shrink-0 ${MACHINE_COLOUR_INK[identity.colour]}`}
+      className={`inline-flex shrink-0 ${inheritInk ? '' : MACHINE_COLOUR_INK[identity.colour]}`.trim()}
       data-machine-mark={identity.id}
       data-machine-kind={identity.kind}
       data-machine-colour={identity.colour}

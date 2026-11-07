@@ -872,11 +872,22 @@ test('settingsSlice', async () => {
     replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
-    projectIconColors: false,
+    quietProjectIcons: false,
     interfaceFont: '',
     codeFont: '',
   })
   assert.deepEqual(normalizeAppearanceSettings(undefined), defaultAppearanceSettings())
+  assert.equal(
+    (normalizeAppearanceSettings({ projectIconColors: false } as never) as unknown as Record<string, unknown>)
+      .projectIconColors,
+    undefined,
+    'the old switch, written false into every profile, is dropped',
+  )
+  assert.equal(
+    normalizeAppearanceSettings({ projectIconColors: false } as never).quietProjectIcons,
+    false,
+    'so a profile that has it wears the project colour at rest',
+  )
   assert.deepEqual(normalizeAppearanceSettings({ theme: 'sage', windowMaterial: 'glass' }), {
     theme: 'sage',
     systemLightTheme: 'light',
@@ -888,7 +899,7 @@ test('settingsSlice', async () => {
     replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
-    projectIconColors: false,
+    quietProjectIcons: false,
     interfaceFont: '',
     codeFont: '',
   })
@@ -905,7 +916,7 @@ test('settingsSlice', async () => {
       replyStreaming: 'live',
       agentCharacters: true,
       usageLimits: true,
-      projectIconColors: false,
+      quietProjectIcons: false,
       interfaceFont: '',
       codeFont: '',
     },
@@ -924,7 +935,7 @@ test('settingsSlice', async () => {
       replyStreaming: 'live',
       agentCharacters: true,
       usageLimits: true,
-      projectIconColors: false,
+      quietProjectIcons: false,
       interfaceFont: '',
       codeFont: '',
     },
@@ -1452,7 +1463,7 @@ test('a stored appearance from before the chat settings hydrates to the chat as 
     replyStreaming: 'live',
     agentCharacters: true,
     usageLimits: true,
-    projectIconColors: false,
+    quietProjectIcons: false,
     interfaceFont: '',
     codeFont: '',
   })

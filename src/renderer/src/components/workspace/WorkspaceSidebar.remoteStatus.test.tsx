@@ -76,6 +76,12 @@ test('a chat opened here from a paired machine wears the marks its machine lists
     ...extra,
   })
 
+  const DEMO_APP = {
+    canonicalKey: 'github.com/acme/demo-app',
+    remoteUrl: 'git@github.com:acme/demo-app.git',
+    name: 'demo-app',
+  }
+
   domWindow.api = {
     platform: 'darwin',
     detectProjectLogo: async () => null,
@@ -106,13 +112,31 @@ test('a chat opened here from a paired machine wears the marks its machine lists
       unreachableReason: null,
       unauthorized: false,
       scopes: connection.scopes,
-      workspaces: ['rw1', 'rw2', 'rw3'].map((id) => ({
-        id,
-        name: id,
-        mode: 'standard',
-        folderPath: `/Users/dev/${id}`,
-        repository: null,
-      })),
+      workspaces: [
+        ...['rw1', 'rw2', 'rw3'].map((id) => ({
+          id,
+          name: id,
+          mode: 'standard',
+          folderPath: `/Users/dev/${id}`,
+          repository: null,
+        })),
+        // Two pool slots of one project, one of whose rows here stamped the
+        // repository's old name when it was opened.
+        {
+          id: 'rw4',
+          name: 'rw4',
+          mode: 'standard',
+          folderPath: '/Users/dev/.sprintengine-worktrees/demo-app/demo-app-04',
+          repository: DEMO_APP,
+        },
+        {
+          id: 'rw5',
+          name: 'rw5',
+          mode: 'standard',
+          folderPath: '/Users/dev/.sprintengine-worktrees/demo-app/demo-app-07',
+          repository: DEMO_APP,
+        },
+      ],
       gaps: [],
     }),
     meshConversationList: async () => ({
@@ -124,6 +148,8 @@ test('a chat opened here from a paired machine wears the marks its machine lists
           lastTurnEndedAt: now - 10 * minute,
           lastVisitedAt: now - 15 * minute,
         }),
+        listed('rw4', 'Stopped by an error', 'failed', 40),
+        listed('rw5', 'Followed from a rename', 'completed', 50),
       ],
       access: 'operate',
       modelSwitch: false,
@@ -165,6 +191,14 @@ test('a chat opened here from a paired machine wears the marks its machine lists
     opened('w-approval', 'Asks approval', 'rw1'),
     opened('w-working', 'Builds away', 'rw2'),
     opened('w-done', 'Finished unseen', 'rw3'),
+    {
+      ...opened('w-renamed', 'Followed from a rename', 'rw5'),
+      remoteOrigin: {
+        ...opened('w-renamed', 'Followed from a rename', 'rw5').remoteOrigin,
+        workspaceRoot: '/Users/dev/.sprintengine-worktrees/demo-app/demo-app-07',
+        repository: { ...DEMO_APP, canonicalKey: 'github.com/old-org/demo-app' },
+      },
+    },
   ]
   const props = {
     workspaces,
@@ -174,7 +208,13 @@ test('a chat opened here from a paired machine wears the marks its machine lists
     sidebarCollapsed: false,
     chromeSlot: null,
     // What this desktop's own sessions say: nothing runs here for any of them.
-    activityByWorkspaceId: { w1: 'idle', 'w-approval': 'idle', 'w-working': 'idle', 'w-done': 'idle' },
+    activityByWorkspaceId: {
+      w1: 'idle',
+      'w-approval': 'idle',
+      'w-working': 'idle',
+      'w-done': 'idle',
+      'w-renamed': 'idle',
+    },
     residentWorkspaceIds: new Set<string>(),
     terminalRecencyByWorkspaceId: {},
     onSelectWorkspace: noop,
@@ -233,13 +273,54 @@ test('a chat opened here from a paired machine wears the marks its machine lists
     assert.ok(list, 'the by-status list is drawn')
     assert.deepEqual(
       idsIn(list).filter((id) => id !== 'w-working'),
-      ['w-approval', 'w-done', 'w1'],
+      ['w-approval', 'w-done', 'w1', 'w-renamed'],
       'waiting first, then the unseen finish, then the newer idle chat',
     )
+    const titles = [...list.querySelectorAll<HTMLElement>('[role="treeitem"]')].map((row) => row.textContent ?? '')
+    const stopped = titles.findIndex((text) => text.includes('Stopped by an error'))
+    assert.ok(
+      stopped !== -1 && stopped < titles.findIndex((text) => text.includes('Finished unseen')),
+      'a chat a failed turn stopped over there waits on the person, as a local one does',
+    )
+
+    // One project, whichever slot and whatever an opened row was stamped with:
+    // one name, one hue.
+    const projectLines = [...list.querySelectorAll<HTMLElement>('[role="treeitem"]')].filter((row) =>
+      /Stopped by an error|Followed from a rename/u.test(row.textContent ?? ''),
+    )
+    assert.equal(projectLines.length, 2)
+    for (const row of projectLines) {
+      assert.match(row.textContent ?? '', /demo-app/u)
+      assert.doesNotMatch(row.textContent ?? '', /demo-app-0/u, 'never the pool slot')
+    }
+    const hues = projectLines.map((row) => row.querySelector('svg[data-project-hue]')?.getAttribute('data-project-hue'))
+    assert.ok(hues[0], 'the project wears a hue')
+    assert.equal(hues[0], hues[1], 'and the row stamped with the old name wears the same one')
+
     const fold = [...list.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')].find((button) =>
       button.textContent?.startsWith('Working'),
     )
     assert.match(fold?.textContent ?? '', /Working\s*1/u, 'the chat working over there folds into the Working shelf')
+    assert.equal(fold?.getAttribute('aria-expanded'), 'false', 'closed until opened')
+
+    // The chat in front is sorted with the rest, and not lost in a closed fold.
+    const front = { ...props, activeWorkspaceId: 'w-working' } as SidebarProps
+    act(() => {
+      root.render(React.createElement(WorkspaceSidebar, front))
+    })
+    await settle()
+    const shelf = container.querySelector('[role="group"][aria-label="Chats working"]')
+    assert.deepEqual(idsIn(shelf), ['w-working'], 'the open chat that is working sits in the Working shelf')
+    const openFold = () =>
+      [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')].find((button) =>
+        button.textContent?.startsWith('Working'),
+      )
+    assert.equal(openFold()?.getAttribute('aria-expanded'), 'true', 'which stands open for it')
+    act(() => {
+      openFold()?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    await settle()
+    assert.equal(openFold()?.getAttribute('aria-expanded'), 'false', 'until the person folds it')
   } finally {
     act(() => {
       root.unmount()

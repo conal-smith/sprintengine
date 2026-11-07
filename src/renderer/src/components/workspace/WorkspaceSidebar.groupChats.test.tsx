@@ -148,6 +148,7 @@ async function makeHarness() {
   return {
     act,
     useWorkspaceStore,
+    base,
     render,
     settle,
     tree,
@@ -190,6 +191,22 @@ test('by status leads with what waits on the person and folds working chats away
   assert.deepEqual(idsIn(workingShelf()), ['w2', 'w4'], 'opened, newest message first')
   const ids = idsIn(tree())
   assert.ok(ids.indexOf('w3') < ids.indexOf('w2'), 'the shelf sits at the foot of the waiting chats')
+})
+
+test('by status sorts the open chat with the rest, and the shelf stands open for it', async () => {
+  const { act, useWorkspaceStore, base, render, settle, idsIn, workingShelf, workingFold } = harness
+  useWorkspaceStore.setState({ chatListView: 'status' } as never)
+  await render({ ...base, activeWorkspaceId: 'w2' })
+
+  assert.ok(idsIn(workingShelf()).includes('w2'), 'a chat at work is in the Working shelf, open or not')
+  assert.match(workingFold()?.textContent ?? '', /Working\s*2/u)
+  assert.equal(workingFold()?.getAttribute('aria-expanded'), 'true', 'its row is not hidden from the person reading it')
+
+  act(() => workingFold()?.click())
+  await settle()
+  assert.equal(workingFold()?.getAttribute('aria-expanded'), 'false', 'the person can still fold it')
+  act(() => workingFold()?.click())
+  await settle()
 })
 
 test('by status does not need the Working section switch, and the switch puts nothing at the top', async () => {

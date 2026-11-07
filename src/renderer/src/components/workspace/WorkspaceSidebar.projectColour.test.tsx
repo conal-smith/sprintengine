@@ -352,7 +352,7 @@ test('WorkspaceSidebar.projectColour', async () => {
     // The project line is the row's first child in the stream, and its glyph is
     // the first svg in it: the ONE element the colour is allowed on.
     const glyphOf = (container: Element, name: string) =>
-      rowFor(container, name).firstElementChild!.querySelector('svg')
+      rowFor(container, name).firstElementChild!.querySelector(':scope > svg')
 
     assert.equal(hueOf(glyphOf(stream.container, 'Alpha')), HUE_A, "the stream line wears its project's hue")
     assert.equal(
@@ -382,8 +382,8 @@ test('WorkspaceSidebar.projectColour', async () => {
     // A chat running on a paired machine (owner, 2026-09-11). It is a row of its
     // project, so it wears the project's hue on the same folder glyph every other
     // row of that project wears — a project is a repository, and one repository
-    // is one colour wherever it runs. The machine's own mark trails the project's
-    // name (owner ruling 2026-10-04) and is the only thing marking the row as remote.
+    // is one colour wherever it runs. The machine's own mark leads the line, in
+    // the folder's ink (owner, 2026-11-07), and is the only thing marking the row as remote.
     const foxtrot = rowFor(stream.container, 'Foxtrot')
     assert.equal(
       hueOf(glyphOf(stream.container, 'Foxtrot')),
@@ -391,16 +391,32 @@ test('WorkspaceSidebar.projectColour', async () => {
       'the Air’s clone of acme/sprintengine is acme/sprintengine',
     )
     const marks = [...foxtrot.firstElementChild!.children]
-    assert.equal(marks[0]?.tagName.toLowerCase(), 'svg', 'the folder glyph leads the project line')
-    assert.equal(marks[1]?.textContent, 'projA', 'the project’s name follows it')
+    const machineMark =
+      marks[0]?.querySelector('[data-remote-row-glyph]') ??
+      (marks[0]?.hasAttribute('data-remote-row-glyph') ? marks[0] : null)
     assert.equal(
-      marks[2]?.querySelector('[data-remote-row-glyph]')?.getAttribute('data-remote-row-glyph') ??
-        marks[2]?.getAttribute('data-remote-row-glyph'),
+      machineMark?.getAttribute('data-remote-row-glyph'),
       'MacBook Air',
-      'and the machine’s mark trails the name, naming the device',
+      'the machine’s mark leads the line, naming the device',
     )
+    assert.equal(marks[1]?.tagName.toLowerCase(), 'svg', 'the folder glyph follows it')
+    assert.equal(marks[2]?.textContent, 'projA', 'and the project’s name after that')
     assert.ok(!(foxtrot.textContent ?? '').includes('MacBook Air'), 'never as row text')
-    assert.equal(hueOf(foxtrot.querySelectorAll('svg')[1]), null, 'the machine’s colour is not a project hue')
+    assert.ok(machineMark?.classList.contains('project-mark'), 'the mark wears the folder’s ink')
+    assert.equal(
+      (machineMark as HTMLElement).style.getPropertyValue('--project-hue'),
+      String(HUE_A),
+      'in the project’s hue, not a colour of its own',
+    )
+    assert.equal(
+      machineMark?.querySelector('[data-machine-mark]')?.className.includes('--sem-color-mark'),
+      false,
+      'the machine’s fixed colour is off',
+    )
+    assert.ok(
+      !glyphOf(stream.container, 'Foxtrot')?.getAttribute('class')?.includes('grayscale'),
+      'every row wears its hue at rest',
+    )
 
     act(() => {
       stream.root.unmount()

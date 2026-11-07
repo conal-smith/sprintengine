@@ -11,8 +11,8 @@ import { useChangePulse } from '../../../hooks/useChangePulse'
 import React, { createContext, useContext, useState } from 'react'
 import { shortMachineName } from '../../remote/machineRowModel'
 import { FolderTypeIcon, GitBranchGlyph, NoProjectGlyph, ScheduleGlyph } from '../../AppIcons'
-import { isProjectlessChatsRoot } from '../../../../../shared/projectless-chats'
-import { type ProjectColor } from '../../../utils/projectColor'
+import { projectlessScopeOf } from '../../../../../shared/projectless-chats'
+import { PROJECT_MARK_CLASS, projectColorStyle, type ProjectColor } from '../../../utils/projectColor'
 import { formatElapsedMs } from '../../../utils/relativeTime'
 import { useRelativeNow } from '../../../hooks/useRelativeNow'
 import { useWorkspaceStore } from '../../../store/workspaceStore'
@@ -207,7 +207,18 @@ export type RowMachine = { ref: MachineRef | null; name: string }
  * The NAME stays in the tooltip and the accessible name, never in the row's
  * own width: `mac-mini.example.ts.net` would take the row.
  */
-export function MachineRowGlyph({ machine }: { machine: RowMachine | null }) {
+export function MachineRowGlyph({
+  machine,
+  projectInk,
+}: {
+  machine: RowMachine | null
+  /**
+   * Beside a project's folder, the glyph wears what the folder wears (the
+   * project's hue, or the row's ink for none), and `className` is the same
+   * resting treatment. Two inks a few pixels apart read as a clash.
+   */
+  projectInk?: { color: ProjectColor | null; className: string }
+}) {
   const identity = useMachineIdentity(machine?.ref ?? null)
   if (!machine || !identity) return null
   const short = shortMachineName(machine.name)
@@ -216,10 +227,13 @@ export function MachineRowGlyph({ machine }: { machine: RowMachine | null }) {
       <span
         role="img"
         aria-label={`On ${short}`}
-        className="flex shrink-0 items-center"
+        className={`flex shrink-0 items-center ${
+          projectInk ? `${projectInk.className} ${projectInk.color === null ? '' : PROJECT_MARK_CLASS}` : ''
+        }`}
+        style={projectInk ? projectColorStyle(projectInk.color) : undefined}
         data-remote-row-glyph={machine.name}
       >
-        <MachineGlyph identity={identity} />
+        <MachineGlyph identity={identity} inheritInk={projectInk !== undefined} />
       </span>
     </Tooltip>
   )
@@ -250,8 +264,10 @@ export function ScheduledRunGlyph({ scheduledAgentId }: { scheduledAgentId: stri
 /**
  * The project a row belongs to, as the flat stream says it: the folder glyph
  * in the project's hue, the project's name, and — when the row runs on another
- * machine — that machine's glyph trailing the name (owner ruling 2026-10-04,
- * moved from beside the folder icon, where it read as part of the project).
+ * machine — that machine's glyph at the head of the line, in the folder's ink
+ * (owner, 2026-11-07). It trailed the name from 2026-10-04 in the machine's own
+ * colour, which clashed with the folder a few pixels from it. The machine's name
+ * is on hover, and its colour marks it on every other surface.
  *
  * One component for local and remote rows both, so a remote chat in the All
  * chats list is the same row as every other one, differing by that single mark.
@@ -276,14 +292,15 @@ export function ProjectLine({
   /** The row's status seat, which rides this line's trailing edge. */
   children?: React.ReactNode
 }) {
-  const projectIconColors = useWorkspaceStore((s) => s.appSettings.appearance.projectIconColors)
-  // The same hue down every row of a project outshouted the titles it sat
-  // beside (2026-11-04). The glyph rests gray and takes its hue on the row the
-  // pointer is on, the row in keyboard focus and the open row, which is where
-  // telling projects apart is the question. Settings ▸ Appearance keeps it.
-  const markClass = projectIconColors
-    ? 'icon-xs shrink-0'
-    : 'icon-xs shrink-0 opacity-70 grayscale group-hover:opacity-100 group-hover:grayscale-0 group-focus-visible:opacity-100 group-focus-visible:grayscale-0 group-aria-[current=true]:opacity-100 group-aria-[current=true]:grayscale-0'
+  const quietProjectIcons = useWorkspaceStore((s) => s.appSettings.appearance.quietProjectIcons)
+  // The hue is how a project is recognised going down the list, so it shows on
+  // every row at rest (owner, 2026-11-07, reversing the gray rest of
+  // 2026-11-04). Quiet project icons in Settings ▸ Appearance is that gray
+  // rest, for whoever wants the titles to lead: the hue comes on the row the
+  // pointer is on, the row in keyboard focus and the open row.
+  const restClass = quietProjectIcons
+    ? 'opacity-70 grayscale group-hover:opacity-100 group-hover:grayscale-0 group-focus-visible:opacity-100 group-focus-visible:grayscale-0 group-aria-[current=true]:opacity-100 group-aria-[current=true]:grayscale-0'
+    : ''
   return (
     <div
       // One step under the title it files: muted under a row in use, subtle
@@ -292,17 +309,26 @@ export function ProjectLine({
         dim ? 'text-[color:var(--text-subtle)]' : 'text-[color:var(--text-muted)]'
       }`}
     >
+      <MachineRowGlyph
+        machine={machine}
+        projectInk={{ color: project.unfiled ? null : project.color, className: restClass }}
+      />
       {/* THE glyph the project's colour lives on in the flat stream
           (one-colour-per-project, 2026-09-09). The name beside it stays
           in the row's own ink: the hue identifies the project, and a
           coloured word would be a second, louder saying of it. */}
-      {isProjectlessChatsRoot(project.folderPath) ? (
+      {/* The scope, not just the root: a paired machine's chat reports its own
+          folder inside the root, and that is "No project" too. */}
+      {projectlessScopeOf(project.folderPath) ? (
         <NoProjectGlyph className="icon-xs shrink-0" />
       ) : (
-        <FolderTypeIcon className={markClass} color={project.color} unfiled={project.unfiled} />
+        <FolderTypeIcon
+          className={`icon-xs shrink-0 ${restClass}`.trim()}
+          color={project.color}
+          unfiled={project.unfiled}
+        />
       )}
       <span className="min-w-0 truncate">{project.name}</span>
-      <MachineRowGlyph machine={machine} />
       {/* No pull request count here (owner, 2026-10-02). This line repeats
           down every row of a project, so a project-wide count on it read as
           "this chat has an open pull request" on chats that had none. A

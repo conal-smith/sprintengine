@@ -464,10 +464,10 @@ export type AppearanceSettings = {
   // Show a subscription's usage limits (the five-hour and weekly windows the
   // agents report) on a Claude or Codex chat's composer strip.
   usageLimits: boolean
-  // Keep each project's hue on its folder glyph in the chat list at rest. Off,
-  // the glyphs rest gray and take their hue on the row under the pointer, in
-  // focus or open, so a column of repeated colours does not outshout titles.
-  projectIconColors: boolean
+  // Rest each project's folder glyph gray in the chat list, taking its hue on
+  // the row under the pointer, in focus or open. Off, the default, every row
+  // wears the hue, which is how a project is recognised going down the list.
+  quietProjectIcons: boolean
   // The families put in front of the design system's two stacks: the
   // interface's (`--sem-font-family-ui`) and code's (`--sem-font-family-mono`,
   // which the terminals and editors draw in too). Free text, cleaned by

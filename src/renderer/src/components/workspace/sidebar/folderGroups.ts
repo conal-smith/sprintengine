@@ -5,7 +5,7 @@ import { type Workspace, type WorkspaceId } from '../../../types/workspace'
 import type { RepositoryIdentity } from '../../../../../shared/repository-identity'
 import { type RemoteConversation } from '../remoteBand/remoteSessionsModel'
 import { type FolderIdentityMap, folderIdentityKey } from '../useFolderRepositoryIdentities'
-import { workspaceProjectRoot } from '../../../utils/workspaceWorktree'
+import { workspaceProjectRoot, workspaceProjectRootOf } from '../../../utils/workspaceWorktree'
 import { shortMachineName } from '../../remote/machineRowModel'
 import { isMeshConversationPane } from '../../../../../shared/tailnet-mesh'
 import {
@@ -194,8 +194,9 @@ export function groupKeyOf(workspace: Workspace): string {
   if (workspace.environment) {
     if (projectlessScopeOf(workspace.folderPath)) return PROJECTLESS_GROUP_KEY
     // A row on an SSH machine (phase 8) files under that machine's folder: the
-    // same path on this computer is another folder.
-    return `ssh:${workspace.environment.id}:${folderKey(workspace.folderPath)}`
+    // same path on this computer is another folder. A worktree there files
+    // under its project, as one here does.
+    return `ssh:${workspace.environment.id}:${folderKey(workspaceProjectRoot(workspace))}`
   }
   const origin = workspace.remoteOrigin
   if (origin && projectlessScopeOf(origin.workspaceRoot)) return PROJECTLESS_GROUP_KEY
@@ -207,13 +208,32 @@ export function groupKeyOf(workspace: Workspace): string {
   // did, gave every remote chat a header of its own.
   if (origin) {
     if (origin.repository?.canonicalKey) return `remote-repo:${origin.repository.canonicalKey}`
-    return `remote:${origin.connectionId}:${folderKey(origin.workspaceRoot)}`
+    return remoteFolderGroupKey(origin.connectionId, origin.workspaceRoot)
   }
   if (!workspace.folderPath) {
     const [machine] = meshMachineNamesOf(workspace)
     if (machine) return `remote:${machine.toLowerCase()}`
   }
   return folderKey(workspaceProjectRoot(workspace))
+}
+
+/**
+ * The project a folder on another machine stands for: the folder, or the
+ * checkout an app-made worktree there was cut from. All this side has of a
+ * chat over there is its path, so the path is what is read: a pool slot or a
+ * `chat-…` folder sits under `.sprintengine-worktrees/<project>/` on every
+ * machine, and its folder name is a seat, not a project. Every name and key a
+ * paired machine's chat files by comes through here, so that a row opened here
+ * and one only listed cannot file differently. A worktree outside the container
+ * is a checkout the person made and stays itself.
+ */
+export function remoteProjectFolder(workspaceRoot: string | null | undefined): string | null {
+  return workspaceProjectRootOf({ folderPath: workspaceRoot })
+}
+
+/** The header of a paired machine's chat whose repository it could not name: one per project on that machine. */
+export function remoteFolderGroupKey(connectionId: string, workspaceRoot: string | null | undefined): string {
+  return `remote:${connectionId}:${folderKey(remoteProjectFolder(workspaceRoot))}`
 }
 
 /**
@@ -270,6 +290,10 @@ export function remoteGroupOf(workspace: Workspace): FolderGroup['remote'] {
  * machine is a glyph on each row now, with the device's name on hover, which is
  * where provenance belongs when the project is the thing being grouped.
  *
+ * A worktree's folder is not the project's (`remoteProjectFolder`), so a chat
+ * in the pool slot `demo-app-04` reads `demo-app` here as it does on its own
+ * machine.
+ *
  * `workspaceRoot` is the folder over there; `workspaceName` is a CHAT's name
  * and is never a header, which is the same reason the New-chat project chip
  * stopped offering chats as projects.
@@ -280,11 +304,16 @@ export function remoteProjectName(workspaceRoot: string | null, machineName: str
   // lie and collide with the local folderless group's name.
   if (!workspaceRoot?.trim()) return shortMachineName(machineName)
   if (projectlessScopeOf(workspaceRoot)) return PROJECTLESS_CHATS_LABEL
-  return folderDisplayName(workspaceRoot)
+  return folderDisplayName(remoteProjectFolder(workspaceRoot))
 }
 
 export function remoteGroupDisplayName(workspace: Workspace): string {
-  if (workspace.environment) return remoteProjectName(workspace.folderPath, workspace.environment.label)
+  if (workspace.environment) {
+    // Its project, as the row's header key has it: a worktree's recorded
+    // parent, which the path convention alone would not find.
+    const folder = projectlessScopeOf(workspace.folderPath) ? workspace.folderPath : workspaceProjectRoot(workspace)
+    return remoteProjectName(folder, workspace.environment.label)
+  }
   const origin = workspace.remoteOrigin
   if (origin) return remoteProjectName(origin.workspaceRoot, origin.machineName)
   const [machine] = meshMachineNamesOf(workspace)
