@@ -394,6 +394,7 @@ const WORKING_SHELF_ID = 'ws-working-chats'
 const STATUS_WORKING_SHELF_KEY = '__status_working__'
 const STATUS_WORKING_SHELF_ID = 'ws-status-working-chats'
 const NO_WORKING_IDS: ReadonlySet<string> = new Set()
+const NO_WORKING_REMOTE: readonly RemoteConversation[] = []
 
 const DRAG_MIME_WORKSPACE = 'application/x-sprintengine-workspace'
 const DRAG_MIME_FOLDER = 'application/x-sprintengine-folder'
@@ -2433,9 +2434,9 @@ function WorkspaceSidebar({
   // same as a local one: it is something going on, and rest and sleep are
   // states a chat enters on THIS disk — nothing over there has one.
   //
-  // A chat that has moved to Starred does not keep its project alive either:
-  // the row is already on screen, and a header over an empty body is the
-  // quiet-folder case above.
+  // A chat that has moved to Starred or the Working section does not keep its
+  // project alive either, on either machine: the row is already on screen, and
+  // a header over an empty body is the quiet-folder case above.
   // The chats folded into the Working section while their agent works, when
   // the person has turned it on (sidebar/workingSection.ts), or into the By
   // status list's Working shelf, which is that list's whole point: there the
@@ -2472,16 +2473,38 @@ function WorkspaceSidebar({
     conversationsByWorkspaceId,
     sessionsByWorkspaceId,
   ])
+  // The same question of a paired machine's chats no window here holds, asked
+  // of what their machine says, as By status ranks them (`remoteRowActivity`).
+  // `streamRemote` has already left out the starred and the sleeping, and a
+  // chat with no window here is never the one in front. One a window here does
+  // hold is a row of `localRailWorkspaces`, and answered above.
+  const workingRemote = useMemo<readonly RemoteConversation[]>(() => {
+    if (!workingSectionOn) return NO_WORKING_REMOTE
+    return streamRemote.filter((conversation) =>
+      inWorkingSection(
+        { starred: false, front: false },
+        {
+          activity: remoteRowActivity<Activity>(undefined, conversation),
+          conversations: NO_CONVERSATIONS,
+          terminals: NO_SESSIONS,
+        },
+      ),
+    )
+  }, [workingSectionOn, streamRemote])
+  const workingRemoteKeys = useMemo<ReadonlySet<string>>(
+    () => new Set(workingRemote.map((conversation) => conversation.key)),
+    [workingRemote],
+  )
   const activeGroups = useMemo(
     () =>
       groups.filter(
         (group) =>
-          group.remoteRows.length > 0 ||
+          group.remoteRows.some((conversation) => !workingRemoteKeys.has(conversation.key)) ||
           !group.workspaces.every(
             (w) => isShelved(w) || isAsleep(w) || starredWorkspaceIds.has(w.id) || workingIds.has(w.id),
           ),
       ),
-    [groups, isShelved, isAsleep, starredWorkspaceIds, workingIds],
+    [groups, isShelved, isAsleep, starredWorkspaceIds, workingIds, workingRemoteKeys],
   )
 
   const workspaceById = useMemo(() => {
@@ -3411,7 +3434,8 @@ function WorkspaceSidebar({
 
     // The project's conversations on paired machines among its local ones,
     // by when each was last written to (`interleaveChats`).
-    const rows = interleaveChats(activeRows, group.remoteRows, chatRecency).map((entry) =>
+    const activeRemote = group.remoteRows.filter((conversation) => !workingRemoteKeys.has(conversation.key))
+    const rows = interleaveChats(activeRows, activeRemote, chatRecency).map((entry) =>
       entry.kind === 'local'
         ? renderWorkspaceRow(entry.workspace, group.key)
         : renderRemoteConversationRow(entry.conversation),
@@ -3579,12 +3603,29 @@ function WorkspaceSidebar({
     )
   }
 
+  // A row of the Working section or shelf, with the project line it does not
+  // otherwise have there.
+  const renderWorkingRow = (entry: ChatListEntry) =>
+    entry.kind === 'local'
+      ? renderWorkspaceRow(entry.workspace, keyOf(entry.workspace), {
+          keyPrefix: 'working-',
+          flatProject: flatProjectOf(entry.workspace),
+        })
+      : renderRemoteConversationRow(entry.conversation, {
+          keyPrefix: 'working-',
+          flatProject: flatProjectOfRemote(entry.conversation),
+        })
+
   // The Working section: one fold, open unless the person closed it, over the
   // chats whose agent is at work, each with the project line that says where
   // it goes back to. Absent while none is working, or while the switch is off.
+  // A paired machine's working chats sit among this computer's, as they do in
+  // the By status list's shelf below.
   const renderWorkingSection = () => {
-    if (workingIds.size === 0 || chatListView === 'status') return null
-    const rows = sortWorkspacesByUserMessage(localRailWorkspaces.filter((w) => workingIds.has(w.id)))
+    if (chatListView === 'status') return null
+    const local = sortWorkspacesByUserMessage(localRailWorkspaces.filter((w) => workingIds.has(w.id)))
+    const rows = interleaveChats(local, workingRemote, chatRecency)
+    if (rows.length === 0) return null
     const expanded = expandedShelves[WORKING_SHELF_KEY] !== false
     return (
       <section role="group" className="relative pt-1" aria-label="Working">
@@ -3597,14 +3638,7 @@ function WorkspaceSidebar({
           onToggle={() => setExpandedShelves((prev) => ({ ...prev, [WORKING_SHELF_KEY]: !expanded }))}
         />
         <div id={WORKING_SHELF_ID} role="group" aria-label="Chats working" hidden={!expanded}>
-          {expanded
-            ? rows.map((workspace) =>
-                renderWorkspaceRow(workspace, keyOf(workspace), {
-                  keyPrefix: 'working-',
-                  flatProject: flatProjectOf(workspace),
-                }),
-              )
-            : null}
+          {expanded ? rows.map(renderWorkingRow) : null}
         </div>
       </section>
     )
@@ -3619,9 +3653,9 @@ function WorkspaceSidebar({
   // The chat in front sits in here while it works, and the shelf stands open
   // for it until the person folds it themselves: a row must not vanish from
   // under the person reading it.
-  const renderStatusWorkingShelf = (remoteWorking: readonly RemoteConversation[]) => {
+  const renderStatusWorkingShelf = () => {
     const local = sortWorkspacesByUserMessage(localRailWorkspaces.filter((w) => workingIds.has(w.id)))
-    const rows = interleaveChats(local, remoteWorking, chatRecency)
+    const rows = interleaveChats(local, workingRemote, chatRecency)
     if (rows.length === 0) return null
     const holdsFront = frontWorkspaceId !== null && workingIds.has(frontWorkspaceId)
     const expanded = expandedShelves[STATUS_WORKING_SHELF_KEY] ?? holdsFront
@@ -3636,19 +3670,7 @@ function WorkspaceSidebar({
           onToggle={() => setExpandedShelves((prev) => ({ ...prev, [STATUS_WORKING_SHELF_KEY]: !expanded }))}
         />
         <div id={STATUS_WORKING_SHELF_ID} role="group" aria-label="Chats working" hidden={!expanded}>
-          {expanded
-            ? rows.map((entry) =>
-                entry.kind === 'local'
-                  ? renderWorkspaceRow(entry.workspace, keyOf(entry.workspace), {
-                      keyPrefix: 'working-',
-                      flatProject: flatProjectOf(entry.workspace),
-                    })
-                  : renderRemoteConversationRow(entry.conversation, {
-                      keyPrefix: 'working-',
-                      flatProject: flatProjectOfRemote(entry.conversation),
-                    }),
-              )
-            : null}
+          {expanded ? rows.map(renderWorkingRow) : null}
         </div>
       </>
     )
@@ -3681,10 +3703,7 @@ function WorkspaceSidebar({
         (w) => !isShelved(w) && !isAsleep(w) && !starredWorkspaceIds.has(w.id) && !workingIds.has(w.id),
       ),
     )
-    const remoteWorking = byStatus ? streamRemote.filter((conversation) => conversation.activity === 'working') : []
-    const remoteStream = byStatus
-      ? streamRemote.filter((conversation) => conversation.activity !== 'working')
-      : streamRemote
+    const remoteStream = streamRemote.filter((conversation) => !workingRemoteKeys.has(conversation.key))
     const sleeping = sleepingByWake(snoozedRows, sleepingRemote)
     const snoozeExpanded = expandedShelves[ALL_CHATS_SNOOZE_SHELF_KEY] === true
     return (
@@ -3702,7 +3721,7 @@ function WorkspaceSidebar({
                 flatProject: flatProjectOfRemote(entry.conversation),
               }),
         )}
-        {byStatus ? renderStatusWorkingShelf(remoteWorking) : null}
+        {byStatus ? renderStatusWorkingShelf() : null}
         {sleeping.length > 0 ? (
           <>
             <ShelfFoldRow
@@ -3761,7 +3780,7 @@ function WorkspaceSidebar({
             ...visibleWorkspaces
               .filter((workspace) => !isShelved(workspace) && !isAsleep(workspace))
               .map((workspace) => rowActivityByWorkspaceId[workspace.id]),
-            ...group.remoteRows.map((conversation) => conversation.activity),
+            ...group.remoteRows.map((conversation) => remoteRowActivity<Activity>(undefined, conversation)),
           ]),
         )
       : null
