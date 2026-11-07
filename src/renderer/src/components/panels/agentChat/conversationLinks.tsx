@@ -20,16 +20,23 @@ import { revealLabel } from '../../../utils/revealLabel'
 import { parseQuoteHref } from '../../../../../shared/chat-quotes'
 import { SentQuoteChip } from './chatQuotes'
 
-export type ConversationLinkContext = { workspaceId: string; cwd: string; workspaceRoot: string; agentId?: string }
+export type ConversationLinkContext = {
+  workspaceId: string
+  cwd: string
+  workspaceRoot: string
+  agentId?: string
+  /** The chat's provider, as its binding has it: a chat on a paired machine has no record here to read it from. */
+  providerId?: string
+}
 const LinkContext = createContext<ConversationLinkContext | null>(null)
 export function ConversationLinkProvider({
   children,
   ...value
 }: ConversationLinkContext & { children: React.ReactNode }) {
-  const { workspaceId, cwd, workspaceRoot, agentId } = value
+  const { workspaceId, cwd, workspaceRoot, agentId, providerId } = value
   const stable = useMemo(
-    () => ({ workspaceId, cwd, workspaceRoot, agentId }),
-    [workspaceId, cwd, workspaceRoot, agentId],
+    () => ({ workspaceId, cwd, workspaceRoot, agentId, providerId }),
+    [workspaceId, cwd, workspaceRoot, agentId, providerId],
   )
   return <LinkContext.Provider value={stable}>{children}</LinkContext.Provider>
 }

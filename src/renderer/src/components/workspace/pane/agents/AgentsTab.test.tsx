@@ -5,6 +5,8 @@ import type {
   ConversationEventType,
   ConversationSessionFrame,
 } from '../../../../../../shared/conversation-runtime'
+import type { ConversationSessionEntry } from '../../../../hooks/conversationSessionsStore'
+import { latestSessionOf } from './studioSubagents'
 
 let seq = 0
 function event(type: ConversationEventType, payload: Record<string, unknown>): ConversationEvent {
@@ -421,6 +423,14 @@ test('Studio sub-agents are listed beside native lanes, with the model’s mark 
   } finally {
     await tab.unmount()
   }
+})
+
+test('a sub-agent’s answers go to its newest session: a follow-up to a rested one starts a new one', () => {
+  const session = (sessionId: string, agentId: string, updatedAt: number) =>
+    ({ sessionId, workspaceId: 'w-1', agentId, updatedAt }) as ConversationSessionEntry
+  const sessions = [session('rested', 'agent-a', 1), session('newest', 'agent-a', 3), session('other', 'agent-b', 9)]
+  expect(latestSessionOf(sessions, 'w-1', 'agent-a')?.sessionId).toBe('newest')
+  expect(latestSessionOf(sessions, 'w-1', 'agent-c')).toBeUndefined()
 })
 
 test('a Studio sub-agent opens onto its own transcript, its final reply as the report', async () => {

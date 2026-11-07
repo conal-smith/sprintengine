@@ -956,7 +956,7 @@ export const SubagentLane = memo(function SubagentLane({ tool }: { tool: Transcr
       {/* A lane at work reads as the live thing on screen; settled, it is one
           more step and sinks to the same quiet ink the tool rows rest in. */}
       <span
-        className={`shrink-0 ${running ? 'font-medium text-[color:var(--text-default)]' : 'text-[color:var(--text-subtle)]'}`}
+        className={`max-w-[45%] shrink-0 truncate ${running ? 'font-medium text-[color:var(--text-default)]' : 'text-[color:var(--text-subtle)]'}`}
       >
         {subagentLaneLabel(tool)}
       </span>
@@ -967,7 +967,7 @@ export const SubagentLane = memo(function SubagentLane({ tool }: { tool: Transcr
           className="min-w-0 text-meta text-[color:var(--text-muted)]"
         />
       ) : null}
-      <span className="ml-auto shrink-0 pl-2 text-micro tabular-nums text-[color:var(--text-subtle)]">
+      <span className="ml-auto max-w-[55%] shrink-0 truncate pl-2 text-micro tabular-nums text-[color:var(--text-subtle)]">
         {running ? (
           <span className="text-[color:var(--accent-primary)]">
             Working{tool.startedAt !== undefined ? ' · ' : ''}

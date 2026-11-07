@@ -6,7 +6,7 @@ import {
   subagentStatusOf,
   type SubagentStatus,
 } from '../../../../../../shared/conversation/subagentStatus'
-import { useConversationSessions } from '../../../../hooks/conversationSessionsStore'
+import { useConversationSessions, type ConversationSessionEntry } from '../../../../hooks/conversationSessionsStore'
 import { useWorkspaceStore } from '../../../../store/workspaceStore'
 import type { AgentCli } from '../../../../types/workspace'
 import { Badge, GhostButton, InlineNotice, RowButton, Spinner, TruncatedText } from '../../../ui'
@@ -21,6 +21,7 @@ import { LiveElapsed } from '../../../panels/agentChat/liveElapsed'
 import { ConversationPendingDock } from '../../../panels/agentChat/pendingDock'
 import { formatStepDuration } from '../../../panels/agentChat/stepDuration'
 import { SubagentIcon } from '../../../panels/agentChat/subagentIcon'
+import { AGENT_LINE_CLASS, AGENT_NAME_CLASS, AGENT_STATUS_CLASS } from '../../../panels/agentChat/subagentStatus'
 import { WorkTimeline } from '../../../panels/agentChat/timelineRows'
 import { useConversationSession } from '../../../panels/agentChat/useConversationSession'
 
@@ -41,6 +42,17 @@ export type StudioSubagent = {
   error: string | null
 }
 
+/** A sub-agent's current session: a follow-up to a rested one starts a new one, so it may have several. */
+export function latestSessionOf(
+  sessions: readonly ConversationSessionEntry[],
+  workspaceId: string,
+  agentId: string,
+): ConversationSessionEntry | undefined {
+  return sessions
+    .filter((session) => session.workspaceId === workspaceId && session.agentId === agentId)
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+}
+
 /** Every sub-agent of this chat, in the order they were started. */
 export function useStudioSubagents(workspaceId: string, agentId: string): StudioSubagent[] {
   const agents = useWorkspaceStore((state) => state.workspaces.find((w) => w.id === workspaceId)?.agents)
@@ -49,9 +61,7 @@ export function useStudioSubagents(workspaceId: string, agentId: string): Studio
     const list: StudioSubagent[] = []
     for (const [id, agent] of Object.entries(agents ?? {})) {
       if (agent.subagentOf?.agentId !== agentId) continue
-      const summary = sessions
-        .filter((session) => session.workspaceId === workspaceId && session.agentId === id)
-        .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+      const summary = latestSessionOf(sessions, workspaceId, id)
       list.push({
         id,
         name: agent.name,
@@ -86,7 +96,7 @@ export function SubagentStatusWords({ subagent }: { subagent: StudioSubagent }):
 }
 
 const ReadOnlyBadge = (): JSX.Element => (
-  <Badge tone="neutral" ariaLabel="Read-only: it cannot change anything">
+  <Badge tone="neutral" ariaLabel="Read-only: it cannot change anything" className="shrink-0 whitespace-nowrap">
     Read-only
   </Badge>
 )
@@ -104,12 +114,12 @@ export function StudioSubagentRow({
       onClick={() => onOpen(subagent.id)}
       aria-label={`${subagent.name}: ${subagent.task || 'sub-agent'}`}
     >
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="flex min-w-0 items-center gap-2 text-meta">
+      <span className="@container flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className={`${AGENT_LINE_CLASS} text-meta`}>
           <SubagentIcon cli={subagent.cli} />
-          <span className="shrink-0 font-medium text-[color:var(--text-default)]">{subagent.name}</span>
+          <span className={`${AGENT_NAME_CLASS} font-medium text-[color:var(--text-default)]`}>{subagent.name}</span>
           {subagent.readOnly ? <ReadOnlyBadge /> : null}
-          <span className="ml-auto shrink-0 pl-2 text-micro tabular-nums text-[color:var(--text-subtle)]">
+          <span className={`${AGENT_STATUS_CLASS} text-micro text-[color:var(--text-subtle)]`}>
             <SubagentStatusWords subagent={subagent} />
           </span>
         </span>
@@ -157,9 +167,7 @@ export const StudioSubagentThread = React.memo(function StudioSubagentThread({
     (entry): entry is Extract<TranscriptEntry, { kind: 'approval' }> =>
       entry.kind === 'approval' && entry.status === 'pending',
   )
-  const sessionId = useConversationSessions().find(
-    (candidate) => candidate.workspaceId === workspaceId && candidate.agentId === subagent.id,
-  )?.sessionId
+  const sessionId = latestSessionOf(useConversationSessions(), workspaceId, subagent.id)?.sessionId
   const transport = useConversationTransport()
   const [responding, setResponding] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
@@ -197,13 +205,15 @@ export const StudioSubagentThread = React.memo(function StudioSubagentThread({
         <GhostButton size="inline" tone="subtle" align="start" onClick={onBack}>
           ‹ All agents
         </GhostButton>
-        <div className="mt-2 flex items-center gap-2 px-2 text-body">
-          <SubagentIcon cli={subagent.cli} />
-          <span className="min-w-0 truncate font-medium text-[color:var(--text-strong)]">{subagent.name}</span>
-          {subagent.readOnly ? <ReadOnlyBadge /> : null}
-          <span className="ml-auto shrink-0 text-meta tabular-nums text-[color:var(--text-subtle)]">
-            <SubagentStatusWords subagent={subagent} />
-          </span>
+        <div className="@container mt-2 px-2">
+          <div className={`${AGENT_LINE_CLASS} text-body`}>
+            <SubagentIcon cli={subagent.cli} />
+            <span className={`${AGENT_NAME_CLASS} font-medium text-[color:var(--text-strong)]`}>{subagent.name}</span>
+            {subagent.readOnly ? <ReadOnlyBadge /> : null}
+            <span className={`${AGENT_STATUS_CLASS} text-meta text-[color:var(--text-subtle)]`}>
+              <SubagentStatusWords subagent={subagent} />
+            </span>
+          </div>
         </div>
         {asked ? (
           <p className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap px-2 text-meta text-[color:var(--text-default)]">

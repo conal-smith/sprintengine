@@ -67,8 +67,9 @@ export function laneOutcomeWords(tool: TranscriptToolEntry): string | undefined 
 
 /**
  * The mark beside an agent: the harness doing the work, here the chat's own,
- * since a lane in its transcript was spawned by that CLI. A chat with no record
- * here (one on a paired machine) has the agent kind glyph.
+ * since a lane in its transcript was spawned by that CLI. A chat whose CLI is
+ * not known yet (one on a paired machine, until its machine lists it) has the
+ * agent kind glyph.
  */
 export function LaneGlyph({ tool, className }: { tool: TranscriptToolEntry; className?: string }): JSX.Element {
   const cli = useLaneParentCli()
@@ -161,6 +162,14 @@ export function AgentCardContent({ tool, running }: { tool: TranscriptToolEntry;
   )
 }
 
+// An agent's first line, in a `@container`. A pane is usually narrow, so below
+// 320px the words that would squeeze the name drop to their own line, rather
+// than the name running out of the row or a badge shrinking under its text.
+export const AGENT_LINE_CLASS = 'flex min-w-0 items-center gap-2 @max-[320px]:flex-wrap @max-[320px]:gap-y-0.5'
+export const AGENT_NAME_CLASS = 'min-w-0 truncate @max-[320px]:flex-1'
+export const AGENT_STATUS_CLASS =
+  'ml-auto shrink-0 pl-2 tabular-nums @max-[320px]:ml-0 @max-[320px]:basis-full @max-[320px]:pl-6'
+
 /** How an agent is doing: working and for how long, or how it ended. */
 export function LaneStatus({ lane }: { lane: TranscriptToolEntry }): JSX.Element {
   if (lane.status === 'running')
@@ -194,28 +203,38 @@ export function AgentLaneSummary({ lane }: { lane: TranscriptToolEntry }): JSX.E
   const tokens = lane.agent?.usage?.totalTokens
   const spend = [subagentRunsOn(lane), tokens ? formatTokens(tokens) : null].filter(Boolean).join(' · ')
   return (
-    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-      <span className="flex min-w-0 items-center gap-2 text-meta">
+    <span className="@container flex min-w-0 flex-1 flex-col gap-0.5">
+      <span className={`${AGENT_LINE_CLASS} text-meta`}>
         <LaneGlyph tool={lane} />
-        <span className={`shrink-0 ${running ? 'font-medium text-[color:var(--text-default)]' : ''}`}>
+        <span
+          className={`max-w-1/2 shrink-0 @max-[320px]:max-w-none @max-[320px]:shrink ${AGENT_NAME_CLASS} ${running ? 'font-medium text-[color:var(--text-default)]' : ''}`}
+        >
           {subagentLaneLabel(lane)}
         </span>
-        {task ? <TruncatedText as="span" text={task} className="min-w-0 text-[color:var(--text-muted)]" /> : null}
+        {task ? (
+          <span className="flex min-w-0 text-[color:var(--text-muted)] @max-[320px]:order-last @max-[320px]:basis-full @max-[320px]:pl-6">
+            <TruncatedText as="span" text={task} className="min-w-0" />
+          </span>
+        ) : null}
         <span className="ml-auto shrink-0 pl-2 text-micro tabular-nums text-[color:var(--text-subtle)]">
           <LaneStatus lane={lane} />
         </span>
       </span>
       {detail || spend ? (
-        <span className="flex min-w-0 items-center gap-2 pl-6 text-micro">
+        <span className="flex min-w-0 items-center gap-2 pl-6 text-micro @max-[320px]:flex-wrap @max-[320px]:gap-y-0.5">
           {detail ? (
-            <TruncatedText
-              as="span"
-              text={detail}
-              className={`min-w-0 ${lane.agent?.error && !running ? 'text-[color:var(--tone-error)]' : 'text-[color:var(--text-subtle)]'}`}
-            />
+            <span className="flex min-w-0 @max-[320px]:basis-full">
+              <TruncatedText
+                as="span"
+                text={detail}
+                className={`min-w-0 ${lane.agent?.error && !running ? 'text-[color:var(--tone-error)]' : 'text-[color:var(--text-subtle)]'}`}
+              />
+            </span>
           ) : null}
           {spend ? (
-            <span className="ml-auto shrink-0 pl-2 tabular-nums text-[color:var(--text-subtle)]">{spend}</span>
+            <span className="ml-auto max-w-full shrink-0 truncate pl-2 tabular-nums text-[color:var(--text-subtle)] @max-[320px]:ml-0 @max-[320px]:pl-0">
+              {spend}
+            </span>
           ) : null}
         </span>
       ) : null}

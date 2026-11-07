@@ -1,8 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, test } from 'vitest'
 
+import { ConversationLinkProvider } from './conversationLinks'
 import type { TranscriptToolEntry } from './conversationProjection'
 import { SubagentIcon } from './subagentIcon'
+import { LaneGlyph } from './subagentStatus'
 import { isSubagentStart, SubagentStartRow, subagentStartWords } from './subagentStartRow'
 
 const start = (overrides: Partial<TranscriptToolEntry> = {}) =>
@@ -20,6 +22,25 @@ test('a sub-agent wears its harness, whichever model that harness drives', () =>
   expect(renderToStaticMarkup(<SubagentIcon cli="claude-code" />)).toContain(claudeMark)
   expect(renderToStaticMarkup(<SubagentIcon cli="cursor" />)).not.toContain(claudeMark)
   expect(renderToStaticMarkup(<SubagentIcon cli={null} />)).toBe('')
+})
+
+test('a lane of a chat on a paired machine, which has no record here, wears the chat’s harness', () => {
+  const lane = (providerId?: string) =>
+    renderToStaticMarkup(
+      <ConversationLinkProvider
+        workspaceId="w-followed"
+        agentId="agent-there"
+        cwd=""
+        workspaceRoot=""
+        {...(providerId === undefined ? {} : { providerId })}
+      >
+        <LaneGlyph tool={start()} />
+      </ConversationLinkProvider>,
+    )
+  expect(lane('claude-agent')).toContain('viewBox="0 0 248 248"')
+  // Until its machine lists it, the CLI is not known, and the kind glyph stands in.
+  expect(lane('')).toContain('data-tool-glyph="subagent"')
+  expect(lane()).toContain('data-tool-glyph="subagent"')
 })
 
 test('the start of a sub-agent reads as who was started, however the CLI spells the tool', () => {

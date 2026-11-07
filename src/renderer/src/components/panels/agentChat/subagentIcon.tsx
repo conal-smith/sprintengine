@@ -18,7 +18,7 @@ export function SubagentIcon({
   return cli ? <CliIcon cli={cli} className={className} /> : null
 }
 
-/** The CLI of the chat these lanes belong to, when this window has its record. */
+/** The CLI of the chat these lanes belong to, from its binding or else its record here. */
 export function useLaneParentCli(): AgentCli | null {
   const context = useConversationLinkContext()
   const conversation = useWorkspaceStore((state) =>
@@ -27,5 +27,5 @@ export function useLaneParentCli(): AgentCli | null {
           ?.conversation
       : undefined,
   )
-  return cliForConversationProvider(conversation?.providerId) as AgentCli | null
+  return cliForConversationProvider(context?.providerId || conversation?.providerId) as AgentCli | null
 }

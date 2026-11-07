@@ -13,6 +13,9 @@ import { flattenToolEntries, subagentLaneLabel } from '../../../panels/agentChat
 import { useLiveRowMotion } from '../../../panels/agentChat/liveVisibility'
 import { SubagentLaneResult } from '../../../panels/agentChat/subagentResult'
 import {
+  AGENT_LINE_CLASS,
+  AGENT_NAME_CLASS,
+  AGENT_STATUS_CLASS,
   AgentLaneSummary,
   formatTokens,
   LaneGlyph,
@@ -226,6 +229,7 @@ function ChatAgents({
       // here to resolve a file link against.
       cwd={binding.workspaceRoot ?? ''}
       workspaceRoot={binding.workspaceRoot ?? ''}
+      providerId={binding.agent.conversation.providerId}
     >
       <SubagentTypesProvider value={projection.agentTypes}>
         <div ref={rootRef} className="flex h-full min-h-0 flex-col bg-[color:var(--bg-app)]">
@@ -370,12 +374,16 @@ const AgentThread = React.memo(function AgentThread({
       <GhostButton size="inline" tone="subtle" align="start" onClick={onBack}>
         ‹ All agents
       </GhostButton>
-      <div ref={headRef} className="mt-2 flex items-center gap-2 px-2 text-body">
-        <LaneGlyph tool={lane} />
-        <span className="font-medium text-[color:var(--text-strong)]">{subagentLaneLabel(lane)}</span>
-        <span className="ml-auto shrink-0 text-meta tabular-nums text-[color:var(--text-subtle)]">
-          <LaneStatus lane={lane} />
-        </span>
+      <div ref={headRef} className="@container mt-2 px-2">
+        <div className={`${AGENT_LINE_CLASS} text-body`}>
+          <LaneGlyph tool={lane} />
+          <span className={`${AGENT_NAME_CLASS} font-medium text-[color:var(--text-strong)]`}>
+            {subagentLaneLabel(lane)}
+          </span>
+          <span className={`${AGENT_STATUS_CLASS} text-meta text-[color:var(--text-subtle)]`}>
+            <LaneStatus lane={lane} />
+          </span>
+        </div>
       </div>
       <dl className="mt-2 flex flex-col gap-1 px-2 text-meta">
         {task ? (
