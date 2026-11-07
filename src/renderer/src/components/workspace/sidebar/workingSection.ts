@@ -22,6 +22,11 @@ import { combinedAgentActivity, workspaceIsWorking } from './conversationLines'
 // The By status list asks the same question without the `front` exception: it
 // sorts by what a chat is doing, so the open chat is sorted with the rest and
 // the shelf opens for it.
+//
+// A chat on a paired machine is asked the same question, whether or not it is
+// open here. Open here, it is a row like any other and its machine's activity
+// is the row's. Not open here, it is that activity and nothing else: it has no
+// sessions on this computer, and with no window here it is never in front.
 
 export type WorkingSectionSources = {
   activity: Activity
