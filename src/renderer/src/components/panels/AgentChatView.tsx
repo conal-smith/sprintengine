@@ -4120,6 +4120,7 @@ export function ConversationChatBody({ workspaceId, agentId, binding }: Props & 
       agentId={agentId}
       cwd={workspaceRoot ?? ''}
       workspaceRoot={workspaceRoot ?? ''}
+      providerId={agent.conversation.providerId}
     >
       <SubagentTypesProvider value={projection.agentTypes}>
         <ChatShell shellRef={shellRef} dropHandlers={fileDropHandlers} keyHandlers={redirectHandlers}>
