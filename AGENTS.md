@@ -5,6 +5,33 @@ green, and how commit messages are written. Read it before you open a pull
 request. Three of its rules are repeated here because they are broken while a
 comment is being typed, not at review time.
 
+## Every feature works on every machine
+
+A chat looks and behaves the same whichever machine it runs on (owner ruling
+2026-11-07). Anything added to a conversation, its display or the panes around
+it has to work in full in a chat on a paired machine, in the same change. The
+feature set of remote control is the feature set of the app. Work that runs
+only locally is not finished, however good it looks on the machine it was
+built on.
+
+- A branch that turns something off away from home is the bug, not the fix.
+  `transport.kind === 'local'`, `transport.kind !== 'remote'` and
+  `stripFacts.machine` deciding whether a feature exists is how this has gone
+  wrong. Quoting a passage shipped that way: a local chat got a chip and a
+  paired one a plain blockquote.
+- When a feature needs something the wire does not carry, carry it. Add it
+  behind a capability (`docs/compatibility.md`). The fallback for an older peer
+  is for that peer only, and it says so in words or stays as good as it was.
+  Reading only local records, as a list of sub-agents did, is the same mistake
+  without a branch to find.
+- The phone counts. Build it there too, unless a phone cannot do it, and then
+  say so in the pull request.
+- The exceptions are few: something that is about this machine's own desktop,
+  such as revealing a file in Finder. Offer the nearest thing that does make
+  sense for the far machine.
+- A pull request that touches a conversation says how it was checked in a
+  paired chat. If it was only simulated, it says that.
+
 ## No competitor product names
 
 Not in comments, not in test names, not in assertion messages, not in a
