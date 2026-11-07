@@ -18,6 +18,9 @@ const CLI_NAMES: Readonly<Record<string, string>> = {
   grok: 'Grok',
   opencode: 'OpenCode',
   'kimi-code': 'Kimi Code',
+  'kimi-claude': 'Kimi Code',
+  muse: 'Muse',
+  zai: 'Z.AI',
 }
 
 export function isSubagentStart(tool: Pick<TranscriptToolEntry, 'name' | 'serverName'>): boolean {
