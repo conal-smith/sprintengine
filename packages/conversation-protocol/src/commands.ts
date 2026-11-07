@@ -514,6 +514,15 @@ export type ConversationUsageLimitSnapshot = {
 export type ConversationWatchUsageLimitsRequest = { type: 'watchUsageLimits'; requestId: string }
 
 /**
+ * Ask the desktop to say which sub-agents the chat followed has, in
+ * `subagents` frames: now, and again whenever one starts, moves or ends, until
+ * the socket follows another chat or closes. Sent again after each
+ * subscription's fence. A desktop without `conversation-subagents` answers it
+ * `ok: false` with `invalid_frame`.
+ */
+export type ConversationWatchSubagentsRequest = { type: 'watchSubagents'; requestId: string }
+
+/**
  * The desktop's usage limits, whole each time: the chat's `notice` (null for
  * a chat no limit has stopped), whether it resumes every such chat by itself
  * (`autoResume`), and each plan's windows (`limits`, empty before any agent

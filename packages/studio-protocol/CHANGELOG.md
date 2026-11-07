@@ -4,6 +4,9 @@
 
 ### Added
 
+- The socket does not advertise `conversation-subagents`: its conversation
+  topic carries no `subagents` frames, and a window on it reads a chat's
+  sub-agents from the records.
 - **Permissions** (`permissions.ts`): `STUDIO_PERMISSIONS`, the closed set of
   what a remote caller may do; every method and topic needs the permission its
   `scope` names plus any `extraPermissions` it adds (`studioSpecPermissions`),

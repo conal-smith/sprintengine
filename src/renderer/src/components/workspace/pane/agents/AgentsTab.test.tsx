@@ -5,7 +5,9 @@ import type {
   ConversationEventType,
   ConversationSessionFrame,
 } from '../../../../../../shared/conversation-runtime'
+import type { MeshConversationFrame, MeshConversationKey, MeshSubagent } from '../../../../../../shared/tailnet-mesh'
 import type { ConversationSessionEntry } from '../../../../hooks/conversationSessionsStore'
+import type { ConversationTransport } from '../../../panels/agentChat/conversationTransport'
 import { latestSessionOf } from './studioSubagents'
 
 let seq = 0
@@ -109,6 +111,9 @@ async function mountAgentsTab({
   }
   Object.assign(globalThis, globals)
   const frames: ((frame: ConversationSessionFrame) => void)[] = []
+  // What a chat on a paired machine is followed through, by the agent it names.
+  const followed = new Map<string, (frame: MeshConversationFrame) => void>()
+  const resolved: unknown[] = []
   Object.assign(dom.window, {
     matchMedia: () => ({ matches: true, addEventListener: () => undefined, removeEventListener: () => undefined }),
     api: {
@@ -116,6 +121,17 @@ async function mountAgentsTab({
       onConversationSession: (_input: unknown, receive: (frame: ConversationSessionFrame) => void) => {
         frames.push(receive)
         return () => undefined
+      },
+      onMeshConversationSession: (
+        input: { key: MeshConversationKey },
+        receive: (frame: MeshConversationFrame) => void,
+      ) => {
+        followed.set(input.key.agentId, receive)
+        return () => undefined
+      },
+      meshConversationResolveApproval: async (input: unknown) => {
+        resolved.push(input)
+        return { ok: true }
       },
     },
   })
@@ -161,6 +177,8 @@ async function mountAgentsTab({
     button: (label: string) =>
       Array.from(host.querySelectorAll('button')).find((item) => item.textContent?.includes(label)),
     subscriptions: () => frames.length,
+    followed,
+    resolved,
     async unmount() {
       await act(async () => root.unmount())
       dom.window.close()
@@ -472,6 +490,175 @@ test('a chat with only sub-agents is not told it has no agents', async () => {
     expect(tab.host.textContent).not.toContain('No agents yet')
     expect(tab.host.textContent).toContain('Finished · 1')
   } finally {
+    await tab.unmount()
+  }
+})
+
+const chatOnMachine = { connectionId: 'connection', workspaceId: 'far-workspace', agentId: 'far-agent' }
+const farReviewer: MeshSubagent = {
+  workspaceId: 'far-workspace',
+  agentId: 'far-child',
+  title: 'Cursor · grok-4.7',
+  providerId: 'cursor-agent',
+  modelId: 'grok-4.7',
+  readOnly: true,
+  status: 'needs_input',
+  task: 'Review the calendar screen',
+  startedAt: 1_000,
+}
+
+/** The tab on a chat of a paired machine: its pane publishes it as `RemoteConversationPanel` does. */
+async function openRemoteChat(tab: Awaited<ReturnType<typeof mountAgentsTab>>, operate = true) {
+  const { createRemoteConversationTransport } = await import('../../../panels/agentChat/conversationTransport')
+  const { publishRemoteChat } = await import('../../../panels/agentChat/remoteChatRegistry')
+  const transport = createRemoteConversationTransport({
+    key: chatOnMachine,
+    machineName: 'mac-mini',
+    access: 'operate',
+  })
+  const transports = new Map<string, ConversationTransport>()
+  const subagentTransport = (agentId: string) => {
+    const made =
+      transports.get(agentId) ??
+      createRemoteConversationTransport({
+        key: { ...chatOnMachine, agentId },
+        machineName: 'mac-mini',
+        access: operate ? 'operate' : 'read',
+      })
+    transports.set(agentId, made)
+    return made
+  }
+  const binding = {
+    agent: { name: 'Router work', conversation: { providerId: 'claude-agent', modelId: 'opus' } },
+    update: () => undefined,
+    workspace: null,
+    workspaceRoot: null,
+    sessionRoot: 'mesh:connection',
+  }
+  const { openAgentsPane } = await import('./agentsPaneFocus')
+  let opened = false
+  let take = () => {}
+  const publish = async (subagents: MeshSubagent[]) => {
+    await tab.act(async () => {
+      take()
+      take = publishRemoteChat('workspace', { agentId: 'far-agent', transport, binding, subagents, subagentTransport })
+      // As the chat's own rows open the tab, by its agent id on that machine.
+      if (!opened) openAgentsPane('workspace', 'far-agent', null)
+      opened = true
+    })
+  }
+  const deliver = async (agentId: string, events: ConversationEvent[]) => {
+    await tab.act(async () => {
+      const receive = tab.followed.get(agentId)!
+      receive({ type: 'snapshot', page: { events, hasMore: false, beforeCursor: null } })
+      receive({ type: 'synchronized', seq: events.at(-1)?.seq ?? 0 })
+    })
+  }
+  return { publish, deliver, close: () => take() }
+}
+
+const asked = () => [
+  event('turn_started', { turnId: 'turn-1' }),
+  event('approval_requested', { turnId: 'turn-1', requestId: 'approval-1', action: 'Bash', summary: 'npm test' }),
+]
+
+test('a chat on a paired machine lists the sub-agents that machine names, live, with their harness and status', async () => {
+  const tab = await mountAgentsTab({ focused: false })
+  const chat = await openRemoteChat(tab)
+  try {
+    await chat.publish([farReviewer])
+    await chat.deliver('far-agent', transcript)
+    await showList(tab)
+    const text = tab.host.textContent ?? ''
+    expect(text).toContain('Router work')
+    expect(text).toContain('Cursor · grok-4.7')
+    expect(text).toContain('Read-only')
+    expect(text).toContain('Waiting on you')
+    expect(text).toContain('Review the calendar screen')
+    expect(text).toContain('Find the router')
+    expect(text).toContain('2 working · 1 finished')
+    const row = tab.button('Review the calendar screen')!
+    expect(row.querySelector('svg')).not.toBeNull()
+
+    await chat.publish([{ ...farReviewer, status: 'failed', endedAt: 11_000, error: 'The model is unavailable.' }])
+    const moved = tab.host.textContent ?? ''
+    expect(moved).toContain('Failed after 10s')
+    expect(moved).toContain('The model is unavailable.')
+    expect(moved).not.toContain('Waiting on you')
+    expect(moved).toContain('1 working · 2 finished')
+  } finally {
+    chat.close()
+    await tab.unmount()
+  }
+})
+
+test('one opens onto its own chat over there, and what it asks is answered there', async () => {
+  const tab = await mountAgentsTab({ focused: false })
+  const chat = await openRemoteChat(tab)
+  try {
+    await chat.publish([farReviewer])
+    await chat.deliver('far-agent', transcript)
+    await showList(tab)
+    await tab.act(async () => tab.button('Review the calendar screen')!.click())
+    expect(tab.followed.has('far-child')).toBe(true)
+    await chat.deliver('far-child', [
+      event('user_message', { turnId: 'turn-1', text: 'Review the calendar screen, closely' }),
+      ...asked(),
+    ])
+    const thread = tab.host.textContent ?? ''
+    expect(thread).toContain('‹ All agents')
+    expect(thread).toContain('Review the calendar screen, closely')
+    expect(thread).toContain('npm test')
+    await tab.act(async () => tab.button('Allow once')!.click())
+    expect(tab.resolved).toEqual([
+      { key: { ...chatOnMachine, agentId: 'far-child' }, requestId: 'approval-1', decision: 'once' },
+    ])
+    expect(tab.host.textContent).not.toContain('The answer did not go.')
+
+    // The row in the parent's transcript opens it by the same id.
+    await tab.act(async () => tab.button('All agents')!.click())
+    expect(tab.host.textContent).toContain('Finished · 1')
+    const { openAgentsPane } = await import('./agentsPaneFocus')
+    await tab.act(async () => openAgentsPane('workspace', 'far-agent', 'far-child'))
+    await chat.deliver('far-child', [event('user_message', { turnId: 'turn-1', text: 'Review it, closely' })])
+    expect(tab.host.textContent).toContain('‹ All agents')
+    expect(tab.host.textContent).toContain('Review it, closely')
+  } finally {
+    chat.close()
+    await tab.unmount()
+  }
+})
+
+test('a pairing that may only read sees what one asks, and cannot answer it', async () => {
+  const tab = await mountAgentsTab({ focused: false })
+  const chat = await openRemoteChat(tab, false)
+  try {
+    await chat.publish([farReviewer])
+    await chat.deliver('far-agent', transcript)
+    await showList(tab)
+    await tab.act(async () => tab.button('Review the calendar screen')!.click())
+    await chat.deliver('far-child', asked())
+    expect(tab.host.textContent).toContain('npm test')
+    expect(tab.button('Allow once')!.disabled).toBe(true)
+  } finally {
+    chat.close()
+    await tab.unmount()
+  }
+})
+
+test('a machine that names none leaves the tab as it was: the agents its chat’s CLI spawned', async () => {
+  const tab = await mountAgentsTab({ focused: false })
+  const chat = await openRemoteChat(tab)
+  try {
+    await chat.publish([])
+    await chat.deliver('far-agent', transcript)
+    await showList(tab)
+    const text = tab.host.textContent ?? ''
+    expect(text).toContain('Find the router')
+    expect(text).toContain('1 working · 1 finished')
+    expect(text).not.toContain("Couldn't")
+  } finally {
+    chat.close()
     await tab.unmount()
   }
 })

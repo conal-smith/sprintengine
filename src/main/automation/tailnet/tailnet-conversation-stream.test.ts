@@ -1499,3 +1499,71 @@ test("a paired phone's steer and queued send reach the host whole while its own 
   await waitFor(() => answered().length === 3, 'the first is answered as its turn ends')
   stream.close(1000, '')
 })
+
+test('a client that asks is told a chat’s sub-agents, and one that does not is told nothing', async () => {
+  const socket = new Socket()
+  const gateway = host()
+  const watching = new Set<string>()
+  const row = {
+    workspaceId: 'w',
+    agentId: 'child',
+    title: 'Reviewer',
+    providerId: 'mock',
+    modelId: 'mock',
+    readOnly: false,
+    status: 'working' as const,
+    task: 'Read /Users/dev/notes.md',
+    startedAt: 1,
+  }
+  gateway.watchSubagents = (chat, listener) => {
+    watching.add(chat.agentId)
+    listener([row])
+    return () => watching.delete(chat.agentId)
+  }
+  const resolveKey = gateway.resolveKey
+  gateway.resolveKey = (workspaceId, agentId) =>
+    workspaceId === 'w' && agentId === 'b' ? { ...key, agentId: 'b' } : resolveKey(workspaceId, agentId)
+  const stream = createTailnetConversationStream({
+    socket,
+    deviceId: 'device',
+    deviceName: 'laptop',
+    // Reading a chat's sub-agents is following it: a read grant is enough.
+    scopes: ['conversation:read'],
+    host: gateway,
+    onClosed: () => {},
+    audit: () => {},
+  })
+  const said = () => (socket.output() as Frame[]).filter((frame) => frame.type === 'subagents')
+  socket.receive({ type: 'subscribe', key: { workspaceId: 'w', agentId: 'a' } })
+  await tick()
+  assert.equal(watching.size, 0, 'an older client never asks, so nothing is watched for it')
+  assert.equal(said().length, 0)
+  socket.receive({ type: 'watchSubagents', requestId: 'subagents-1' })
+  await waitFor(() => said().length === 1, 'told once it asks')
+  assert.deepEqual(said()[0], { type: 'subagents', key: { workspaceId: 'w', agentId: 'a' }, subagents: [row] })
+  socket.receive({ type: 'subscribe', key: { workspaceId: 'w', agentId: 'b' } })
+  await waitFor(() => watching.size === 0, 'the watch ends with the chat it was for')
+  stream.close(1000, '')
+})
+
+test('a desktop that says nothing of its sub-agents refuses the watch under its id, and the socket stays open', async () => {
+  const socket = new Socket()
+  const stream = createTailnetConversationStream({
+    socket,
+    deviceId: 'device',
+    deviceName: 'laptop',
+    scopes: ['conversation:read'],
+    host: host(),
+    onClosed: () => {},
+    audit: () => {},
+  })
+  socket.receive({ type: 'subscribe', key: { workspaceId: 'w', agentId: 'a' } })
+  await tick()
+  socket.receive({ type: 'watchSubagents', requestId: 'subagents-1' })
+  await waitFor(
+    () => (socket.output() as Frame[]).some((frame) => frame.type === 'result' && frame.requestId === 'subagents-1'),
+    'answered under its id',
+  )
+  assert.equal(stream.isClosed(), false)
+  stream.close(1000, '')
+})

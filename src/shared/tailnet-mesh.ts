@@ -9,6 +9,7 @@ import type {
   ConversationHighlightColor,
   ConversationQueuedMessage,
   ConversationScheduledMessage,
+  ConversationSubagent,
   ConversationThread,
   ConversationUsageLimitNotice,
   ConversationUsageLimitResumeAction,
@@ -669,12 +670,23 @@ export type MeshUsageLimitSnapshot = ConversationUsageLimitSnapshot
 /** What a paired machine's resume row asks of it. */
 export type MeshUsageLimitResumeAction = ConversationUsageLimitResumeAction
 
+/**
+ * The sub-agents of this conversation, oldest first, whole each time
+ * (`conversation-subagents`). The last list heard stands while the link is
+ * down, as the machine's agents work on there.
+ */
+export type MeshConversationSubagents = { type: 'subagents'; subagents: MeshSubagent[] }
+
+/** A chat of a paired machine that belongs to another: followed by its ids, as any chat is. */
+export type MeshSubagent = ConversationSubagent
+
 export type MeshConversationFrame =
   | ConversationSessionFrame
   | MeshConversationLink
   | MeshConversationQueued
   | MeshConversationScheduled
   | MeshConversationUsageLimits
+  | MeshConversationSubagents
 
 /**
  * `modelSwitch`: the machine advertises `conversation-models` — its list names

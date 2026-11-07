@@ -19,6 +19,7 @@ import {
   type ConversationHelloAnswer,
   type ConversationQueuedFrame,
   type ConversationScheduledFrame,
+  type ConversationSubagentsFrame,
   type ConversationUsageLimitsFrame,
   type ConversationServerFrame,
   type ConversationWireErrorCode,
@@ -171,6 +172,7 @@ type OutgoingFrame =
   | ConversationQueuedFrame
   | ConversationScheduledFrame
   | ConversationUsageLimitsFrame
+  | ConversationSubagentsFrame
 
 type LiveEntry = {
   kind: 'live'
@@ -220,6 +222,8 @@ export function createTailnetConversationStream(options: TailnetConversationStre
   let scheduledWatch: { chat: string; stop(): void } | null = null
   // And what it knows of the usage limits, for that chat (`watchUsageLimits`).
   let usageWatch: { chat: string; stop(): void } | null = null
+  // And which sub-agents that chat has (`watchSubagents`).
+  let subagentsWatch: { chat: string; stop(): void } | null = null
   const stopQueuedWatch = (): void => {
     queuedWatch?.stop()
     queuedWatch = null
@@ -236,10 +240,15 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     usageWatch?.stop()
     usageWatch = null
   }
+  const stopSubagentsWatch = (): void => {
+    subagentsWatch?.stop()
+    subagentsWatch = null
+  }
   const stopWatches = (): void => {
     stopQueuedWatch()
     stopScheduledWatch()
     stopUsageWatch()
+    stopSubagentsWatch()
   }
   let frameSequence = 0
   let subscriptionGeneration = 0
@@ -617,6 +626,7 @@ export function createTailnetConversationStream(options: TailnetConversationStre
     if (queuedWatch && queuedWatch.chat !== chatId(key)) stopQueuedWatch()
     if (scheduledWatch && scheduledWatch.chat !== chatId(key)) stopScheduledWatch()
     if (usageWatch && usageWatch.chat !== chatId(key)) stopUsageWatch()
+    if (subagentsWatch && subagentsWatch.chat !== chatId(key)) stopSubagentsWatch()
     currentKey = key
     // Every snapshot and fence names the conversation it belongs to, so a
     // client can refuse one for a conversation it no longer follows.
@@ -803,6 +813,22 @@ export function createTailnetConversationStream(options: TailnetConversationStre
       const wireKey = { workspaceId: key.workspaceId, agentId: key.agentId }
       const stop = host.watchUsageLimits(wireKey, (state) => sendLive({ type: 'usageLimits', key: wireKey, ...state }))
       usageWatch = { chat: chatId(key), stop }
+      return
+    }
+    if (frame.type === 'watchSubagents') {
+      const key = requireKey(frame.requestId)
+      if (!key) return
+      if (!host.watchSubagents) {
+        await result(frame.requestId, { ok: false, message: 'This desktop says nothing of its sub-agents.' })
+        return
+      }
+      await result(frame.requestId, { ok: true })
+      // Begun afresh after each fence, as the held messages' watch is.
+      stopSubagentsWatch()
+      if (closed || !currentKey || chatId(currentKey) !== chatId(key)) return
+      const wireKey = { workspaceId: key.workspaceId, agentId: key.agentId }
+      const stop = host.watchSubagents(wireKey, (subagents) => sendLive({ type: 'subagents', key: wireKey, subagents }))
+      subagentsWatch = { chat: chatId(key), stop }
       return
     }
     if (frame.type === 'command') {

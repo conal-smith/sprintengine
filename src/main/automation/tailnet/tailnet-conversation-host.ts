@@ -1,8 +1,9 @@
-import { isSubagentRecord } from '../../../shared/agent-state'
+import { isSubagentRecord, type AgentState } from '../../../shared/agent-state'
 import {
   CONVERSATION_DEFAULT_MODEL_ID,
   CONVERSATION_MAX_FILE_SEARCH_RESULTS,
   CONVERSATION_MAX_REPLY_PREVIEW,
+  CONVERSATION_MAX_SUBAGENTS,
   parseConversationCommandsAnswer,
   parseConversationWireHighlight,
   type ConversationCommand,
@@ -12,6 +13,7 @@ import {
   type ConversationFileSearchEntry,
   type ConversationQueuedMessage,
   type ConversationScheduledMessage,
+  type ConversationSubagent,
   type ConversationThread,
   type ConversationUsageLimitResumeAction,
   type ConversationUsageLimitsFrame,
@@ -26,6 +28,7 @@ import {
 } from '../../../../packages/conversation-protocol/src/public'
 import { isPlaceholderAgentName } from '../../../shared/agent-names'
 import { backgroundTasksWakeAgent } from '../../../shared/conversation/backgroundTasks'
+import { subagentStatusOf } from '../../../shared/conversation/subagentStatus'
 import {
   conversationPhaseWorking,
   conversationSummaryPhase,
@@ -295,6 +298,16 @@ export type ConversationGatewayHost = {
   watchUsageLimits?(
     key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
     listener: (state: ConversationUsageLimitsState) => void,
+  ): () => void
+  /**
+   * Follow which sub-agents a chat has and how each stands, as this desktop's
+   * own Agents tab reads them. Told now, and again whenever the list reads
+   * differently. Absent on a host built without `subagentChanges`; returns
+   * what stops the following.
+   */
+  watchSubagents?(
+    key: Pick<ConversationKey, 'workspaceId' | 'agentId'>,
+    listener: (subagents: ConversationSubagent[]) => void,
   ): () => void
   /**
    * Carry out one command under its client's id. `fingerprint`, where the
@@ -572,8 +585,18 @@ export type ConversationListWorkspace = {
   highlight?: { starred: boolean; color: string | null } | null
   /** Auto-settle, switched on from the row menu; absent or null is off. */
   autoSettleEnabled?: boolean | null
-  /** The record's agents, to tell a sub-agent, which no list draws, from a chat. */
-  agents?: Readonly<Record<string, { subagentOf?: unknown } | undefined>>
+  /**
+   * The record's agents: to tell a sub-agent, which no list draws, from a chat,
+   * and to say a chat's own sub-agents where it is followed.
+   */
+  agents?: Readonly<
+    Record<
+      string,
+      | (Pick<AgentState, 'subagentOf' | 'subagentReadOnly' | 'subagentEnd'> &
+          Partial<Pick<AgentState, 'name' | 'conversation'>>)
+      | undefined
+    >
+  >
 }
 
 /**
@@ -635,6 +658,11 @@ export type ConversationRegistryLink = {
    * command is refused in words and nothing is watched.
    */
   usageLimits?: ConversationUsageLimits
+  /**
+   * Hears that a chat's sub-agents may read differently: one started, moved or
+   * ended (`conversation-subagents`). Absent, nothing is watched.
+   */
+  subagentChanges?: (listener: () => void) => () => void
   /**
    * Studio's own folders of pictures (what chats sent, the pictures their steps
    * returned, pasted images). A step's picture is served from the chat's
@@ -1072,6 +1100,39 @@ export function createConversationGatewayHost(
             session.status !== 'failed',
         )
       : undefined
+  }
+  // A chat's sub-agents, oldest first, read as this desktop's own Agents tab
+  // reads them: from their records, and each one's newest session. Each row
+  // names what the list would name of it, so a device can draw it as a chat.
+  const subagentsOf = (chat: { workspaceId: string; agentId: string }): ConversationSubagent[] => {
+    const agents = recordsFor()(chat.workspaceId)?.agents ?? {}
+    const rows: ConversationSubagent[] = []
+    for (const [agentId, agent] of Object.entries(agents)) {
+      const parent = agent?.subagentOf
+      if (!agent || parent?.agentId !== chat.agentId) continue
+      const key = { workspaceId: chat.workspaceId, agentId }
+      const listed = api.listSessions(key)
+      const sessions = listed.ok ? listed.sessions : []
+      const latest = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)[0]
+      const providerId = agent.conversation?.providerId ?? latest?.providerId ?? ''
+      const error = agent.subagentEnd?.error
+      rows.push({
+        ...key,
+        title: agent.name || 'Sub-agent',
+        providerId,
+        modelId: agent.conversation?.modelId ?? latest?.modelId ?? '',
+        ...(latest && latest.status !== 'stopped' && latest.status !== 'failed' ? { sessionId: latest.sessionId } : {}),
+        ...permissionFor(key, sessions),
+        ...capabilitiesOf(latest?.capabilities ?? runtime.getProviderCapabilities(providerId)),
+        readOnly: agent.subagentReadOnly === true,
+        status: subagentStatusOf(agent, latest),
+        task: parent.task ?? '',
+        startedAt: wholeNumber(parent.startedAt) ?? 0,
+        ...(epoch(agent.subagentEnd?.at) ? { endedAt: Math.trunc(agent.subagentEnd.at) } : {}),
+        ...(error ? { error } : {}),
+      })
+    }
+    return rows.sort((a, b) => a.startedAt - b.startedAt).slice(-CONVERSATION_MAX_SUBAGENTS)
   }
   // The preset a conversation runs under, or would resume under: the last
   // session this app ran for it (a stopped one still holds the preset it had),
@@ -1520,7 +1581,9 @@ export function createConversationGatewayHost(
       // so a device that interleaves these rows with its own puts each where
       // it sits here, not by a fallback of its own.
       const listed = [...byId.values()]
-        // A sub-agent belongs to its parent, and no list of chats draws it.
+        // A sub-agent belongs to its parent, and no list of chats draws it:
+        // not a paired device's sidebar, and not a phone's. A device that wants
+        // a chat's own asks where it follows that chat (`watchSubagents`).
         .filter((thread) => !isSubagentRecord(recordOf(thread.workspaceId)?.agents?.[thread.agentId]))
         .map(wholeNumbers)
         .map((thread) => {
@@ -1753,6 +1816,12 @@ export function createConversationGatewayHost(
       : {}),
     ...(registry.usageLimits
       ? { watchUsageLimits: (key, listener) => watchHeld(registry.usageLimits!, key, listener) }
+      : {}),
+    ...(registry.subagentChanges
+      ? {
+          watchSubagents: (key, listener) =>
+            watchHeld({ list: subagentsOf, onChanged: registry.subagentChanges! }, key, listener),
+        }
       : {}),
     command(key, deviceId, commandId, command, fingerprint, carried) {
       if (command.kind === 'setModel') return setModel(key, commandId, command.modelId, fingerprint)

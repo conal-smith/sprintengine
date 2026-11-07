@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
+import type { MeshSubagent } from '../../../../../shared/tailnet-mesh'
 import type { ChatBinding } from './chatBinding'
 import type { ConversationTransport } from './conversationTransport'
 
@@ -16,6 +17,10 @@ export type RemoteChatEntry = {
   agentId: string
   transport: ConversationTransport
   binding: ChatBinding
+  /** The chat's sub-agents, as its machine last said. Empty for a machine that does not say. */
+  subagents: readonly MeshSubagent[]
+  /** The transport one of them is read and answered through: each is a chat of its own over there. */
+  subagentTransport(agentId: string): ConversationTransport
 }
 
 /** Per workspace, its open remote chats by agent id, most recently published last. */
@@ -54,13 +59,20 @@ function subscribe(listener: () => void): () => void {
 }
 
 /**
- * The remote chat open in `workspaceId` that is `agentId`, or, with no agent
- * asked for, the one published last; null when none is open there.
+ * The remote chat open in `workspaceId` that is `agentId`, or that has it as a
+ * sub-agent, which has no pane of its own to be found by; with no agent asked
+ * for, the one published last; null when none is open there.
  */
 export function readRemoteChat(workspaceId: string, agentId: string | null): RemoteChatEntry | null {
   const chats = registry.get(workspaceId)
   if (!chats) return null
-  if (agentId) return chats.get(agentId) ?? null
+  if (agentId) {
+    const open = chats.get(agentId)
+    if (open) return open
+    for (const entry of chats.values())
+      if (entry.subagents.some((subagent) => subagent.agentId === agentId)) return entry
+    return null
+  }
   let last: RemoteChatEntry | null = null
   for (const entry of chats.values()) last = entry
   return last

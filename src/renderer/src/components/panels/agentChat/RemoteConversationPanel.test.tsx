@@ -2123,6 +2123,60 @@ test('no Schedule for a machine that does not keep scheduled messages, or a pair
   }
 })
 
+test('the sub-agents a machine names reach the Agents tab, each read and answered as its own chat', async () => {
+  const chat = await mountRemote({ access: 'operate', permanentApprovals: true })
+  const { readRemoteChat } = await import('./remoteChatRegistry')
+  try {
+    const open = () => readRemoteChat('local-workspace', key.agentId)!
+    expect(open().subagents).toEqual([])
+    const subagent = {
+      workspaceId: key.workspaceId,
+      agentId: 'remote-child',
+      title: 'Reviewer',
+      providerId: 'cursor-agent',
+      modelId: 'grok-4.7',
+      readOnly: false,
+      status: 'working' as const,
+      task: 'Review it',
+      startedAt: 1,
+    }
+    await chat.act(async () => chat.emit({ type: 'subagents', subagents: [subagent] }))
+    expect(open().subagents).toEqual([subagent])
+    // A pane of its own it does not have, so nothing in the chat itself moved.
+    expect(chat.followed).toEqual([key])
+
+    const transport = open().subagentTransport('remote-child')
+    expect(open().subagentTransport('remote-child')).toBe(transport)
+    expect(transport.capabilities.operate).toBe(true)
+    expect(transport.capabilities.permanentApprovals).toBe(true)
+    const stop = transport.subscribe(
+      { key: { workspaceRoot: '', workspaceId: '', agentId: '' }, turnLimit: 10 },
+      () => undefined,
+    )
+    expect(chat.followed.at(-1)).toEqual({ ...key, agentId: 'remote-child' })
+    stop()
+    await transport.respond({ sessionId: 'remote:remote-child', requestId: 'approval-9', approved: true })
+    expect(chat.api.meshConversationResolveApproval).toHaveBeenLastCalledWith({
+      key: { ...key, agentId: 'remote-child' },
+      requestId: 'approval-9',
+      decision: 'once',
+    })
+  } finally {
+    await chat.unmount()
+  }
+})
+
+test('a sub-agent read from a pairing that may only read cannot be answered from here', async () => {
+  const chat = await mountRemote({ access: 'read' })
+  const { readRemoteChat } = await import('./remoteChatRegistry')
+  try {
+    const transport = readRemoteChat('local-workspace', key.agentId)!.subagentTransport('remote-child')
+    expect(transport.capabilities.operate).toBe(false)
+  } finally {
+    await chat.unmount()
+  }
+})
+
 /** What a machine says of its usage limits while the chat's session limit is used up. */
 function sessionLimitReached(resumeAt: number | null = null): MeshConversationFrame {
   const resetsAt = Date.now() + 2 * 60 * 60_000
